@@ -91,3 +91,15 @@ _Avoid_: Queue (the P1 approval queue decides from the list)
 **Draft**:
 The customer-facing reply shown to the specialist, beside the citations and the proposal.
 _Avoid_: Answer, when it has not been sent
+
+**Exchange**:
+A swap of the same item for another size or color, still waiting for a person before it is recorded.
+_Avoid_: Replacement, when the item was damaged or defective
+
+**Replacement**:
+The same item sent again because it was damaged or defective, and only when the catalog row says it is in stock.
+_Avoid_: Exchange, when the customer wants a different size or color
+
+**Store credit**:
+Credit Northstar holds for that customer, with no expiry and no transfer to someone else. It is not cash and not a gift card.
+_Avoid_: Refund, when the money goes back to the original payment method

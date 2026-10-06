@@ -13,6 +13,55 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-06 — Handbook v2, written in full
+
+Status: decision
+
+What changed: Handbook v1 is replaced by `northstar-policy-v2`. New sections cover the company, category windows, exchanges, payments, promotions, gift cards, and store credit. Ids that already existed are kept. The registry lists every id.
+
+Evidence: Topics and number ranges follow published retail practice. The sentences are original. Source pages that were not copied:
+
+- https://www.amazon.com/gp/help/customer/display.html?nodeId=GKM69DUUYKQWKWX7
+- https://www.amazon.com/gp/help/customer/display.html?nodeId=GKQNFKFK5CF3C54B
+- https://www.amazon.com/gp/help/customer/display.html?nodeId=201077750
+- https://zoutons.com/news/flipkart-return-replacement-policy-2026
+- https://www.target.com/help/articles/returns-exchanges/returns
+- https://www.target.com/help/articles/policies-guidelines/price-match-guarantee
+- https://www.zappos.com/c/shipping-and-returns
+- https://www.evga.com/legal/store/
+
+Kept v1 ids: REF-WINDOW, REF-ELIGIBILITY, REF-PARTIAL, REF-DENY, REF-DAMAGED, REF-FINAL-SALE, SHIP-SLA, SHIP-DELAY, SHIP-LOST, SHIP-ADDRESS, WAR-COVERAGE, WAR-EXCLUSIONS, WAR-CLAIM, ORD-CANCEL, ORD-MODIFY, ORD-TRACK, ESC-WHEN, ESC-ABUSE, ESC-LEGAL, PII-MINIMIZE, PII-SHARE, FAQ-HOURS, FAQ-CONTACT, FAQ-ACCOUNT.
+
+Conflict pass: the 14-day damage report is shorter than the 15-day electronics return window, and REF-DAMAGED says so. Exchange eligibility points at REF-CATEGORY instead of restating 30 or 15. Warranty begins the day after the return window ends. The numeral 14 also appears as days from the ship date (SHIP-LOST) and as days from delivery for a Northstar site price drop (PAY-PRICE-ADJUST). Those are different clocks, each defined in one section. The same is true of "3 to 5 business days" for a card refund (REF-TIMING) and for a pending authorization to drop off (PAY-DUPLICATE), and of the 2-business-day express span (SHIP-SLA) versus the extra wait after a delay (SHIP-DELAY).
+
+Debug steps: Compared every heading in the handbook files with the registry. Every file id is in the registry.
+
+Fix: Wrote the v2 handbook, replaced `SECTION_IDS.md`, and updated `AGENTS.md`, `CONTEXT.md`, and `explanation.md`.
+
+## 2026-10-06 — Docs checked against current LangChain, LangGraph, and Pinecone pages
+
+Status: decision
+
+What changed:
+- Rerank no longer imports `FlashrankRerank` from `langchain_community`. `langchain-community` was sunset on 2026-05-22. The `Reranker` adapter calls `flashrank.Ranker` with `model_name="ms-marco-MiniLM-L-12-v2"`. That model must be passed: the old wrapper defaults to `ms-marco-MultiBERT-L-12`.
+- The in-memory checkpointer name in the contract is `InMemorySaver`, matching the current checkpointer docs. It is still not the production checkpointer.
+- Phone is not a built-in `PIIMiddleware` type. Built-ins are `email`, `credit_card`, `ip`, `mac_address`, and `url`. Phone uses a custom detector. `HumanInTheLoopMiddleware` uses `interrupt_on` and `allowed_decisions` of `approve`, `edit`, and `reject`, and it requires a checkpointer. `ToolErrorMiddleware` requires `langchain>=1.3.14`.
+- Pinecone Starter rerank quota is 500 requests per month per model for `bge-reranker-v2-m3`, and 60 per minute. That is the only rerank model on Starter. The earlier "500 per organization" wording was wrong. Starter indexes are AWS `us-east-1` only. The Pinecone notebook still creates a dense index at dimension 1536 with cosine distance.
+
+Evidence:
+- [Sunsetting langchain-community](https://github.com/langchain-ai/langchain-community/issues/674)
+- [FlashRank models](https://github.com/PrithivirajDamodaran/FlashRank)
+- [Built-in middleware](https://docs.langchain.com/oss/python/langchain/middleware/built-in)
+- [Checkpointers](https://docs.langchain.com/oss/python/langgraph/checkpointers)
+- [Pinecone database limits](https://docs.pinecone.io/reference/api/database-limits)
+- [Pinecone pricing](https://www.pinecone.io/pricing/)
+- [Pinecone vector store](https://docs.langchain.com/oss/python/integrations/vectorstores/pinecone)
+- [Evaluate a complex agent](https://docs.langchain.com/langsmith/evaluate-complex-agent) still publishes `trajectory_subsequence`, `client.aevaluate`, `compile_followup`, and `Command(goto=...)`. The Chinook refund path still mocks the write with `config={"env": "test"}`. Northstar still does not copy that.
+
+Debug steps: Opened those pages on 2026-10-06. The old FlashrankRerank class URL returned 404 once and resolved later; the sunset issue is the reason to stop depending on the package.
+
+Fix: Updated `AGENTS.md`, `architecture.md`, and `explanation.md`.
+
 ## 2026-10-06 — UX laws, accessibility, history panel, repo, spec
 
 Status: decision

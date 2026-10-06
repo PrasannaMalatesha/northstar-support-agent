@@ -28,12 +28,12 @@ During implementation, export a presentation image from the Northstar architectu
 - Trajectory: `trajectory_subsequence` from the complex-agent guide, plus `agentevals` when tool arguments must match
 - Model: OpenAI `gpt-4o-mini` by default, overridable by env. Judge model: `JUDGE_MODEL`, same default
 - Vector database: Pinecone, via `langchain-pinecone` `PineconeVectorStore` ([Pinecone integration](https://docs.langchain.com/oss/python/integrations/vectorstores/pinecone)). Policy chunks only. Not chat history
-- Rerank after Pinecone top-k: `ContextualCompressionRetriever` + `FlashrankRerank` (`langchain_community`, `flashrank` package, model `ms-marco-MiniLM-L-12-v2`, ONNX on CPU, no Torch) ([FlashrankRerank](https://reference.langchain.com/python/langchain-community/document_compressors/flashrank_rerank/FlashrankRerank)). Same reranker in local, CI, dev, uat, and prod. Wrapped behind one `Reranker` port so `PineconeRerank` or `CrossEncoderReranker` can replace it without touching the graph
+- Rerank after Pinecone top-k: the `flashrank` package `Ranker` with model `ms-marco-MiniLM-L-12-v2` (ONNX on CPU, no Torch), called from the `Reranker` adapter. Pass the model name; the old wrapper's default is `ms-marco-MultiBERT-L-12`, which is the wrong model. Keep at most 4 chunks at or above `RETRIEVAL_SCORE_TAU`. Same reranker in local, CI, dev, uat, and prod. `langchain-community` was sunset on 2026-05-22, so do not import `FlashrankRerank` ([sunset](https://github.com/langchain-ai/langchain-community/issues/674), [FlashRank](https://github.com/PrithivirajDamodaran/FlashRank)). A replacement is a new adapter: hosted `PineconeRerank` ([Pinecone rerank](https://docs.langchain.com/oss/python/integrations/retrievers/pinecone_rerank)) stays behind the port and is not the default
 - PostgreSQL for everything that must survive a restart:
   - Short-term memory: `PostgresSaver` / `AsyncPostgresSaver` keyed by `thread_id` ([checkpointers](https://docs.langchain.com/oss/python/langgraph/checkpointers)). This is the conversation and the HITL pause
   - Long-term memory: `PostgresStore` keyed by namespace and key, shared across threads ([add memory](https://docs.langchain.com/oss/python/langgraph/add-memory), [stores](https://docs.langchain.com/oss/python/langgraph/stores))
   - App tables: refund tickets and approval audit
-- Local Postgres matches production. `MemorySaver` is not the production checkpointer; the docs state it dies on process restart
+- Local Postgres matches production. `InMemorySaver` is not the production checkpointer; the checkpointer docs use it for experimentation and it dies on process restart ([checkpointers](https://docs.langchain.com/oss/python/langgraph/checkpointers))
 - Postgres host: Neon free plan, one project, one Neon branch per environment (`dev`, `uat`, `prod`). Render free Postgres is not used: one per workspace and deleted 30 days after creation ([Render free](https://render.com/docs/free), [Neon limits](https://neon.com/faqs/free-plan-limits-and-quotas))
 - Share: Vercel (Next.js) + Render (FastAPI), one Render service per environment. LangSmith Developer for traces and evals
 
@@ -66,7 +66,7 @@ These stay next to this file. A decision is not done until the matching file is 
 | This file | Product, architecture, eval, security, and deploy decisions |
 | LangSmith docs | How tracing, datasets, experiments, and online evals work |
 
-Corpus version is stamped on every run as `policy_corpus_version` (start at `northstar-policy-v1`).
+Corpus version is stamped on every run as `policy_corpus_version`. The frozen handbook is `northstar-policy-v2`.
 
 The handbook is written by this project and then frozen. The topics follow common marketplace practice. The sentences are original Northstar text. Amazon, Flipkart, and other retailers are not copied. The running agent does not add sections.
 
@@ -78,13 +78,17 @@ Slice 1 token budget fails closed. Retrieve 20, pass at most 4 reranked chunks i
 
 | File | Section IDs | Covers |
 | --- | --- | --- |
-| `returns-and-refunds.md` | `REF-WINDOW`, `REF-ELIGIBILITY`, `REF-PARTIAL`, `REF-DENY`, `REF-DAMAGED`, `REF-FINAL-SALE` | Window, eligibility, partial credit, denials, damage, non-returnables |
-| `shipping-and-delivery.md` | `SHIP-SLA`, `SHIP-DELAY`, `SHIP-LOST`, `SHIP-ADDRESS` | SLAs, delays, lost packages, address changes |
-| `warranty.md` | `WAR-COVERAGE`, `WAR-EXCLUSIONS`, `WAR-CLAIM` | Coverage, exclusions, claims |
-| `order-changes.md` | `ORD-CANCEL`, `ORD-MODIFY`, `ORD-TRACK` | Cancel, modify, tracking |
-| `support-escalation.md` | `ESC-WHEN`, `ESC-ABUSE`, `ESC-LEGAL` | Escalation, abuse, legal / chargeback |
-| `privacy-and-pii.md` | `PII-MINIMIZE`, `PII-SHARE` | What support may say about customer data |
-| `faq-general.md` | `FAQ-HOURS`, `FAQ-CONTACT`, `FAQ-ACCOUNT` | Hours, contact, account |
+| `company-overview.md` | `CO-ABOUT`, `CO-CATEGORIES`, `CO-SCOPE` | Who Northstar is, the four categories, what support does not do |
+| `returns-and-refunds.md` | `REF-WINDOW`, `REF-CATEGORY`, `REF-CONDITION`, `REF-ELIGIBILITY`, `REF-PARTIAL`, `REF-DENY`, `REF-DAMAGED`, `REF-WRONG-ITEM`, `REF-MISSING-ITEM`, `REF-FINAL-SALE`, `REF-METHOD`, `REF-TIMING`, `REF-SHIP-COST`, `REF-GIFT`, `REF-HOLIDAY`, `REF-INSPECTION` | Window, category lengths, condition, eligibility, partial credit, denials, damage, wrong and missing items, final sale, method, timing, label fee, gifts, holiday, inspection |
+| `exchanges.md` | `EXC-ELIGIBILITY`, `EXC-STOCK`, `EXC-LIMIT`, `EXC-PROCESS`, `EXC-DIFFERENT-ITEM`, `REP-REPLACEMENT` | Size or color swaps, stock, one exchange, a different item, replacement of a damaged item |
+| `shipping-and-delivery.md` | `SHIP-REGIONS`, `SHIP-OPTIONS`, `SHIP-SLA`, `SHIP-DELAY`, `SHIP-LOST`, `SHIP-ADDRESS`, `SHIP-SPLIT`, `SHIP-DNR`, `SHIP-REFUSED` | Where Northstar ships, prices, SLAs, delays, lost packages, address changes, split shipments, delivered-not-received, refusals |
+| `warranty.md` | `WAR-COVERAGE`, `WAR-EXCLUSIONS`, `WAR-CLAIM`, `WAR-REMEDY`, `WAR-RECALL` | Coverage after the return window, exclusions, claims, remedy, recall |
+| `order-changes.md` | `ORD-CANCEL`, `ORD-MODIFY`, `ORD-TRACK`, `ORD-PARTIAL-CANCEL` | Cancel, modify, tracking, cancel one line |
+| `payments-and-pricing.md` | `PAY-METHODS`, `PAY-CHARGE-TIMING`, `PAY-TAX`, `PAY-PRICE-ADJUST`, `PAY-PRICE-ERROR`, `PAY-DUPLICATE` | Methods, when the card is charged, tax, price drops, pricing errors, duplicate holds |
+| `promotions-and-gift-cards.md` | `PROMO-CODES`, `PROMO-RETURNS`, `PROMO-THRESHOLD`, `GC-TERMS`, `GC-LOST`, `STORE-CREDIT` | Codes, discounted refunds, free-shipping threshold, gift cards, store credit |
+| `support-escalation.md` | `ESC-WHEN`, `ESC-ABUSE`, `ESC-LEGAL`, `ESC-FRAUD` | Escalation, abuse, legal / chargeback, fraud |
+| `privacy-and-pii.md` | `PII-MINIMIZE`, `PII-SHARE`, `PII-PAYMENT`, `PII-DELETE` | What support may say, card numbers, deletion |
+| `faq-general.md` | `FAQ-HOURS`, `FAQ-CONTACT`, `FAQ-ACCOUNT`, `FAQ-PASSWORD`, `FAQ-EMAILS`, `FAQ-SIZING` | Hours, contact, account, passwords, marketing email, sizes |
 
 Gold labels cite real section IDs only. A citation that is not in the registry is a failed example, not a valid answer.
 
@@ -134,7 +138,7 @@ Guardrails run before `intent_classifier` and again after `compile_followup`.
 
 Generation context is the reranked chunks plus tool JSON. If the answer is not in that context, say so and ask a clarifying question.
 
-Retrieval shape: embed the query, Pinecone similarity top-20 with `section_id` metadata, `FlashrankRerank(model="ms-marco-MiniLM-L-12-v2", top_n=4, score_threshold=RETRIEVAL_SCORE_TAU)`, expose `relevance_score` on the trace, abstain when nothing passes the threshold. Trace child runs `retrieve` and `rerank`. Tune `RETRIEVAL_SCORE_TAU` on `dev` only, never on `test`. Phase 2 measures FlashRank memory on the Render free instance (512 MB) first and records the number in `correction.md`. Embedding dimension must match the Pinecone index. The official Pinecone notebook uses dimension 1536 with a matching OpenAI embedding; set both from env and do not mix models.
+Retrieval shape: embed the query, Pinecone similarity top-20 with `section_id` metadata (`PineconeVectorStore`, namespace per environment), then the `Reranker` adapter calls `flashrank.Ranker(model_name="ms-marco-MiniLM-L-12-v2")` and keeps at most 4 passages whose score is at least `RETRIEVAL_SCORE_TAU`. Expose that score on the trace as `relevance_score`. Abstain when nothing passes the threshold. Trace child runs `retrieve` and `rerank`. Tune `RETRIEVAL_SCORE_TAU` on `dev` only, never on `test`. Phase 2 measures FlashRank memory on the Render free instance (512 MB) first and records the number in `correction.md`. Embedding dimension must match the Pinecone index. The official Pinecone notebook uses dimension 1536 with a matching OpenAI embedding and `ServerlessSpec(cloud="aws", region="us-east-1")`; set both from env and do not mix models. Starter indexes are us-east-1 only ([Pinecone pricing](https://www.pinecone.io/pricing/)).
 
 ## Grounding
 
@@ -169,7 +173,7 @@ Deterministic checks run first. A model judge never replaces a hard block.
 ### Stack order
 
 1. **Before-agent input filter.** Banned abuse and jailbreak patterns, auth, rate limit, max length. Violation returns a fixed safe reply and jumps to end.
-2. **PII middleware** on user input, tool arguments, and final output. Email and phone: `redact`. Payment-like numbers: `mask`. API keys and secrets: `block`. Hash only when a stable pseudonym is required for logs.
+2. **PII middleware** on user input, tool arguments, and final output. Built-in types are `email`, `credit_card`, `ip`, `mac_address`, and `url` ([built-in middleware](https://docs.langchain.com/oss/python/langchain/middleware/built-in)). Email: `redact`. Card numbers: `mask` via `credit_card`. Phone is not a built-in type; use a custom detector and `redact`. API keys and secrets: a custom detector with `block`. Hash only when a stable pseudonym is required for logs.
 3. **Human-in-the-loop** on `create_refund_ticket` only. Checkpointer holds the thread. Resume with `Command(resume=...)`: `approve` runs the tool, `edit` runs the revised args, `reject` returns feedback and creates no ticket.
 4. **After-agent output check.** OpenAI moderation plus a lightweight safety classifier. Unsafe or uncited policy claims are replaced with a safe fallback or an abstain. The user never sees the raw unsafe draft.
 
@@ -322,13 +326,13 @@ The router is a LangGraph `StateGraph` with an `intent_classifier` node and `Com
 
 | Middleware | Setting | Problem it covers |
 | --- | --- | --- |
-| `PIIMiddleware` | email and phone redacted, card numbers masked, secrets blocked | Data leakage |
-| `HumanInTheLoopMiddleware` | `create_refund_ticket` only | Excessive agency, permissions |
+| `PIIMiddleware` | `email` redacted, `credit_card` masked, phone via a custom detector and redacted, secrets via a custom detector and blocked | Data leakage |
+| `HumanInTheLoopMiddleware` | `interrupt_on` for `create_refund_ticket` only, `allowed_decisions` `approve`, `edit`, `reject`. Requires a checkpointer | Excessive agency, permissions |
 | `ToolCallLimitMiddleware` | `run_limit` per tool, `thread_limit` overall | Tool misuse, unbounded usage |
 | `ModelCallLimitMiddleware` | per run and per thread | Unbounded usage, loops |
 | `ModelRetryMiddleware` | exponential backoff on 429 and 5xx | Rate limits, provider failures |
 | `ModelFallbackMiddleware` | second model | Dependency outage |
-| `ToolRetryMiddleware`, `ToolErrorMiddleware` | retry transient errors, then a "lookup failed" message | Failure recovery. Never fill in facts |
+| `ToolRetryMiddleware`, `ToolErrorMiddleware` | retry transient errors, then a "lookup failed" message. `ToolErrorMiddleware` requires `langchain>=1.3.14`. Place retry inner and `on_failure="error"` so the error middleware sees the exception | Failure recovery. Never fill in facts |
 | `SummarizationMiddleware` | trigger above the message cap | Context overflow |
 
 Structured output: `response_format=ToolStrategy(schema=<Pydantic model>, handle_errors=True)`. Never a raw JSON-schema dict: the docs warn that dict schemas are not validated, so `handle_errors` cannot retry ([structured output](https://docs.langchain.com/oss/python/langchain/structured-output)).
@@ -536,8 +540,8 @@ This layout follows `docs/plans/slice-1-build-phases.md`. Deep modules (`identit
 - https://docs.langchain.com/oss/python/langgraph/stores
 - https://docs.langchain.com/oss/python/langgraph/interrupts
 - https://docs.langchain.com/oss/python/langchain/guardrails
-- https://docs.langchain.com/oss/python/integrations/document_transformers/cross_encoder_reranker
-- https://reference.langchain.com/python/langchain-community/document_compressors/flashrank_rerank/FlashrankRerank
+- https://github.com/PrithivirajDamodaran/FlashRank
+- https://github.com/langchain-ai/langchain-community/issues/674
 - https://docs.langchain.com/oss/python/integrations/retrievers/pinecone_rerank
 - https://docs.langchain.com/langsmith/evaluate-rag-tutorial
 - https://docs.langchain.com/langsmith/openevals
