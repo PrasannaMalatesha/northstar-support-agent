@@ -74,6 +74,22 @@ async function closeAction(formData: FormData) {
   redirect("/desk");
 }
 
+async function approveAction(formData: FormData) {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/desk");
+  }
+  const access = await accessToken();
+  if (!access) {
+    redirect("/login");
+  }
+  await fetch(`${apiUrl}/approvals/${String(formData.get("case_id") ?? "")}/approve`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${access}` },
+  });
+  redirect("/desk");
+}
+
 async function askAction(formData: FormData) {
   "use server";
   if (!(await sameSite())) {
@@ -132,6 +148,24 @@ export default async function DeskPage() {
   if (!response.ok) {
     redirect("/login");
   }
+  const waiting =
+    session.user.role === "lead"
+      ? await fetch(`${apiUrl}/approvals`, {
+          headers: { Authorization: `Bearer ${access}` },
+          cache: "no-store",
+        }).then(async (waitingResponse) =>
+          waitingResponse.ok
+            ? ((await waitingResponse.json()) as {
+                case_id: string;
+                action: string;
+                amount_cents: number;
+                order_id: string;
+                age_seconds: number;
+              }[])
+            : [],
+        )
+      : [];
+
   const current = (await response.json()) as {
     status: string;
     draft_text: string;
@@ -153,6 +187,21 @@ export default async function DeskPage() {
         {session.user.name} · {session.user.role}
       </p>
       <h1>Case desk</h1>
+      {session.user.role === "lead" ? (
+        <section>
+          <h2>Waiting for approval</h2>
+          {waiting.length === 0 ? <p>No proposal is waiting.</p> : null}
+          {waiting.map((item) => (
+            <form action={approveAction} key={item.case_id}>
+              <input type="hidden" name="case_id" value={item.case_id} />
+              <p>
+                {item.order_id}: {item.action}, {item.amount_cents} cents, {item.age_seconds} seconds
+              </p>
+              <button type="submit">Approve</button>
+            </form>
+          ))}
+        </section>
+      ) : null}
       <p className="quiet">{current.status}</p>
       <p>{current.customer ? current.customer.name : "No customer bound."}</p>
       {current.draft_text ? (

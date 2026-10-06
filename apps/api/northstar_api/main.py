@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import uuid
 from contextlib import asynccontextmanager
 
-from northstar.cases import CaseClosed, CaseStore
+from northstar.cases import CaseClosed, CaseStore, ProposerCannotApprove, ProposalNotWaiting
 from northstar.clock import Clock, SystemClock
 from northstar.identity.postgres import PostgresIdentityStore
 from northstar.identity.seed import seed_staff
@@ -187,6 +188,27 @@ def create_app(
             return cases.close(staff.id, "Escalated", body.final_text)
         except CaseClosed as exc:
             raise HTTPException(status_code=409, detail="This case is closed.") from exc
+
+    def require_lead(staff=Depends(staff_from_token)):
+        if staff.role != "lead":
+            raise HTTPException(status_code=403, detail="A lead decides this.")
+        return staff
+
+    @app.get("/approvals")
+    def waiting_approvals(staff=Depends(require_lead)) -> list:
+        return cases.pending()
+
+    @app.post("/approvals/{case_id}/approve")
+    def approve_proposal(case_id: str, staff=Depends(require_lead)) -> dict:
+        try:
+            ticket_id = cases.approve(staff.id, uuid.UUID(case_id))
+        except ProposerCannotApprove as exc:
+            raise HTTPException(status_code=403, detail="You proposed this refund.") from exc
+        except ProposalNotWaiting as exc:
+            raise HTTPException(status_code=404, detail="This case is not waiting.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="This case is not waiting.") from exc
+        return {"ticket_id": ticket_id}
 
     @app.post("/cases/current/customer")
     def bind_customer(body: BindBody, staff=Depends(staff_from_token)) -> dict:
