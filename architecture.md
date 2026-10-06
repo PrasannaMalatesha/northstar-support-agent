@@ -27,7 +27,7 @@ Walk the diagrams in this order:
 | Customer history | `cases` table plus `PostgresStore` `("customers", id, "prefs")` | Short history record at case start, never past transcripts | [Stores](https://docs.langchain.com/oss/python/langgraph/stores) |
 | Routing | `Command(goto=...)` | Intent node picks a subgraph | [Evaluate a complex agent](https://docs.langchain.com/langsmith/evaluate-complex-agent) |
 | Tools and RAG | LangChain retriever and tools | Policy search, order lookup, ticket | [Pinecone vector store](https://docs.langchain.com/oss/python/integrations/vectorstores/pinecone) |
-| Rerank | `FlashrankRerank` (`ms-marco-MiniLM-L-12-v2`, ONNX, CPU) | Reorder top-20 to at most 4, drop below `RETRIEVAL_SCORE_TAU` | [FlashrankRerank](https://reference.langchain.com/python/langchain-community/document_compressors/flashrank_rerank/FlashrankRerank) |
+| Rerank | `flashrank.Ranker` (`ms-marco-MiniLM-L-12-v2`, ONNX, CPU), behind the `Reranker` port | Reorder top-20 to at most 4, drop below `RETRIEVAL_SCORE_TAU` | [FlashRank](https://github.com/PrithivirajDamodaran/FlashRank) |
 | Short-term memory | `PostgresSaver` | One thread, including the HITL pause | [Checkpointers](https://docs.langchain.com/oss/python/langgraph/checkpointers) |
 | Long-term memory | `PostgresStore` | Facts across threads, per user | [Stores](https://docs.langchain.com/oss/python/langgraph/stores) |
 | Guardrails | LangChain middleware | Input block, PII, output check | [Guardrails](https://docs.langchain.com/oss/python/langchain/guardrails) |
@@ -93,7 +93,7 @@ flowchart TD
   kind -->|"catalog"| catalog[lookup_catalog]
   kind -->|"this customer order"| lookup[lookup_order]
   retrieve --> pinecone[PineconeTop20]
-  pinecone --> rerank[FlashrankTop4]
+  pinecone --> rerank[FlashRankTop4]
   rerank --> gate{ScoreAtLeastTau}
   gate -->|"no"| abstain[Abstain]
   gate -->|"yes"| draft[CitedAnswer]
@@ -171,13 +171,13 @@ Short-term memory is the checkpointer: one conversation. Long-term memory is the
 flowchart LR
   query[Query] --> embedQ[EmbedQuery]
   embedQ --> topk[PineconeTop20]
-  topk --> rerank[FlashrankRerankTop4]
+  topk --> rerank[FlashRankTop4]
   rerank --> score{AnyChunkAboveTau}
   score -->|"no"| abstain[Abstain]
   score -->|"yes"| generate[GenerateWithCitations]
 ```
 
-Rerank is `ContextualCompressionRetriever` with `FlashrankRerank` ([reference](https://reference.langchain.com/python/langchain-community/document_compressors/flashrank_rerank/FlashrankRerank)). It runs on CPU with ONNX and no Torch, so it fits the 512 MB free host and is the same in CI and every environment. Its `score_threshold` is the weak-match gate. `PineconeRerank` was rejected for the free plan: 500 rerank requests a month per organization ([Pinecone limits](https://docs.pinecone.io/reference/api/database-limits)). Doc for scoring retrieval apart from the answer: [Evaluate a RAG application](https://docs.langchain.com/langsmith/evaluate-rag-tutorial).
+Rerank calls `flashrank.Ranker` with `model_name="ms-marco-MiniLM-L-12-v2"` from the `Reranker` adapter ([FlashRank](https://github.com/PrithivirajDamodaran/FlashRank)). It runs on CPU with ONNX and no Torch, so it fits the 512 MB free host and is the same in CI and every environment. Passages below `RETRIEVAL_SCORE_TAU` are dropped, and at most 4 remain. `langchain-community`, which used to ship `FlashrankRerank`, was sunset on 2026-05-22 ([sunset](https://github.com/langchain-ai/langchain-community/issues/674)). `PineconeRerank` was rejected for the Starter plan: `bge-reranker-v2-m3` allows 500 requests per month per model and 60 per minute, and it is the only rerank model on that plan ([Pinecone limits](https://docs.pinecone.io/reference/api/database-limits), [pricing](https://www.pinecone.io/pricing/)). Doc for scoring retrieval apart from the answer: [Evaluate a RAG application](https://docs.langchain.com/langsmith/evaluate-rag-tutorial).
 
 Embedding dimension and the Pinecone index dimension must match. The Pinecone notebook creates an index at dimension 1536 for a matching embedding model. Set both from env. Do not mix models.
 

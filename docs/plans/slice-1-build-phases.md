@@ -96,7 +96,7 @@ Every P0 requirement id appears in exactly one phase above. A phase may not add 
 
 ## Tasks
 
-- [ ] Phase 0: handbook v2 and SECTION_IDS registry
+- [x] Phase 0: handbook v2 and SECTION_IDS registry
 - [ ] Phase 1: repo, branches, Neon/Render/Vercel dev, identity, Auth.js login, lockout, headers, CI (R24, R25, R27)
 - [ ] Phase 2: ingest, handbook module, router + support_agent, streamed steps, trust display, usage limits, eval harness (R1, R2, R11, R26)
 - [ ] Phase 3: cases, customer binding, unbound cases, orders, Postgres checkpointer, seed data (R3, R10, R14, R29, R30, R31)
