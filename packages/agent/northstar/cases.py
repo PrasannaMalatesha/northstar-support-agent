@@ -46,6 +46,9 @@ CREATE TABLE IF NOT EXISTS cases (
     created_at timestamptz NOT NULL
 );
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS customer_id uuid REFERENCES customers (id);
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'Open';
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS draft_text text NOT NULL DEFAULT '';
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS final_text text NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS case_messages (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     case_id uuid NOT NULL REFERENCES cases (id),
@@ -66,6 +69,10 @@ CREATE TABLE IF NOT EXISTS usage_days (
     PRIMARY KEY (staff_id, day)
 );
 """
+
+
+class CaseClosed(Exception):
+    """A Resolved or Escalated case does not take another message."""
 
 
 class CaseStore:
@@ -95,6 +102,8 @@ class CaseStore:
 
     def bind(self, staff_id: uuid.UUID, query: str) -> dict:
         case_id = self._open(staff_id)
+        if self._status(case_id) != "Open":
+            raise CaseClosed()
         found = self._find_customer(query)
         if found is not None:
             with self._pool.connection() as conn:
@@ -105,8 +114,35 @@ class CaseStore:
                 conn.commit()
         return self._view(case_id)
 
+    def close(self, staff_id: uuid.UUID, status: str, final_text: str) -> dict:
+        case_id = self._open(staff_id)
+        if self._status(case_id) != "Open":
+            raise CaseClosed()
+        with self._pool.connection() as conn:
+            draft = conn.execute(
+                """
+                SELECT body FROM case_messages
+                WHERE case_id = %s AND role = 'assistant'
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (case_id,),
+            ).fetchone()
+            conn.execute(
+                """
+                UPDATE cases
+                SET status = %s, draft_text = %s, final_text = %s
+                WHERE id = %s
+                """,
+                (status, "" if draft is None else draft["body"], final_text.strip(), case_id),
+            )
+            conn.commit()
+        return self._view(case_id)
+
     def ask(self, staff_id: uuid.UUID, question: str) -> dict:
         case_id = self._open(staff_id)
+        if self._status(case_id) != "Open":
+            raise CaseClosed()
         now = self._clock.now()
         day = now.date()
         key = (staff_id, day)
@@ -152,24 +188,36 @@ class CaseStore:
         return self._view(case_id)
 
     def _view(self, case_id: uuid.UUID) -> dict:
+        row = self._case_row(case_id)
+        customer = None if row["name"] is None else {"name": row["name"], "email": row["email"]}
         return {
             "id": str(case_id),
-            "customer": self._customer(case_id),
+            "status": row["status"],
+            "draft_text": row["draft_text"],
+            "final_text": row["final_text"],
+            "customer": customer,
             "messages": self._messages(case_id),
         }
 
-    def _customer(self, case_id: uuid.UUID) -> dict | None:
+    def _status(self, case_id: uuid.UUID) -> str:
+        return self._case_row(case_id)["status"]
+
+    def _case_row(self, case_id: uuid.UUID):
         with self._pool.connection() as conn:
-            row = conn.execute(
+            return conn.execute(
                 """
-                SELECT customers.name, customers.email
+                SELECT cases.status, cases.draft_text, cases.final_text,
+                       customers.name, customers.email
                 FROM cases
                 LEFT JOIN customers ON customers.id = cases.customer_id
                 WHERE cases.id = %s
                 """,
                 (case_id,),
             ).fetchone()
-        if row is None or row["name"] is None:
+
+    def _customer(self, case_id: uuid.UUID) -> dict | None:
+        row = self._case_row(case_id)
+        if row["name"] is None:
             return None
         return {"name": row["name"], "email": row["email"]}
 
