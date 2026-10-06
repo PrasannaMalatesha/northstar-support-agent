@@ -49,6 +49,14 @@ ALTER TABLE cases ADD COLUMN IF NOT EXISTS customer_id uuid REFERENCES customers
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'Open';
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS draft_text text NOT NULL DEFAULT '';
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS final_text text NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS orders (
+    id text PRIMARY KEY,
+    customer_id uuid NOT NULL REFERENCES customers (id),
+    status text NOT NULL,
+    purchased_on date NOT NULL,
+    lines text NOT NULL,
+    refunds text NOT NULL
+);
 CREATE TABLE IF NOT EXISTS case_messages (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     case_id uuid NOT NULL REFERENCES cases (id),
@@ -94,6 +102,15 @@ class CaseStore:
                     ON CONFLICT (email) DO NOTHING
                     """,
                     (uuid.uuid5(uuid.NAMESPACE_URL, f"northstar-customer:{email}"), name, email, phone),
+                )
+            for order_id, email, status, purchased_on, lines, refunds in _ORDERS:
+                conn.execute(
+                    """
+                    INSERT INTO orders (id, customer_id, status, purchased_on, lines, refunds)
+                    VALUES (%s, (SELECT id FROM customers WHERE email = %s), %s, %s, %s, %s)
+                    ON CONFLICT (id) DO NOTHING
+                    """,
+                    (order_id, email, status, purchased_on, lines, refunds),
                 )
             conn.commit()
 
@@ -151,8 +168,12 @@ class CaseStore:
         self._requests[key] = self._requests.get(key, 0) + 1
         if _blocked(question):
             return self._save(case_id, question, _plain("safe", SAFE_REPLY), now)
-        if self._customer(case_id) is None and _asks_for_an_order(question):
-            return self._save(case_id, question, _plain("unbound", UNBOUND_ORDER_TEXT), now)
+        order_id = _order_id(question)
+        if order_id or (self._customer(case_id) is None and _asks_for_an_order(question)):
+            if self._customer(case_id) is None:
+                return self._save(case_id, question, _plain("unbound", UNBOUND_ORDER_TEXT), now)
+            if order_id:
+                return self._save(case_id, question, self._order_draft(case_id, order_id, question), now)
         if self._used(staff_id, day) + TOKENS_PER_TURN > self._token_budget:
             return self._save(case_id, question, _plain("quota", QUOTA_TEXT), now)
         draft = answer(question)
@@ -236,6 +257,32 @@ class CaseStore:
                     (digits,),
                 ).fetchone() if len(digits) >= 10 else None
         return row["id"] if row else None
+
+    def _order_draft(self, case_id: uuid.UUID, order_id: str, question: str) -> Draft:
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT orders.status, orders.purchased_on, orders.lines, orders.refunds,
+                       orders.customer_id = cases.customer_id AS owned
+                FROM cases
+                LEFT JOIN orders ON orders.id = %s
+                WHERE cases.id = %s
+                """,
+                (order_id, case_id),
+            ).fetchone()
+        if row is None or row["status"] is None:
+            return _plain("unknown", "That order id is unknown.")
+        if not row["owned"]:
+            return _plain("not_found", "Not found for this customer.")
+        text = (
+            f"Status: {row['status']}. "
+            f"Purchased: {row['purchased_on']}. "
+            f"Lines: {row['lines']}. "
+            f"Prior refunds: {row['refunds']}."
+        )
+        if re.search(r"\btracking\b", question.lower()):
+            text += " The order record does not include tracking."
+        return _plain("order", text)
 
     def _used(self, staff_id: uuid.UUID, day) -> int:
         with self._pool.connection() as conn:
@@ -322,6 +369,17 @@ _CUSTOMERS = (
     ("Mira Shah", "mira.shah@northstar.example", "5125550142"),
     ("Jon Hale", "jon.hale@northstar.example", "5125550198"),
 )
+
+
+_ORDERS = (
+    ("NS-1001", "mira.shah@northstar.example", "delivered", "2026-09-01", "Wool coat, size M", "none"),
+    ("NS-1002", "jon.hale@northstar.example", "shipped", "2026-09-12", "Canvas tote", "none"),
+)
+
+
+def _order_id(question: str) -> str | None:
+    match = re.search(r"\bNS-\d+\b", question.upper())
+    return match.group(0) if match else None
 
 
 def _asks_for_an_order(question: str) -> bool:
