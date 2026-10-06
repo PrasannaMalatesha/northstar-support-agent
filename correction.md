@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-06 — Modularity is a core requirement
+
+Status: decision
+
+What changed: Readability, maintainability, and modularity are required in `AGENTS.md`. A feature change stays in that feature's module. A new retrieval engine, model, or database is an adapter behind an interface.
+
+Evidence: Malatesha, 2026-10-06. Later changes must not rewrite unrelated code.
+
+Debug steps: The ports-and-adapters layout was already in the code-structure section. It was easy to miss, and case logic was accumulating in one module.
+
+Fix: State the rule next to the build gate. New features, starting with the v0 handbook eval, get their own module and call the existing answer function.
+
 ## 2026-10-06 — Handbook v2, written in full
 
 Status: decision
