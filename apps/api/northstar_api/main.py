@@ -3,7 +3,13 @@ from __future__ import annotations
 import uuid
 from contextlib import asynccontextmanager
 
-from northstar.cases import CaseClosed, CaseStore, ProposerCannotApprove, ProposalNotWaiting
+from northstar.cases import (
+    AmountOutOfBounds,
+    CaseClosed,
+    CaseStore,
+    ProposerCannotApprove,
+    ProposalNotWaiting,
+)
 from northstar.clock import Clock, SystemClock
 from northstar.identity.postgres import PostgresIdentityStore
 from northstar.identity.seed import seed_staff
@@ -43,6 +49,14 @@ class BindBody(BaseModel):
 
 class CloseBody(BaseModel):
     final_text: str = Field(min_length=1, max_length=4000)
+
+
+class EditAmountBody(BaseModel):
+    amount_cents: int = Field(ge=0, le=10_000_000)
+
+
+class RejectBody(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
 
 
 def create_app(
@@ -209,6 +223,32 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=404, detail="This case is not waiting.") from exc
         return {"ticket_id": ticket_id}
+
+    @app.post("/approvals/{case_id}/edit")
+    def edit_proposal(case_id: str, body: EditAmountBody, staff=Depends(require_lead)) -> dict:
+        try:
+            ticket_id, amount = cases.edit_amount(staff.id, uuid.UUID(case_id), body.amount_cents)
+        except ProposerCannotApprove as exc:
+            raise HTTPException(status_code=403, detail="You proposed this refund.") from exc
+        except ProposalNotWaiting as exc:
+            raise HTTPException(status_code=404, detail="This case is not waiting.") from exc
+        except AmountOutOfBounds as exc:
+            raise HTTPException(status_code=422, detail="That amount is above the order.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="This case is not waiting.") from exc
+        return {"ticket_id": ticket_id, "amount_cents": amount}
+
+    @app.post("/approvals/{case_id}/reject")
+    def reject_proposal(case_id: str, body: RejectBody, staff=Depends(require_lead)) -> dict:
+        try:
+            cases.reject(staff.id, uuid.UUID(case_id), body.reason)
+        except ProposerCannotApprove as exc:
+            raise HTTPException(status_code=403, detail="You proposed this refund.") from exc
+        except ProposalNotWaiting as exc:
+            raise HTTPException(status_code=404, detail="This case is not waiting.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="This case is not waiting.") from exc
+        return {"ticket_id": None}
 
     @app.post("/cases/current/customer")
     def bind_customer(body: BindBody, staff=Depends(staff_from_token)) -> dict:
