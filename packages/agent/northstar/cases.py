@@ -67,6 +67,10 @@ CREATE TABLE IF NOT EXISTS tickets (
     id uuid PRIMARY KEY,
     case_id uuid NOT NULL REFERENCES cases (id)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS tickets_one_per_case ON tickets (case_id);
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS proposed_by uuid REFERENCES staff_users (id);
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS proposal_order_id text;
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS proposed_at timestamptz;
 CREATE TABLE IF NOT EXISTS catalog_items (
     name text PRIMARY KEY,
     category text NOT NULL,
@@ -99,6 +103,14 @@ CREATE TABLE IF NOT EXISTS usage_days (
 
 class CaseClosed(Exception):
     """A Resolved or Escalated case does not take another message."""
+
+
+class ProposerCannotApprove(Exception):
+    """The staff member who proposed a refund cannot approve it."""
+
+
+class ProposalNotWaiting(Exception):
+    """There is no waiting proposal on this case."""
 
 
 class CaseStore:
@@ -207,7 +219,7 @@ class CaseStore:
         if _blocked(question):
             return self._save(case_id, question, _plain("safe", SAFE_REPLY), now)
         if _asks_for_refund(question):
-            return self._save(case_id, question, self._refund_draft(case_id, question, now), now)
+            return self._save(case_id, question, self._refund_draft(case_id, staff_id, question, now), now)
         order_id = _order_id(question)
         if order_id or (self._customer(case_id) is None and _asks_for_an_order(question)):
             if self._customer(case_id) is None:
@@ -341,7 +353,58 @@ class CaseStore:
             ).fetchone()
         return None if row is None else str(row["id"])
 
-    def _refund_draft(self, case_id: uuid.UUID, question: str, now: datetime) -> Draft:
+    def pending(self) -> list[dict]:
+        now = self._clock.now()
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, proposal_action, proposal_amount_cents, proposal_order_id, proposed_at
+                FROM cases
+                WHERE status = 'Waiting for approval'
+                ORDER BY proposed_at
+                """
+            ).fetchall()
+        waiting = []
+        for row in rows:
+            proposed_at = row["proposed_at"]
+            age = 0 if proposed_at is None else int((now - proposed_at).total_seconds())
+            waiting.append(
+                {
+                    "case_id": str(row["id"]),
+                    "action": row["proposal_action"],
+                    "amount_cents": row["proposal_amount_cents"],
+                    "order_id": row["proposal_order_id"],
+                    "age_seconds": age,
+                }
+            )
+        return waiting
+
+    def approve(self, lead_id: uuid.UUID, case_id: uuid.UUID) -> str:
+        existing = self._ticket_id(case_id)
+        if existing:
+            return existing
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                "SELECT status, proposed_by FROM cases WHERE id = %s",
+                (case_id,),
+            ).fetchone()
+            if row is None or row["status"] != "Waiting for approval":
+                raise ProposalNotWaiting()
+            if row["proposed_by"] == lead_id:
+                raise ProposerCannotApprove()
+            ticket_id = uuid.uuid4()
+            conn.execute(
+                "INSERT INTO tickets (id, case_id) VALUES (%s, %s)",
+                (ticket_id, case_id),
+            )
+            conn.execute(
+                "UPDATE cases SET status = 'Open' WHERE id = %s",
+                (case_id,),
+            )
+            conn.commit()
+        return str(ticket_id)
+
+    def _refund_draft(self, case_id: uuid.UUID, staff_id: uuid.UUID, question: str, now: datetime) -> Draft:
         order_id = _order_id(question)
         if order_id is None:
             return _plain("ask_clarification", "Which order id? No amount is proposed.")
@@ -363,36 +426,55 @@ class CaseStore:
         if not row["owned"]:
             return _plain("not_found", "Not found for this customer.")
         if row["refunds"] != "none":
-            return self._propose(case_id, "deny", 0, ("REF-DENY",), "Deny. Amount: 0 cents. The line was already refunded. (REF-DENY)")
+            return self._propose(case_id, staff_id, order_id, "deny", 0, ("REF-DENY",), "Deny. Amount: 0 cents. The line was already refunded. (REF-DENY)", now)
         window = _RETURN_DAYS[row["category"]]
         age = (now.date() - row["delivered_on"]).days
         if age > window:
             return self._propose(
                 case_id,
+                staff_id,
+                order_id,
                 "deny",
                 0,
                 ("REF-DENY", "REF-CATEGORY"),
                 "Deny. Amount: 0 cents. The request is outside the return window. (REF-DENY, REF-CATEGORY)",
+                now,
             )
         if re.search(r"\b(used|washed)\b", question.lower()):
             amount = row["total_cents"] // 2
             return self._propose(
                 case_id,
+                staff_id,
+                order_id,
                 "partial_credit",
                 amount,
                 ("REF-PARTIAL",),
                 f"Partial credit. Amount: {amount} cents. (REF-PARTIAL)",
+                now,
             )
         amount = row["total_cents"]
         return self._propose(
             case_id,
+            staff_id,
+            order_id,
             "approve_refund",
             amount,
             ("REF-ELIGIBILITY", "REF-CATEGORY"),
             f"Approve. Amount: {amount} cents. (REF-ELIGIBILITY, REF-CATEGORY)",
+            now,
         )
 
-    def _propose(self, case_id: uuid.UUID, action: str, amount: int, citations: tuple[str, ...], text: str) -> Draft:
+    def _propose(
+        self,
+        case_id: uuid.UUID,
+        staff_id: uuid.UUID,
+        order_id: str,
+        action: str,
+        amount: int,
+        citations: tuple[str, ...],
+        text: str,
+        now: datetime,
+    ) -> Draft:
         with self._pool.connection() as conn:
             conn.execute(
                 """
@@ -400,10 +482,13 @@ class CaseStore:
                 SET status = 'Waiting for approval',
                     proposal_action = %s,
                     proposal_amount_cents = %s,
-                    proposal_citations = %s
+                    proposal_citations = %s,
+                    proposed_by = %s,
+                    proposal_order_id = %s,
+                    proposed_at = %s
                 WHERE id = %s
                 """,
-                (action, amount, list(citations), case_id),
+                (action, amount, list(citations), staff_id, order_id, now, case_id),
             )
             conn.commit()
         return Draft(action, text, citations, {section_id: "strong" for section_id in citations}, ())
