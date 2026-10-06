@@ -6,6 +6,7 @@ Send the same fields to LangSmith when LANGSMITH_API_KEY is set.
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 
@@ -19,6 +20,7 @@ REQUEST_LIMIT_TEXT = (
     "This account has hit the request limit. The case is still here. Try again later."
 )
 QUOTA_TEXT = "The daily quota is reached. This case is still here."
+UNBOUND_ORDER_TEXT = "Pick a customer first. No order was read."
 SAFE_REPLY = (
     "I can't continue with that message. "
     "If there is an order question, a specialist can take it from here."
@@ -31,11 +33,19 @@ _BLOCKED = (
 )
 
 SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS customers (
+    id uuid PRIMARY KEY,
+    name text NOT NULL,
+    email text NOT NULL UNIQUE,
+    phone text NOT NULL UNIQUE
+);
 CREATE TABLE IF NOT EXISTS cases (
     id uuid PRIMARY KEY,
     staff_id uuid NOT NULL REFERENCES staff_users (id),
+    customer_id uuid REFERENCES customers (id),
     created_at timestamptz NOT NULL
 );
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS customer_id uuid REFERENCES customers (id);
 CREATE TABLE IF NOT EXISTS case_messages (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     case_id uuid NOT NULL REFERENCES cases (id),
@@ -69,11 +79,31 @@ class CaseStore:
     def ensure_schema(self) -> None:
         with self._pool.connection() as conn:
             conn.execute(SCHEMA_SQL)
+            for name, email, phone in _CUSTOMERS:
+                conn.execute(
+                    """
+                    INSERT INTO customers (id, name, email, phone)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (email) DO NOTHING
+                    """,
+                    (uuid.uuid5(uuid.NAMESPACE_URL, f"northstar-customer:{email}"), name, email, phone),
+                )
             conn.commit()
 
     def current(self, staff_id: uuid.UUID) -> dict:
+        return self._view(self._open(staff_id))
+
+    def bind(self, staff_id: uuid.UUID, query: str) -> dict:
         case_id = self._open(staff_id)
-        return {"id": str(case_id), "messages": self._messages(case_id)}
+        found = self._find_customer(query)
+        if found is not None:
+            with self._pool.connection() as conn:
+                conn.execute(
+                    "UPDATE cases SET customer_id = %s WHERE id = %s",
+                    (found, case_id),
+                )
+                conn.commit()
+        return self._view(case_id)
 
     def ask(self, staff_id: uuid.UUID, question: str) -> dict:
         case_id = self._open(staff_id)
@@ -85,6 +115,8 @@ class CaseStore:
         self._requests[key] = self._requests.get(key, 0) + 1
         if _blocked(question):
             return self._save(case_id, question, _plain("safe", SAFE_REPLY), now)
+        if self._customer(case_id) is None and _asks_for_an_order(question):
+            return self._save(case_id, question, _plain("unbound", UNBOUND_ORDER_TEXT), now)
         if self._used(staff_id, day) + TOKENS_PER_TURN > self._token_budget:
             return self._save(case_id, question, _plain("quota", QUOTA_TEXT), now)
         draft = answer(question)
@@ -117,7 +149,45 @@ class CaseStore:
                 ),
             )
             conn.commit()
-        return {"id": str(case_id), "messages": self._messages(case_id)}
+        return self._view(case_id)
+
+    def _view(self, case_id: uuid.UUID) -> dict:
+        return {
+            "id": str(case_id),
+            "customer": self._customer(case_id),
+            "messages": self._messages(case_id),
+        }
+
+    def _customer(self, case_id: uuid.UUID) -> dict | None:
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT customers.name, customers.email
+                FROM cases
+                LEFT JOIN customers ON customers.id = cases.customer_id
+                WHERE cases.id = %s
+                """,
+                (case_id,),
+            ).fetchone()
+        if row is None or row["name"] is None:
+            return None
+        return {"name": row["name"], "email": row["email"]}
+
+    def _find_customer(self, query: str) -> uuid.UUID | None:
+        text = query.strip().lower()
+        with self._pool.connection() as conn:
+            if "@" in text:
+                row = conn.execute(
+                    "SELECT id FROM customers WHERE email = %s",
+                    (text,),
+                ).fetchone()
+            else:
+                digits = re.sub(r"\D", "", text)
+                row = conn.execute(
+                    "SELECT id FROM customers WHERE phone = right(%s, 10)",
+                    (digits,),
+                ).fetchone() if len(digits) >= 10 else None
+        return row["id"] if row else None
 
     def _used(self, staff_id: uuid.UUID, day) -> int:
         with self._pool.connection() as conn:
@@ -198,6 +268,16 @@ def _iso(moment: datetime) -> str:
 
 def _plain(decision: str, text: str) -> Draft:
     return Draft(decision, text, (), {}, ())
+
+
+_CUSTOMERS = (
+    ("Mira Shah", "mira.shah@northstar.example", "5125550142"),
+    ("Jon Hale", "jon.hale@northstar.example", "5125550198"),
+)
+
+
+def _asks_for_an_order(question: str) -> bool:
+    return re.search(r"\borders?\b", question.lower()) is not None
 
 
 def _blocked(question: str) -> bool:

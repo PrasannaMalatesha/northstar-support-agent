@@ -36,6 +36,10 @@ class QuestionBody(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
 
 
+class BindBody(BaseModel):
+    query: str = Field(min_length=3, max_length=200)
+
+
 def create_app(
     settings: Settings | None = None,
     clock: Clock | None = None,
@@ -162,6 +166,10 @@ def create_app(
     @app.post("/cases/current/messages")
     def ask_case(body: QuestionBody, staff=Depends(staff_from_token)) -> dict:
         return cases.ask(staff.id, body.question)
+
+    @app.post("/cases/current/customer")
+    def bind_customer(body: BindBody, staff=Depends(staff_from_token)) -> dict:
+        return cases.bind(staff.id, body.query)
 
     return app
 

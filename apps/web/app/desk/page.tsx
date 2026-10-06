@@ -32,6 +32,26 @@ async function sameSite(): Promise<boolean> {
   }
 }
 
+async function bindAction(formData: FormData) {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/desk");
+  }
+  const access = await accessToken();
+  if (!access) {
+    redirect("/login");
+  }
+  await fetch(`${apiUrl}/cases/current/customer`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${access}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ query: String(formData.get("query") ?? "") }),
+  });
+  redirect("/desk");
+}
+
 async function askAction(formData: FormData) {
   "use server";
   if (!(await sameSite())) {
@@ -91,6 +111,7 @@ export default async function DeskPage() {
     redirect("/login");
   }
   const current = (await response.json()) as {
+    customer: { name: string; email: string } | null;
     messages: {
       role: string;
       body: string;
@@ -107,6 +128,14 @@ export default async function DeskPage() {
         {session.user.name} · {session.user.role}
       </p>
       <h1>Case desk</h1>
+      <p>{current.customer ? current.customer.name : "No customer bound."}</p>
+      <form action={bindAction}>
+        <label>
+          Customer email or phone
+          <input name="query" type="text" autoComplete="off" required />
+        </label>
+        <button type="submit">Bind</button>
+      </form>
       {current.messages.length === 0 ? (
         <p>Ask a handbook question.</p>
       ) : (
