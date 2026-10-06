@@ -71,6 +71,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS tickets_one_per_case ON tickets (case_id);
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS proposed_by uuid REFERENCES staff_users (id);
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS proposal_order_id text;
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS proposed_at timestamptz;
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS rejection_reason text;
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS amount_cents integer;
 CREATE TABLE IF NOT EXISTS catalog_items (
     name text PRIMARY KEY,
     category text NOT NULL,
@@ -111,6 +113,10 @@ class ProposerCannotApprove(Exception):
 
 class ProposalNotWaiting(Exception):
     """There is no waiting proposal on this case."""
+
+
+class AmountOutOfBounds(Exception):
+    """The edited amount is above the order total."""
 
 
 class CaseStore:
@@ -277,6 +283,8 @@ class CaseStore:
             "refund_amount_cents": row["proposal_amount_cents"],
             "policy_citations": list(row["proposal_citations"] or []),
             "ticket_id": self._ticket_id(case_id),
+            "stale": row["status"] == "Waiting for approval" and _is_stale(row["proposed_at"], self._clock.now()),
+            "rejection_reason": row["rejection_reason"],
         }
 
     def _status(self, case_id: uuid.UUID) -> str:
@@ -288,7 +296,7 @@ class CaseStore:
                 """
                 SELECT cases.status, cases.draft_text, cases.final_text,
                        cases.proposal_action, cases.proposal_amount_cents,
-                       cases.proposal_citations,
+                       cases.proposal_citations, cases.proposed_at, cases.rejection_reason,
                        customers.name, customers.email
                 FROM cases
                 LEFT JOIN customers ON customers.id = cases.customer_id
@@ -345,6 +353,38 @@ class CaseStore:
             text += " The order record does not include tracking."
         return _plain("order", text)
 
+    def _lock_waiting(self, conn, lead_id: uuid.UUID, case_id: uuid.UUID):
+        row = conn.execute(
+            """
+            SELECT status, proposed_by, proposal_amount_cents, proposal_order_id
+            FROM cases WHERE id = %s
+            """,
+            (case_id,),
+        ).fetchone()
+        if row is None or row["status"] != "Waiting for approval":
+            raise ProposalNotWaiting()
+        if row["proposed_by"] == lead_id:
+            raise ProposerCannotApprove()
+        return row
+
+    def _write_ticket(self, conn, case_id: uuid.UUID, amount_cents: int) -> uuid.UUID:
+        ticket_id = uuid.uuid4()
+        conn.execute(
+            "INSERT INTO tickets (id, case_id, amount_cents) VALUES (%s, %s, %s)",
+            (ticket_id, case_id, amount_cents),
+        )
+        return ticket_id
+
+    def _ticket_amount(self, case_id: uuid.UUID) -> tuple[str, int] | None:
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                "SELECT id, amount_cents FROM tickets WHERE case_id = %s",
+                (case_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return str(row["id"]), int(row["amount_cents"])
+
     def _ticket_id(self, case_id: uuid.UUID) -> str | None:
         with self._pool.connection() as conn:
             row = conn.execute(
@@ -375,6 +415,7 @@ class CaseStore:
                     "amount_cents": row["proposal_amount_cents"],
                     "order_id": row["proposal_order_id"],
                     "age_seconds": age,
+                    "stale": _is_stale(proposed_at, now),
                 }
             )
         return waiting
@@ -385,24 +426,55 @@ class CaseStore:
             return existing
         with self._pool.connection() as conn:
             row = conn.execute(
-                "SELECT status, proposed_by FROM cases WHERE id = %s",
+                "SELECT status, proposed_by, proposal_amount_cents FROM cases WHERE id = %s",
                 (case_id,),
             ).fetchone()
             if row is None or row["status"] != "Waiting for approval":
                 raise ProposalNotWaiting()
             if row["proposed_by"] == lead_id:
                 raise ProposerCannotApprove()
-            ticket_id = uuid.uuid4()
-            conn.execute(
-                "INSERT INTO tickets (id, case_id) VALUES (%s, %s)",
-                (ticket_id, case_id),
-            )
-            conn.execute(
-                "UPDATE cases SET status = 'Open' WHERE id = %s",
-                (case_id,),
-            )
+            ticket_id = self._write_ticket(conn, case_id, row["proposal_amount_cents"])
+            conn.execute("UPDATE cases SET status = 'Open' WHERE id = %s", (case_id,))
             conn.commit()
         return str(ticket_id)
+
+    def edit_amount(self, lead_id: uuid.UUID, case_id: uuid.UUID, amount_cents: int) -> tuple[str, int]:
+        existing = self._ticket_amount(case_id)
+        if existing is not None:
+            return existing
+        with self._pool.connection() as conn:
+            proposal = self._lock_waiting(conn, lead_id, case_id)
+            total = conn.execute(
+                "SELECT total_cents FROM orders WHERE id = %s",
+                (proposal["proposal_order_id"],),
+            ).fetchone()
+            cap = None if total is None else total["total_cents"]
+            if cap is None or amount_cents > cap:
+                raise AmountOutOfBounds()
+            ticket_id = self._write_ticket(conn, case_id, amount_cents)
+            conn.execute(
+                """
+                UPDATE cases
+                SET status = 'Open', proposal_amount_cents = %s
+                WHERE id = %s
+                """,
+                (amount_cents, case_id),
+            )
+            conn.commit()
+        return str(ticket_id), amount_cents
+
+    def reject(self, lead_id: uuid.UUID, case_id: uuid.UUID, reason: str) -> None:
+        with self._pool.connection() as conn:
+            self._lock_waiting(conn, lead_id, case_id)
+            conn.execute(
+                """
+                UPDATE cases
+                SET status = 'Open', rejection_reason = %s
+                WHERE id = %s
+                """,
+                (reason.strip(), case_id),
+            )
+            conn.commit()
 
     def _refund_draft(self, case_id: uuid.UUID, staff_id: uuid.UUID, question: str, now: datetime) -> Draft:
         order_id = _order_id(question)
@@ -630,6 +702,12 @@ def _catalog_line(row) -> str:
 def _order_id(question: str) -> str | None:
     match = re.search(r"\bNS-\d+\b", question.upper())
     return match.group(0) if match else None
+
+
+def _is_stale(proposed_at: datetime | None, now: datetime) -> bool:
+    if proposed_at is None:
+        return False
+    return (now - proposed_at).total_seconds() > 24 * 60 * 60
 
 
 def _asks_for_refund(question: str) -> bool:

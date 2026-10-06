@@ -131,7 +131,7 @@ class Identity:
                 algorithms=["HS256"],
                 issuer=ISSUER,
                 audience=AUDIENCE,
-                options={"verify_exp": False},
+                options={"verify_exp": False, "verify_iat": False},
             )
         except jwt.PyJWTError as exc:
             raise TokenInvalid() from exc

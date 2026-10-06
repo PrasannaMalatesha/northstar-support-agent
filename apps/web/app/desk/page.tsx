@@ -74,6 +74,46 @@ async function closeAction(formData: FormData) {
   redirect("/desk");
 }
 
+async function editAction(formData: FormData) {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/desk");
+  }
+  const access = await accessToken();
+  if (!access) {
+    redirect("/login");
+  }
+  await fetch(`${apiUrl}/approvals/${String(formData.get("case_id") ?? "")}/edit`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${access}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ amount_cents: Number(formData.get("amount_cents")) }),
+  });
+  redirect("/desk");
+}
+
+async function rejectAction(formData: FormData) {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/desk");
+  }
+  const access = await accessToken();
+  if (!access) {
+    redirect("/login");
+  }
+  await fetch(`${apiUrl}/approvals/${String(formData.get("case_id") ?? "")}/reject`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${access}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ reason: String(formData.get("reason") ?? "") }),
+  });
+  redirect("/desk");
+}
+
 async function approveAction(formData: FormData) {
   "use server";
   if (!(await sameSite())) {
@@ -161,6 +201,7 @@ export default async function DeskPage() {
                 amount_cents: number;
                 order_id: string;
                 age_seconds: number;
+                stale: boolean;
               }[])
             : [],
         )
@@ -168,6 +209,7 @@ export default async function DeskPage() {
 
   const current = (await response.json()) as {
     status: string;
+    stale: boolean;
     draft_text: string;
     final_text: string;
     customer: { name: string; email: string } | null;
@@ -192,17 +234,39 @@ export default async function DeskPage() {
           <h2>Waiting for approval</h2>
           {waiting.length === 0 ? <p>No proposal is waiting.</p> : null}
           {waiting.map((item) => (
-            <form action={approveAction} key={item.case_id}>
-              <input type="hidden" name="case_id" value={item.case_id} />
+            <article key={item.case_id}>
               <p>
                 {item.order_id}: {item.action}, {item.amount_cents} cents, {item.age_seconds} seconds
+                {item.stale ? " Stale." : ""}
               </p>
-              <button type="submit">Approve</button>
-            </form>
+              <form action={approveAction}>
+                <input type="hidden" name="case_id" value={item.case_id} />
+                <button type="submit">Approve</button>
+              </form>
+              <form action={editAction}>
+                <input type="hidden" name="case_id" value={item.case_id} />
+                <label>
+                  Amount in cents
+                  <input name="amount_cents" type="number" min={0} required />
+                </label>
+                <button type="submit">Edit amount</button>
+              </form>
+              <form action={rejectAction}>
+                <input type="hidden" name="case_id" value={item.case_id} />
+                <label>
+                  Reason
+                  <input name="reason" type="text" required />
+                </label>
+                <button type="submit">Reject</button>
+              </form>
+            </article>
           ))}
         </section>
       ) : null}
-      <p className="quiet">{current.status}</p>
+      <p className="quiet">
+        {current.status}
+        {current.stale ? " Stale." : ""}
+      </p>
       <p>{current.customer ? current.customer.name : "No customer bound."}</p>
       {current.draft_text ? (
         <article className="turn">
