@@ -472,6 +472,8 @@ Repository: [PrasannaMalatesha/northstar-support-agent](https://github.com/Prasa
 
 `dev`, `uat`, and `prod` are created from `main`. Work happens on `feature/*` cut from `dev`. Promotion is always by PR, in one direction. Hotfix: `hotfix/*` from `prod`, PR into `prod`, then merged down into `uat` and `dev`. Branch protection on `dev`, `uat`, `prod`, and `main`; free GitHub branch protection needs a public repo.
 
+A finished change is not done until it is committed and pushed to that feature branch on GitHub. If a pull request into `dev` is not already open, open one. Do not leave completed code only on the local machine. Do not commit secrets. Do not push straight to `main`, `uat`, or `prod`.
+
 ## CI and deploy
 
 | PR into | Gate |

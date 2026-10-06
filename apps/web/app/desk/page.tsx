@@ -52,6 +52,28 @@ async function bindAction(formData: FormData) {
   redirect("/desk");
 }
 
+async function closeAction(formData: FormData) {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/desk");
+  }
+  const access = await accessToken();
+  if (!access) {
+    redirect("/login");
+  }
+  const status = String(formData.get("status") ?? "");
+  const path = status === "Escalated" ? "escalate" : "resolve";
+  await fetch(`${apiUrl}/cases/current/${path}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${access}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ final_text: String(formData.get("final_text") ?? "") }),
+  });
+  redirect("/desk");
+}
+
 async function askAction(formData: FormData) {
   "use server";
   if (!(await sameSite())) {
@@ -111,6 +133,9 @@ export default async function DeskPage() {
     redirect("/login");
   }
   const current = (await response.json()) as {
+    status: string;
+    draft_text: string;
+    final_text: string;
     customer: { name: string; email: string } | null;
     messages: {
       role: string;
@@ -128,14 +153,20 @@ export default async function DeskPage() {
         {session.user.name} · {session.user.role}
       </p>
       <h1>Case desk</h1>
+      <p className="quiet">{current.status}</p>
       <p>{current.customer ? current.customer.name : "No customer bound."}</p>
-      <form action={bindAction}>
-        <label>
-          Customer email or phone
-          <input name="query" type="text" autoComplete="off" required />
-        </label>
-        <button type="submit">Bind</button>
-      </form>
+      {current.draft_text ? (
+        <article className="turn">
+          <p className="quiet">Agent draft</p>
+          <p>{current.draft_text}</p>
+        </article>
+      ) : null}
+      {current.final_text ? (
+        <article className="turn">
+          <p className="quiet">Final text</p>
+          <p>{current.final_text}</p>
+        </article>
+      ) : null}
       {current.messages.length === 0 ? (
         <p>Ask a handbook question.</p>
       ) : (
@@ -165,13 +196,36 @@ export default async function DeskPage() {
           </article>
         ))
       )}
-      <form action={askAction}>
-        <label>
-          Handbook question
-          <textarea name="question" required maxLength={2000} />
-        </label>
-        <button type="submit">Ask</button>
-      </form>
+      {current.status === "Open" ? (
+        <>
+          <form action={bindAction}>
+            <label>
+              Customer email or phone
+              <input name="query" type="text" autoComplete="off" required />
+            </label>
+            <button type="submit">Bind</button>
+          </form>
+          <form action={askAction}>
+            <label>
+              Handbook question
+              <textarea name="question" required maxLength={2000} />
+            </label>
+            <button type="submit">Ask</button>
+          </form>
+          <form action={closeAction}>
+            <label>
+              Final text
+              <textarea name="final_text" required maxLength={4000} />
+            </label>
+            <button type="submit" name="status" value="Resolved">
+              Resolve
+            </button>
+            <button type="submit" name="status" value="Escalated">
+              Escalate
+            </button>
+          </form>
+        </>
+      ) : null}
       <form action={logoutAction}>
         <button type="submit">Log out</button>
       </form>

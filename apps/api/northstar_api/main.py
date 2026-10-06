@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from northstar.cases import CaseStore
+from northstar.cases import CaseClosed, CaseStore
 from northstar.clock import Clock, SystemClock
 from northstar.identity.postgres import PostgresIdentityStore
 from northstar.identity.seed import seed_staff
@@ -38,6 +38,10 @@ class QuestionBody(BaseModel):
 
 class BindBody(BaseModel):
     query: str = Field(min_length=3, max_length=200)
+
+
+class CloseBody(BaseModel):
+    final_text: str = Field(min_length=1, max_length=4000)
 
 
 def create_app(
@@ -165,11 +169,31 @@ def create_app(
 
     @app.post("/cases/current/messages")
     def ask_case(body: QuestionBody, staff=Depends(staff_from_token)) -> dict:
-        return cases.ask(staff.id, body.question)
+        try:
+            return cases.ask(staff.id, body.question)
+        except CaseClosed as exc:
+            raise HTTPException(status_code=409, detail="This case is closed.") from exc
+
+    @app.post("/cases/current/resolve")
+    def resolve_case(body: CloseBody, staff=Depends(staff_from_token)) -> dict:
+        try:
+            return cases.close(staff.id, "Resolved", body.final_text)
+        except CaseClosed as exc:
+            raise HTTPException(status_code=409, detail="This case is closed.") from exc
+
+    @app.post("/cases/current/escalate")
+    def escalate_case(body: CloseBody, staff=Depends(staff_from_token)) -> dict:
+        try:
+            return cases.close(staff.id, "Escalated", body.final_text)
+        except CaseClosed as exc:
+            raise HTTPException(status_code=409, detail="This case is closed.") from exc
 
     @app.post("/cases/current/customer")
     def bind_customer(body: BindBody, staff=Depends(staff_from_token)) -> dict:
-        return cases.bind(staff.id, body.query)
+        try:
+            return cases.bind(staff.id, body.query)
+        except CaseClosed as exc:
+            raise HTTPException(status_code=409, detail="This case is closed.") from exc
 
     return app
 
