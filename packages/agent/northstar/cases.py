@@ -57,6 +57,14 @@ CREATE TABLE IF NOT EXISTS orders (
     lines text NOT NULL,
     refunds text NOT NULL
 );
+CREATE TABLE IF NOT EXISTS catalog_items (
+    name text PRIMARY KEY,
+    category text NOT NULL,
+    price_cents integer NOT NULL,
+    sizes text NOT NULL,
+    in_stock boolean NOT NULL,
+    final_sale boolean NOT NULL
+);
 CREATE TABLE IF NOT EXISTS case_messages (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     case_id uuid NOT NULL REFERENCES cases (id),
@@ -111,6 +119,16 @@ class CaseStore:
                     ON CONFLICT (id) DO NOTHING
                     """,
                     (order_id, email, status, purchased_on, lines, refunds),
+                )
+            for name, category, price_cents, sizes, in_stock, final_sale in _CATALOG:
+                conn.execute(
+                    """
+                    INSERT INTO catalog_items
+                        (name, category, price_cents, sizes, in_stock, final_sale)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (name) DO NOTHING
+                    """,
+                    (name, category, price_cents, sizes, in_stock, final_sale),
                 )
             conn.commit()
 
@@ -174,6 +192,9 @@ class CaseStore:
                 return self._save(case_id, question, _plain("unbound", UNBOUND_ORDER_TEXT), now)
             if order_id:
                 return self._save(case_id, question, self._order_draft(case_id, order_id, question), now)
+        catalog = self._catalog_draft(question)
+        if catalog is not None:
+            return self._save(case_id, question, catalog, now)
         if self._used(staff_id, day) + TOKENS_PER_TURN > self._token_budget:
             return self._save(case_id, question, _plain("quota", QUOTA_TEXT), now)
         draft = answer(question)
@@ -284,6 +305,21 @@ class CaseStore:
             text += " The order record does not include tracking."
         return _plain("order", text)
 
+    def _catalog_draft(self, question: str) -> Draft | None:
+        lowered = question.lower()
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                "SELECT name, category, price_cents, sizes, in_stock, final_sale FROM catalog_items"
+            ).fetchall()
+        named = [row for row in rows if row["name"].lower() in lowered]
+        if named and any(word in lowered for word in _MISSING_FIELDS):
+            return _plain("abstain", "The catalog row does not have that field.")
+        if named:
+            return _plain("catalog", "\n".join(_catalog_line(row) for row in named))
+        if any(phrase in lowered for phrase in _CATALOG_PHRASES):
+            return _plain("abstain", "I don't have that item in the catalog.")
+        return None
+
     def _used(self, staff_id: uuid.UUID, day) -> int:
         with self._pool.connection() as conn:
             row = conn.execute(
@@ -375,6 +411,25 @@ _ORDERS = (
     ("NS-1001", "mira.shah@northstar.example", "delivered", "2026-09-01", "Wool coat, size M", "none"),
     ("NS-1002", "jon.hale@northstar.example", "shipped", "2026-09-12", "Canvas tote", "none"),
 )
+
+
+_CATALOG = (
+    ("Wool coat", "apparel and footwear", 12800, "S, M, L", True, False),
+    ("Canvas tote", "bags and accessories", 4800, "one size", True, False),
+    ("Trail earbuds", "small electronics", 7900, "one size", False, True),
+)
+_MISSING_FIELDS = ("material", "review", "rating", "weight", "fabric", "color")
+_CATALOG_PHRASES = ("in stock", "how much", "price", "final sale", "what size")
+
+
+def _catalog_line(row) -> str:
+    stock = "yes" if row["in_stock"] else "no"
+    final_sale = "yes" if row["final_sale"] else "no"
+    return (
+        f"{row['name']}. Category: {row['category']}. "
+        f"Price: ${row['price_cents'] / 100:.2f}. Sizes: {row['sizes']}. "
+        f"In stock: {stock}. Final sale: {final_sale}."
+    )
 
 
 def _order_id(question: str) -> str | None:
