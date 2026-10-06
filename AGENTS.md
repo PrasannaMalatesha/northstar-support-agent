@@ -18,6 +18,16 @@ Implement only when Malatesha says to build. Until then, update this file when d
 
 During implementation, export a presentation image from the Northstar architecture canvas. Write `diagrams/northstar-architecture.png` (and a JPEG copy if the renderer supports it) into this repo. The canvas is the layout source. The image is what gets shown in a walkthrough. Update the image in the same change if the architecture boxes change.
 
+## Core requirements
+
+Readability, maintainability, and modularity are required.
+
+- A feature lives in one module. A change to that feature stays in that module and its tests.
+- Callers depend on a small interface. A new retrieval engine, model, or database is a new adapter behind that interface. It does not edit the caller.
+- A small change must not force edits across the codebase. If it does, the boundary is wrong. Fix the boundary before adding the next feature.
+- A name says what the module does. A reader follows one feature without reading unrelated modules.
+- A rule has one source. The handbook, the section registry, and the eval cases are not copied into a second place.
+
 ## Stack
 
 - Next.js for the support console (chat and refund approval)
@@ -378,6 +388,8 @@ Drift:
 - Human review: low online scores and specialist edits go to an annotation queue, then into the golden set under a new dataset version.
 
 ## Code structure (SOLID, DRY)
+
+The core requirements above are the rule. This is where the modules go.
 
 - `domain/`: pure types and rules (amount math, window checks). No I/O.
 - `ports/`: `PolicyRetriever`, `Reranker`, `OrderRepository`, `CatalogRepository`, `TicketRepository`, `CaseRepository`, `CustomerMemory`, `Judge`.
