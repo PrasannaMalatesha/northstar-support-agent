@@ -57,6 +57,16 @@ CREATE TABLE IF NOT EXISTS orders (
     lines text NOT NULL,
     refunds text NOT NULL
 );
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_cents integer;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered_on date;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS category text;
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS proposal_action text;
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS proposal_amount_cents integer;
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS proposal_citations text[] NOT NULL DEFAULT '{}';
+CREATE TABLE IF NOT EXISTS tickets (
+    id uuid PRIMARY KEY,
+    case_id uuid NOT NULL REFERENCES cases (id)
+);
 CREATE TABLE IF NOT EXISTS catalog_items (
     name text PRIMARY KEY,
     category text NOT NULL,
@@ -111,14 +121,24 @@ class CaseStore:
                     """,
                     (uuid.uuid5(uuid.NAMESPACE_URL, f"northstar-customer:{email}"), name, email, phone),
                 )
-            for order_id, email, status, purchased_on, lines, refunds in _ORDERS:
+            for order_id, email, status, purchased_on, lines, refunds, total_cents, delivered_on, category in _ORDERS:
                 conn.execute(
                     """
-                    INSERT INTO orders (id, customer_id, status, purchased_on, lines, refunds)
-                    VALUES (%s, (SELECT id FROM customers WHERE email = %s), %s, %s, %s, %s)
-                    ON CONFLICT (id) DO NOTHING
+                    INSERT INTO orders (
+                        id, customer_id, status, purchased_on, lines, refunds,
+                        total_cents, delivered_on, category
+                    )
+                    VALUES (
+                        %s, (SELECT id FROM customers WHERE email = %s), %s, %s, %s, %s,
+                        %s, %s, %s
+                    )
+                    ON CONFLICT (id) DO UPDATE SET
+                        total_cents = EXCLUDED.total_cents,
+                        delivered_on = EXCLUDED.delivered_on,
+                        category = EXCLUDED.category,
+                        refunds = EXCLUDED.refunds
                     """,
-                    (order_id, email, status, purchased_on, lines, refunds),
+                    (order_id, email, status, purchased_on, lines, refunds, total_cents, delivered_on, category),
                 )
             for name, category, price_cents, sizes, in_stock, final_sale in _CATALOG:
                 conn.execute(
@@ -186,6 +206,8 @@ class CaseStore:
         self._requests[key] = self._requests.get(key, 0) + 1
         if _blocked(question):
             return self._save(case_id, question, _plain("safe", SAFE_REPLY), now)
+        if _asks_for_refund(question):
+            return self._save(case_id, question, self._refund_draft(case_id, question, now), now)
         order_id = _order_id(question)
         if order_id or (self._customer(case_id) is None and _asks_for_an_order(question)):
             if self._customer(case_id) is None:
@@ -239,6 +261,10 @@ class CaseStore:
             "final_text": row["final_text"],
             "customer": customer,
             "messages": self._messages(case_id),
+            "action": row["proposal_action"],
+            "refund_amount_cents": row["proposal_amount_cents"],
+            "policy_citations": list(row["proposal_citations"] or []),
+            "ticket_id": self._ticket_id(case_id),
         }
 
     def _status(self, case_id: uuid.UUID) -> str:
@@ -249,6 +275,8 @@ class CaseStore:
             return conn.execute(
                 """
                 SELECT cases.status, cases.draft_text, cases.final_text,
+                       cases.proposal_action, cases.proposal_amount_cents,
+                       cases.proposal_citations,
                        customers.name, customers.email
                 FROM cases
                 LEFT JOIN customers ON customers.id = cases.customer_id
@@ -304,6 +332,81 @@ class CaseStore:
         if re.search(r"\btracking\b", question.lower()):
             text += " The order record does not include tracking."
         return _plain("order", text)
+
+    def _ticket_id(self, case_id: uuid.UUID) -> str | None:
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                "SELECT id FROM tickets WHERE case_id = %s",
+                (case_id,),
+            ).fetchone()
+        return None if row is None else str(row["id"])
+
+    def _refund_draft(self, case_id: uuid.UUID, question: str, now: datetime) -> Draft:
+        order_id = _order_id(question)
+        if order_id is None:
+            return _plain("ask_clarification", "Which order id? No amount is proposed.")
+        if self._customer(case_id) is None:
+            return _plain("unbound", UNBOUND_ORDER_TEXT)
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT orders.total_cents, orders.delivered_on, orders.category, orders.refunds,
+                       orders.customer_id = cases.customer_id AS owned
+                FROM cases
+                LEFT JOIN orders ON orders.id = %s
+                WHERE cases.id = %s
+                """,
+                (order_id, case_id),
+            ).fetchone()
+        if row is None or row["total_cents"] is None:
+            return _plain("unknown", "That order id is unknown.")
+        if not row["owned"]:
+            return _plain("not_found", "Not found for this customer.")
+        if row["refunds"] != "none":
+            return self._propose(case_id, "deny", 0, ("REF-DENY",), "Deny. Amount: 0 cents. The line was already refunded. (REF-DENY)")
+        window = _RETURN_DAYS[row["category"]]
+        age = (now.date() - row["delivered_on"]).days
+        if age > window:
+            return self._propose(
+                case_id,
+                "deny",
+                0,
+                ("REF-DENY", "REF-CATEGORY"),
+                "Deny. Amount: 0 cents. The request is outside the return window. (REF-DENY, REF-CATEGORY)",
+            )
+        if re.search(r"\b(used|washed)\b", question.lower()):
+            amount = row["total_cents"] // 2
+            return self._propose(
+                case_id,
+                "partial_credit",
+                amount,
+                ("REF-PARTIAL",),
+                f"Partial credit. Amount: {amount} cents. (REF-PARTIAL)",
+            )
+        amount = row["total_cents"]
+        return self._propose(
+            case_id,
+            "approve_refund",
+            amount,
+            ("REF-ELIGIBILITY", "REF-CATEGORY"),
+            f"Approve. Amount: {amount} cents. (REF-ELIGIBILITY, REF-CATEGORY)",
+        )
+
+    def _propose(self, case_id: uuid.UUID, action: str, amount: int, citations: tuple[str, ...], text: str) -> Draft:
+        with self._pool.connection() as conn:
+            conn.execute(
+                """
+                UPDATE cases
+                SET status = 'Waiting for approval',
+                    proposal_action = %s,
+                    proposal_amount_cents = %s,
+                    proposal_citations = %s
+                WHERE id = %s
+                """,
+                (action, amount, list(citations), case_id),
+            )
+            conn.commit()
+        return Draft(action, text, citations, {section_id: "strong" for section_id in citations}, ())
 
     def _catalog_draft(self, question: str) -> Draft | None:
         lowered = question.lower()
@@ -408,9 +511,16 @@ _CUSTOMERS = (
 
 
 _ORDERS = (
-    ("NS-1001", "mira.shah@northstar.example", "delivered", "2026-09-01", "Wool coat, size M", "none"),
-    ("NS-1002", "jon.hale@northstar.example", "shipped", "2026-09-12", "Canvas tote", "none"),
+    ("NS-1001", "mira.shah@northstar.example", "delivered", "2026-09-01", "Wool coat, size M", "none", 12800, "2026-09-20", "apparel and footwear"),
+    ("NS-1002", "jon.hale@northstar.example", "shipped", "2026-09-12", "Canvas tote", "none", 4800, "2026-09-12", "bags and accessories"),
+    ("NS-1003", "mira.shah@northstar.example", "delivered", "2026-09-01", "Wool scarf", "refunded", 2000, "2026-09-20", "apparel and footwear"),
 )
+_RETURN_DAYS = {
+    "apparel and footwear": 30,
+    "bags and accessories": 30,
+    "home and kitchen": 30,
+    "small electronics": 15,
+}
 
 
 _CATALOG = (
@@ -435,6 +545,10 @@ def _catalog_line(row) -> str:
 def _order_id(question: str) -> str | None:
     match = re.search(r"\bNS-\d+\b", question.upper())
     return match.group(0) if match else None
+
+
+def _asks_for_refund(question: str) -> bool:
+    return re.search(r"\brefunds?\b|\bcredit\b", question.lower()) is not None
 
 
 def _asks_for_an_order(question: str) -> bool:
