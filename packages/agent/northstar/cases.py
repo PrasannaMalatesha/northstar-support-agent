@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime
 
 from northstar.clock import Clock
+from northstar.escalate import handoff
 from northstar.handbook import Draft, answer
 from northstar.privacy import SECRET_REPLY, has_secret, screen
 
@@ -213,6 +214,18 @@ class CaseStore:
             conn.commit()
         return self._view(case_id)
 
+    def _mark_escalated(self, case_id: uuid.UUID, handoff_text: str) -> None:
+        with self._pool.connection() as conn:
+            conn.execute(
+                """
+                UPDATE cases
+                SET status = 'Escalated', draft_text = %s
+                WHERE id = %s
+                """,
+                (handoff_text, case_id),
+            )
+            conn.commit()
+
     def ask(self, staff_id: uuid.UUID, question: str) -> dict:
         case_id = self._open(staff_id)
         if self._status(case_id) != "Open":
@@ -225,6 +238,16 @@ class CaseStore:
         self._requests[key] = self._requests.get(key, 0) + 1
         if has_secret(question):
             return self._save(case_id, question, _plain("blocked", SECRET_REPLY), now)
+        escalated = handoff(question)
+        if escalated is not None:
+            section, text = escalated
+            self._mark_escalated(case_id, text)
+            return self._save(
+                case_id,
+                question,
+                Draft("escalate", text, (section,), {section: "strong"}, ()),
+                now,
+            )
         if _blocked(question):
             return self._save(case_id, question, _plain("safe", SAFE_REPLY), now)
         if _asks_for_refund(question):
