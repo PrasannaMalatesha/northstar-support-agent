@@ -6,7 +6,7 @@ Still slice 1. Owner: Malatesha (`PrasannaMalatesha`). No `Co-authored-by` and n
 
 ## Done
 
-Desk behavior for GitHub issues #2–#22 is on `dev` through the merge of PR #49 (`fe57dff`). A refund proposal now pauses the graph thread with `interrupt` until a lead approves, edits, or rejects. The case row is still the ticket.
+Branch from `origin/dev`. Desk behavior for GitHub issues #2–#22 is on `dev`. [PR #50](https://github.com/PrasannaMalatesha/northstar-support-agent/pull/50) pauses a refund proposal on the graph thread with `interrupt` until a lead approves, edits, or rejects. The case row is still the ticket.
 
 ## Pending
 
