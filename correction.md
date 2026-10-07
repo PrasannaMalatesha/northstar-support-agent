@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — Branch protection on uat, dev, prod, and main
+
+Status: decision
+
+What changed: `uat`, `dev`, `prod`, and `main` now require a pull request and the CI checks `Test API` and `Lint and build console` before a merge. Admins are included. Force pushes and branch deletion are off. Zero approving reviews are required, because the owner is the only contributor. This meets the #22 criterion "a miss blocks promotion to uat": the release bar and the axe scan are those two checks.
+
+Evidence: The branches had no protection and the repo had no rulesets. Before this change, a failing CI only skipped the Deploy job and did not block the merge. AGENTS.md (Branching and promotion) asks for protection on all four. Set through `PUT /repos/{owner}/{repo}/branches/{branch}/protection` ([branch protection API](https://docs.github.com/rest/branches/branch-protection#update-branch-protection)).
+
+Debug steps: Read the protection back for each branch: required checks, admin enforcement, a PR required, no force pushes.
+
+Fix: GitHub repository settings. Emergency bypass means turning admin enforcement off for that branch, on purpose.
+
 ## 2026-10-07 — The live judge scored a model call instead of the LangGraph root
 
 Status: bug
