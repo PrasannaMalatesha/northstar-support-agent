@@ -86,6 +86,22 @@ def _compile():
 GRAPH = _compile()
 
 
+def turn_path(question: str, tools: TurnTools) -> list[str]:
+    # ponytail: node names only. Append tool-call names when a node named
+    # "tools" exists, as the complex-agent guide does.
+    names = []
+    for item in GRAPH.stream(
+        {"question": question},
+        context=tools,
+        stream_mode="debug",
+        subgraphs=True,
+    ):
+        chunk = item[-1]
+        if isinstance(chunk, dict) and chunk.get("type") == "task":
+            names.append(chunk["payload"]["name"])
+    return names
+
+
 def run_turn(question: str, tools: TurnTools) -> Draft:
     result = GRAPH.invoke({"question": question}, context=tools)
     return Draft(
