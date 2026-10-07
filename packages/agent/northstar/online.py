@@ -61,7 +61,9 @@ def record_judge(
 def _post_feedback(run_id: str, score: int) -> None:
     from langsmith import Client
 
-    Client().create_feedback(run_id, key="policy_groundedness", score=score)
+    client = Client()
+    project = client.read_project(project_name=os.environ["LANGSMITH_PROJECT"])
+    client.create_feedback(run_id, key="policy_groundedness", score=score, session_id=project.id)
 
 
 def _live_grounded(question: str, text: str, citations: tuple[str, ...]) -> bool:
