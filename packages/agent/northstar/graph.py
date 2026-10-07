@@ -8,6 +8,7 @@ a checkpointer is attached. The case row still writes the ticket.
 
 from __future__ import annotations
 
+import logging
 import os
 import random
 import re
@@ -193,18 +194,17 @@ def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None 
 
     _load_local_env()
     graph = graph or GRAPH
-    config = None if thread_id is None else {"configurable": {"thread_id": thread_id}}
     traced = os.environ.get("LANGSMITH_TRACING", "").lower() == "true" and not os.environ.get("PYTEST_CURRENT_TEST")
+    config = {} if thread_id is None else {"configurable": {"thread_id": thread_id}}
     run_id = None
     if traced:
-        from langchain_core.tracers.context import collect_runs
+        # Name the LangGraph root run up front. Collected runs can list a child model call first.
+        from langsmith import uuid7
 
-        with collect_runs() as collected:
-            result = graph.invoke({"question": question}, config, context=tools)
-        if collected.traced_runs:
-            run_id = str(collected.traced_runs[0].id)
-    else:
-        result = graph.invoke({"question": question}, config, context=tools)
+        root = uuid7()
+        config["run_id"] = root
+        run_id = str(root)
+    result = graph.invoke({"question": question}, config or None, context=tools)
     followup = result["followup"] if "followup" in result else result["text"]
     if traced:
         from langchain_core.tracers.langchain import wait_for_all_tracers
@@ -223,7 +223,8 @@ def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None 
                     random.random(),
                 )
             except Exception:
-                pass
+                # The turn still returns. The log says the judge did not score it.
+                logging.getLogger(__name__).warning("groundedness judge failed for run %s", run_id, exc_info=True)
     return Draft(
         result["decision"],
         followup,

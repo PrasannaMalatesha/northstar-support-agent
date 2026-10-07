@@ -16,11 +16,12 @@ git checkout dev
 git pull origin dev
 ```
 
-The specialist-edit judge and the handoff fix are on branch `feature/specialist-edit-judge` (PR into `dev`). If that PR is merged, `origin/dev` holds all slice 1 code that is planned. Then:
+PR #61 (edit judge, handoff through the graph) is merged. The fix that writes the judge score to the LangGraph root is on `feature/judge-root-run`. Then:
 
-1. Ask Malatesha whether #22 may close. Every checklist box is built or covered by CI except "a miss blocks promotion to uat", which stays manual (see below).
-2. If yes, close #22 and then #1.
-3. Update this file before you stop.
+1. Merge `feature/judge-root-run` if its PR is still open and green.
+2. #22 box "a miss blocks promotion to uat" is **not met**. `uat` (and `dev`, `prod`, `main`) have no branch protection and the repo has no rulesets, so a red CI does not block a merge into `uat`. AGENTS.md asks for protection on all four. The fix is a GitHub setting: require the `Test API` and `Lint and build console` checks on `uat`. Only do this with Malatesha's go-ahead.
+3. After that, close #22, then #1.
+4. Update this file before you stop.
 
 Do not invent deploy hooks. Do not promote `dev` → `uat` or `prod` unless Malatesha asks. Do not create tickets from slice 2 / P1 or slice 3 / P2 unless asked. Phase checkboxes in `docs/plans/slice-1-build-phases.md` stay unchecked except phase 0, unless asked. `PostgresStore` is slice 2.
 
@@ -36,13 +37,14 @@ Issues **#2–#21** are closed on GitHub. Desk, auth, cases, orders, catalog, re
 | #58 | Bad citation → abstain before save |
 | #59 | Safety code on every LangGraph root run; OpenRouter groundedness on abstain / escalate / 10% sample |
 | #60 | Handoff notes for #22 (this file) |
-| `feature/specialist-edit-judge` | Judge every edited draft or amount; handoff escalations run through the graph; one sampling rule |
+| #61 | Judge every edited draft or amount; handoff escalations run through the graph; one sampling rule |
+| `feature/judge-root-run` | The judge writes to the LangGraph root, not a child model call (bug found on a live turn) |
 
 #57 was closed unmerged, because #60 replaced it.
 
 How the online path works now:
 
-- `run_turn` returns the LangGraph root run id on `Draft.run_id`. `CaseStore._save` stores it in `case_messages.run_id` (null when tracing is off, including in pytest).
+- `run_turn` sets the LangGraph root run id up front (`config["run_id"]`, a uuid7) and returns it on `Draft.run_id`. `CaseStore._save` stores it in `case_messages.run_id` (null when tracing is off, including in pytest).
 - `CaseStore.close` (resolve or escalate) judges the last turn when `final_text` differs from the draft. `CaseStore.edit_amount` judges the proposal turn when the lead changes the amount. Both call `record_judge(..., edited=True)` on the stored run id and skip when the run id is null.
 - Handoff escalations (`ESC-LEGAL`, `ESC-WHEN`) run through `run_turn` with the handoff as the fixed desk draft, so they get a root run with `decision = escalate`.
 - The sampling rule lives only in `northstar.online.should_judge`. `evals.release_bar.online_checks` imports it.
@@ -54,7 +56,7 @@ How the online path works now:
 
 | Issue | Title | Status |
 | --- | --- | --- |
-| [#22](https://github.com/PrasannaMalatesha/northstar-support-agent/issues/22) | The release bar and an axe pass gate uat | **OPEN** — waiting on Malatesha to approve closing it |
+| [#22](https://github.com/PrasannaMalatesha/northstar-support-agent/issues/22) | The release bar and an axe pass gate uat | **OPEN** — uat branch protection missing (see Where to start) |
 | [#1](https://github.com/PrasannaMalatesha/northstar-support-agent/issues/1) | Spec: Northstar Support Agent, slice 1 | **OPEN** — close only after #22 |
 
 ### #22 acceptance (from the issue)
@@ -63,8 +65,8 @@ How the online path works now:
 - [x] Zero tickets without approval. Zero invalid citations. Every abstain row abstains (release bar, CI).
 - [x] p95 turn latency under 10s excluding approval wait; no token cap exceeded (release bar, CI).
 - [x] Login, case desk, waiting list: axe scan + keyboard walkthrough (`apps/web/tests/screens.spec.ts`, CI).
-- [ ] A miss blocks promotion to uat. Manual: no deploy hooks are invented (same rule that closed #5).
-- [x] Online checks: safety code on every LangGraph run; judges cover a sample plus every abstain, escalation, and edit.
+- [ ] A miss blocks promotion to uat. CI fails on a miss and the Deploy job `needs` it, but nothing blocks the merge into `uat`. Needs branch protection with required checks.
+- [x] Online checks: safety code on every LangGraph run; judges cover a sample plus every abstain, escalation, and edit. Checked live on `northstar-local` 2026-10-07: `safety = 1` from the run rule and `policy_groundedness = 1` from the judge, both on the LangGraph root. Only `northstar-local` exists in LangSmith. When `northstar-dev`/`uat`/`prod` get traffic, run `uv run python -m northstar.online` with that `LANGSMITH_PROJECT` to attach the rule.
 
 Also unfinished (not separate GitHub tickets unless you open them):
 
@@ -117,8 +119,8 @@ Also unfinished (not separate GitHub tickets unless you open them):
 
 ## Continue checklist
 
-1. Sync `dev`. Merge `feature/specialist-edit-judge` if its PR is still open and green.
-2. Ask Malatesha whether #22 may close with the uat-promotion box left manual.
-3. If yes, close #22, then #1.
+1. Sync `dev`. Merge `feature/judge-root-run` if its PR is still open and green.
+2. With Malatesha's go-ahead, protect `uat` with the required checks `Test API` and `Lint and build console` (AGENTS.md also asks for `dev`, `prod`, `main`).
+3. Close #22, then #1.
 4. Next work only when asked: middleware wiring, then the screen recording.
 5. Rewrite the Where to start / Still open sections of this file for the next stop.

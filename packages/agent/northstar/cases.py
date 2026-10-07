@@ -6,6 +6,7 @@ Send the same fields to LangSmith when LANGSMITH_API_KEY is set.
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from datetime import datetime
@@ -628,7 +629,7 @@ class CaseStore:
             )
         except Exception:
             # A LangSmith or judge outage must not undo a close or a ticket.
-            pass
+            logging.getLogger(__name__).warning("edit judge failed for run %s", draft["run_id"], exc_info=True)
 
     def _resume(self, case_id: uuid.UUID, decision: str) -> None:
         resume_turn(graph_for(self._pool.conninfo), str(case_id), decision)

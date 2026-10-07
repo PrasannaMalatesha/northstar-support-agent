@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — The live judge scored a model call instead of the LangGraph root
+
+Status: bug
+
+What broke: `run_turn` took the run id from `collect_runs().traced_runs[0]`. With a live Gemini key, that was the first `ChatGoogleGenerativeAI` child run, not the LangGraph root. So `policy_groundedness` landed on a model call, and an edit judged later would land on the same wrong run. After the first fix, passing `project_id` to `create_feedback` raised "project_id cannot be provided if run_id or trace_id is provided". The judge's `except Exception: pass` hid that error, so the turn looked fine and no score was written.
+
+Evidence: One live abstain turn on `northstar-local`. The judged id had name `ChatGoogleGenerativeAI` and its trace id was the LangGraph root's id. The safety rule had scored the real root (`safety = 1`), so the run rule was fine. Only the judge's run id was wrong. The installed SDK (langsmith 0.14.4) also warns that run-level feedback without `session_id` is deprecated ([feedback create migration](https://docs.langchain.com/langsmith/smithdb-sdk-migration-feedback#feedback-create)).
+
+Debug steps: Listed every run in the trace with its parent and trace ids. Read `RunnableConfig.run_id` in langchain-core ("Unique identifier for the tracer run for this call"). Called `record_judge` directly to surface the swallowed error.
+
+Fix: `run_turn` creates a `uuid7` and passes it as `config["run_id"]`, so the root run id is known before the graph runs. `_post_feedback` passes the project id as `session_id`. Judge failures now log a warning instead of passing silently. Checked live: the judged run is the `LangGraph` root with `decision = abstain`, and it carries `policy_groundedness = 1`. pytest turns tracing off, so this path is checked live, not in CI.
+
 ## 2026-10-07 — Every edit and every handoff escalation is judged
 
 Status: decision
