@@ -178,6 +178,10 @@ def create_app(
         except TokenInvalid as exc:
             raise HTTPException(status_code=401, detail="Sign in required.") from exc
 
+    @app.post("/cases/current/new")
+    def new_case(staff=Depends(staff_from_token)) -> dict:
+        return cases.start_new(staff.id)
+
     @app.get("/cases/current")
     def current_case(staff=Depends(staff_from_token)) -> dict:
         return cases.current(staff.id)

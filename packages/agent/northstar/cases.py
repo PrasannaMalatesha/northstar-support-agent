@@ -175,6 +175,28 @@ class CaseStore:
     def current(self, staff_id: uuid.UUID) -> dict:
         return self._view(self._open(staff_id))
 
+    def start_new(self, staff_id: uuid.UUID) -> dict:
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT id, status FROM cases
+                WHERE staff_id = %s
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """,
+                (staff_id,),
+            ).fetchone()
+            if row is not None and row["status"] in ("Open", "Waiting for approval"):
+                case_id = row["id"]
+            else:
+                case_id = uuid.uuid4()
+                conn.execute(
+                    "INSERT INTO cases (id, staff_id, created_at) VALUES (%s, %s, %s)",
+                    (case_id, staff_id, self._clock.now()),
+                )
+                conn.commit()
+        return self._view(case_id)
+
     def bind(self, staff_id: uuid.UUID, query: str) -> dict:
         case_id = self._open(staff_id)
         if self._status(case_id) != "Open":
@@ -311,7 +333,48 @@ class CaseStore:
             "ticket_id": self._ticket_id(case_id),
             "stale": row["status"] == "Waiting for approval" and _is_stale(row["proposed_at"], self._clock.now()),
             "rejection_reason": row["rejection_reason"],
+            "history": self._history(case_id),
         }
+
+    def _history(self, case_id: uuid.UUID) -> list[dict]:
+        with self._pool.connection() as conn:
+            customer = conn.execute(
+                "SELECT customer_id FROM cases WHERE id = %s",
+                (case_id,),
+            ).fetchone()
+            if customer is None or customer["customer_id"] is None:
+                return []
+            rows = conn.execute(
+                """
+                SELECT cases.id, cases.status, cases.rejection_reason,
+                       tickets.id AS ticket_id, orders.refunds
+                FROM cases
+                LEFT JOIN tickets ON tickets.case_id = cases.id
+                LEFT JOIN orders ON orders.id = cases.proposal_order_id
+                WHERE cases.customer_id = %s AND cases.id <> %s
+                ORDER BY cases.created_at DESC, cases.id DESC
+                LIMIT 5
+                """,
+                (customer["customer_id"], case_id),
+            ).fetchall()
+        history = []
+        for row in rows:
+            if row["ticket_id"] is not None:
+                outcome = "Ticket"
+            elif row["rejection_reason"]:
+                outcome = "Rejected"
+            else:
+                outcome = row["status"]
+            refunds = row["refunds"]
+            history.append(
+                {
+                    "id": str(row["id"]),
+                    "status": row["status"],
+                    "outcome": outcome,
+                    "refunded_lines": [] if not refunds or refunds == "none" else [refunds],
+                }
+            )
+        return history
 
     def _status(self, case_id: uuid.UUID) -> str:
         return self._case_row(case_id)["status"]
@@ -633,7 +696,7 @@ class CaseStore:
                 """
                 SELECT id FROM cases
                 WHERE staff_id = %s
-                ORDER BY created_at DESC
+                ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """,
                 (staff_id,),
