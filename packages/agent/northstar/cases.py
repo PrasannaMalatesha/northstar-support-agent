@@ -474,6 +474,19 @@ class CaseStore:
             return None
         return str(row["id"]), int(row["amount_cents"])
 
+    def _ticket_for_order(self, order_id: str) -> bool:
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT 1 FROM tickets
+                JOIN cases ON cases.id = tickets.case_id
+                WHERE cases.proposal_order_id = %s
+                LIMIT 1
+                """,
+                (order_id,),
+            ).fetchone()
+        return row is not None
+
     def _ticket_id(self, case_id: uuid.UUID) -> str | None:
         with self._pool.connection() as conn:
             row = conn.execute(
@@ -487,10 +500,17 @@ class CaseStore:
         with self._pool.connection() as conn:
             rows = conn.execute(
                 """
-                SELECT id, proposal_action, proposal_amount_cents, proposal_order_id, proposed_at
+                SELECT cases.id, cases.proposal_action, cases.proposal_amount_cents,
+                       cases.proposal_order_id, cases.proposed_at,
+                       (SELECT body FROM case_messages
+                        WHERE case_id = cases.id AND role = 'user'
+                        ORDER BY id DESC LIMIT 1) AS question,
+                       (SELECT body FROM case_messages
+                        WHERE case_id = cases.id AND role = 'assistant'
+                        ORDER BY id DESC LIMIT 1) AS draft
                 FROM cases
-                WHERE status = 'Waiting for approval'
-                ORDER BY proposed_at
+                WHERE cases.status = 'Waiting for approval'
+                ORDER BY cases.proposed_at
                 """
             ).fetchall()
         waiting = []
@@ -505,6 +525,8 @@ class CaseStore:
                     "order_id": row["proposal_order_id"],
                     "age_seconds": age,
                     "stale": _is_stale(proposed_at, now),
+                    "question": row["question"] or "",
+                    "draft": row["draft"] or "",
                 }
             )
         return waiting
@@ -586,7 +608,7 @@ class CaseStore:
             return _plain("unknown", "That order id is unknown.")
         if not row["owned"]:
             return _plain("not_found", "Not found for this customer.")
-        if row["refunds"] != "none":
+        if row["refunds"] != "none" or self._ticket_for_order(order_id):
             return self._propose(case_id, staff_id, order_id, "deny", 0, ("REF-DENY",), "Deny. Amount: 0 cents. The line was already refunded. (REF-DENY)", now)
         window = _RETURN_DAYS[row["category"]]
         age = (now.date() - row["delivered_on"]).days
