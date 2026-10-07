@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — Handbook candidates come from Pinecone when the key is set
+
+Status: decision
+
+What changed: Outside pytest, `retrieved_answer` asks Pinecone for 20 sections, then FlashRank keeps 4. The index is `northstar-handbook` in us-east-1, dimension 1536, namespace `handbook-dev`. Embeddings are `gemini-embedding-001`, normalized because that model must be normalized below 3072 dimensions. Pytest keeps the overlap pick.
+
+Evidence: [Pinecone integration](https://docs.langchain.com/oss/python/integrations/vectorstores/pinecone) and [Gemini embeddings](https://ai.google.dev/gemini-api/docs/embeddings). Starter indexes are us-east-1 only.
+
+Debug steps: Ingested the handbook sections and queried an apparel question. The top reranked id was recorded in the run, not in this file.
+
+Fix: The Pinecone key stays in `.env`.
+
 ## 2026-10-07 — Tracing turns on from the local environment
 
 Status: decision
