@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — Trajectory score is the published subsequence
+
+Status: decision
+
+What changed: `evals/trajectory.py` is `trajectory_subsequence` as published. `extra_step_count` is the actual steps the walk did not match. A refund path that also calls `create_refund_ticket` still scores 1.0 and counts that call as one extra step.
+
+Evidence: [Evaluate a complex agent](https://docs.langchain.com/langsmith/evaluate-complex-agent). The function returns `False` when the reference is longer than the actual path. Otherwise it returns the fraction of expected steps found in order.
+
+Debug steps: A debug stream of a refund question produced `intent_classifier`, `refund_agent`, `compile_followup`.
+
+Fix: None. Do not require a perfect 1.0 on a compound question.
+
 ## 2026-10-07 — The quiz judge does not score without a model key
 
 Status: decision
