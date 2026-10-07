@@ -60,9 +60,11 @@ def test_handbook_rows_match_their_labels():
     assert missed == []
 
 
-def test_judges_do_not_score_the_held_out_split_before_calibration():
+def test_recorded_agreement_opens_the_held_out_split():
     text = Path("results/judge_calibration.md").read_text()
-    assert judges_may_score_test(text) is False
+    assert "agreement: 5/5" in text
+    assert "test split: open" in text
+    assert judges_may_score_test(text) is True
 
 
 def test_desk_rows_match_their_labels(client, clock):

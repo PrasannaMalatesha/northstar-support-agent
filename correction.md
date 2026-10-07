@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — The quiz judge agrees with the handbook labels
+
+Status: decision
+
+What changed: The quiz judge scored the five handbook rows in `train_judge`. It agreed with the human label on all five. `results/judge_calibration.md` says `agreement: 5/5` and `test split: open`. Desk rows in that split stay on code checks.
+
+Evidence: Each student text was the handbook answerer. Each ground truth was the gold section rule, or the abstain text. One call returned an empty provider response and was retried. The recorded scores are from the successful calls.
+
+Debug steps: Compared `is_correct` to `matches` for apparel-window, fourteen-day-trap, ship-regions, support-hours, and favorite-color.
+
+Fix: The test split stays closed unless that file says `test split: open`.
+
 ## 2026-10-07 — The walkthrough image is the turn chart
 
 Status: decision

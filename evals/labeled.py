@@ -205,5 +205,5 @@ def comparison_text(v0_runs: list[dict[str, bool]], v1_runs: list[dict[str, bool
 
 
 def judges_may_score_test(calibration: str) -> bool:
-    """A judge gates test only after a recorded agreement. This file does not invent one."""
-    return "agreement:" in calibration and "Judges have not been run." not in calibration
+    """The test split opens only when the calibration file says so. A number is not invented here."""
+    return "test split: open" in calibration
