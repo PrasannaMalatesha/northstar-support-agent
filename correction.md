@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — The judge is Nemotron on OpenRouter
+
+Status: decision
+
+What changed: The quiz judge calls `nvidia/nemotron-3-ultra-550b-a55b:free` through OpenRouter. The key is `OPENROUTER_API_KEY`. The agent model stays a different setting. No score is written when the key is missing, and the calibration file is unchanged.
+
+Evidence: [OpenRouter quickstart](https://openrouter.ai/docs/quickstart) uses an OpenAI-compatible chat completions endpoint. [LLM-as-a-judge](https://www.langchain.com/resources/llm-as-a-judge) says to use a different model for judging than for generation. The model id contains `:free`, so the provider is passed separately and that colon is not treated as a model prefix.
+
+Debug steps: None yet. A missing key still returns no score.
+
+Fix: The key stays in the local `.env`, which git ignores. It is not committed.
+
 ## 2026-10-07 — Trajectory score is the published subsequence
 
 Status: decision

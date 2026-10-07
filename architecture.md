@@ -33,7 +33,7 @@ Walk the diagrams in this order:
 | Guardrails | LangChain middleware | Input block, PII, output check | [Guardrails](https://docs.langchain.com/oss/python/langchain/guardrails) |
 | Pause | `interrupt` then `Command(resume=...)` | Refund approval | [Interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts) |
 | Traces and evals | LangSmith | Experiments, online judges, dashboards | [Evaluation](https://docs.langchain.com/langsmith/evaluation) |
-| Models | OpenAI | Agent and judges. Default `gpt-4o-mini` | Keys stay on the API |
+| Models | OpenAI for the agent. OpenRouter for the judge | Agent default `gpt-4o-mini`. Judge default `nvidia/nemotron-3-ultra-550b-a55b:free` | Keys stay on the API |
 
 Next.js never holds the model key. FastAPI holds `OPENAI_API_KEY`, `PINECONE_API_KEY`, `LANGSMITH_API_KEY`, and `DATABASE_URL`.
 
@@ -244,7 +244,7 @@ flowchart TD
 | Wasted steps | Same trajectory | `extra_step_count` | Ours. The published subsequence scorer does not punish extras |
 | Safety | Same full-graph run | Code | Citation ids, HITL, allowlist |
 
-The quiz judge is that prompt. With no `OPENAI_API_KEY` it returns no score and does not write agreement. It does not grade the test split while `results/judge_calibration.md` still says the judges have not been run. Source: [Evaluate a complex agent](https://docs.langchain.com/langsmith/evaluate-complex-agent).
+The quiz judge is that prompt, called through OpenRouter as `nvidia/nemotron-3-ultra-550b-a55b:free`. With no `OPENROUTER_API_KEY` it returns no score and does not write agreement. It does not grade the test split while `results/judge_calibration.md` still says the judges have not been run. Source: [Evaluate a complex agent](https://docs.langchain.com/langsmith/evaluate-complex-agent).
 
 Live runs use reference-free judges and dashboards. Source: [Online evaluations](https://docs.langchain.com/langsmith/online-evaluations-llm-as-judge) and [Dashboards](https://docs.langchain.com/langsmith/dashboards). A failing live trace is added to the dataset and then re-run offline. Source: [Evaluation concepts](https://docs.langchain.com/langsmith/evaluation-concepts).
 
