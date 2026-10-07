@@ -14,7 +14,7 @@ Close an issue when its acceptance criteria are met.
 
 Still open:
 
-- #22 stays open until this judge wiring is on `dev`. Safety code scores every LangGraph trace. The OpenRouter judge scores abstain, escalate, and a 10 percent sample, and writes `policy_groundedness`. A specialist edit is not a field on the trace.
+- #22 stays open. Safety code scores every LangGraph trace. The OpenRouter judge scores abstain, escalate, and a 10 percent sample. A specialist edit is not a field on the trace, so that part of the ticket is still unmet.
 - #1 stays open while #22 is open. Issues #2–#21 are closed.
 
 Also still unfinished: middleware is not attached, and the screen recording is not done. `PostgresStore` is slice 2. Do not invent deploy hooks. Do not promote `dev` to `uat` or `prod` unless asked. Phase checkboxes stay unchecked except phase 0, unless asked.
