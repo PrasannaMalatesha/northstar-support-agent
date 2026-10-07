@@ -9,6 +9,7 @@ a checkpointer is attached. The case row still writes the ticket.
 from __future__ import annotations
 
 import os
+import random
 import re
 from dataclasses import dataclass
 from typing import Callable, Literal
@@ -193,12 +194,36 @@ def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None 
     _load_local_env()
     graph = graph or GRAPH
     config = None if thread_id is None else {"configurable": {"thread_id": thread_id}}
-    result = graph.invoke({"question": question}, config, context=tools)
+    traced = os.environ.get("LANGSMITH_TRACING", "").lower() == "true" and not os.environ.get("PYTEST_CURRENT_TEST")
+    run_id = None
+    if traced:
+        from langchain_core.tracers.context import collect_runs
+
+        with collect_runs() as collected:
+            result = graph.invoke({"question": question}, config, context=tools)
+        if collected.traced_runs:
+            run_id = str(collected.traced_runs[0].id)
+    else:
+        result = graph.invoke({"question": question}, config, context=tools)
     followup = result["followup"] if "followup" in result else result["text"]
-    if os.environ.get("LANGSMITH_TRACING", "").lower() == "true":
+    if traced:
         from langchain_core.tracers.langchain import wait_for_all_tracers
 
         wait_for_all_tracers()
+        if run_id is not None:
+            try:
+                from northstar.online import record_judge
+
+                record_judge(
+                    run_id,
+                    question,
+                    result["decision"],
+                    followup,
+                    result["citations"],
+                    random.random(),
+                )
+            except Exception:
+                pass
     return Draft(
         result["decision"],
         followup,

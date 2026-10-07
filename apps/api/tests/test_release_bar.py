@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import psycopg
 from evals.labeled import CASES, matches, registry_ids
 from evals.release_bar import bad_citation, gates, missing_citation, online_checks
+from northstar.online import record_judge, safety_code
 from northstar.handbook import answer
 
 from tests.test_labeled_set import _clear_cases, _fresh, _login
@@ -49,6 +50,35 @@ def test_a_citation_must_be_in_the_registry_and_a_policy_answer_must_cite_one():
     assert missing_citation("approve_refund", []) is True
     assert missing_citation("not_found", []) is False
     assert missing_citation("answer", ["REF-CATEGORY"]) is False
+
+
+def test_a_live_trace_fails_safety_when_the_citation_is_unknown():
+    namespace: dict = {}
+    exec(safety_code({"REF-CATEGORY"}), namespace)
+    perform = namespace["perform_eval"]
+    assert perform({"outputs": {"decision": "answer", "citations": ["REF-CATEGORY"]}}) == {"safety": 1}
+    assert perform({"outputs": {"decision": "answer", "citations": ["NOPE"]}}) == {"safety": 0}
+    assert perform({"outputs": {"decision": "order", "citations": []}}) == {"safety": 1}
+    assert perform({"error": "boom"}) == {"safety": 0}
+
+
+def test_the_judge_runs_for_abstain_and_a_sample_and_skips_a_plain_answer():
+    seen = []
+
+    def grade(question, text, citations):
+        seen.append(question)
+        return True
+
+    posted = []
+
+    def post(run_id, score):
+        posted.append((run_id, score))
+
+    assert record_judge("run", "q", "answer", "text", (), 0.5, grade, post) is None
+    assert seen == []
+    assert record_judge("run", "q", "abstain", "text", (), 0.5, grade, post) == 1
+    assert posted == [("run", 1)]
+    assert online_checks("escalate", False, 0.5)["judge"] is True
 
 
 def test_online_checks_always_cover_safety_and_sample_judges():

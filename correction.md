@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — Safety scores every LangGraph trace, and a judge scores a sample
+
+Status: decision
+
+What changed: A code evaluator named northstar-safety is attached to the local tracing project on every root run named LangGraph, at sampling rate 1. The filter is `eq(name, "LangGraph")`. A live turn also asks the OpenRouter judge for groundedness when the decision is abstain or escalate, or when a random sample is below 0.1, and writes `policy_groundedness` feedback. A specialist edit is not a field on the trace, so that case is not selected.
+
+Evidence: [Trace query syntax](https://docs.langchain.com/langsmith/trace-query-syntax) and `POST /api/v1/runs/rules` in the platform OpenAPI. The installed `client.evaluators.list` returns an async paginator, so the attach call uses the sync HTTP client. Backend version reported by the API was 0.18.5.
+
+Debug steps: Listed root runs. LangGraph outputs include `decision` and `citations`. RunnableSequence runs are the pairwise judge and are outside the filter.
+
+Fix: `packages/agent/northstar/online.py`.
+
 ## 2026-10-07 — Every saved draft is checked against the section registry
 
 Status: decision
