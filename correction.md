@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — Dev cannot read another environment's handbook
+
+Status: decision
+
+What changed: Pinecone search and ingest take the namespace from `NORTHSTAR_ENV`. `local` and `dev` may only use `handbook-dev`. `uat` may only use `handbook-uat`. `prod` may only use `handbook-prod`. A mismatch raises before any query. The console's server calls stay on `FASTAPI_URL` or a same-origin path. No deploy hook was added.
+
+Evidence: [AGENTS.md environments](AGENTS.md) already names one namespace per environment. Issue #5 says a test in dev must not touch another environment's data.
+
+Debug steps: None.
+
+Fix: `packages/agent/northstar/retrieve.py`.
+
 ## 2026-10-07 — Tool names come from the tools task this install emits
 
 Status: decision
