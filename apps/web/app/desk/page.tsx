@@ -150,6 +150,22 @@ async function askAction(formData: FormData) {
   redirect("/desk");
 }
 
+async function newCaseAction() {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/desk");
+  }
+  const access = await accessToken();
+  if (!access) {
+    redirect("/login");
+  }
+  await fetch(`${apiUrl}/cases/current/new`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${access}` },
+  });
+  redirect("/desk");
+}
+
 async function logoutAction() {
   "use server";
   if (!(await sameSite())) {
@@ -213,6 +229,12 @@ export default async function DeskPage() {
     draft_text: string;
     final_text: string;
     customer: { name: string; email: string } | null;
+    history: {
+      id: string;
+      status: string;
+      outcome: string;
+      refunded_lines: string[];
+    }[];
     messages: {
       role: string;
       body: string;
@@ -268,6 +290,28 @@ export default async function DeskPage() {
         {current.stale ? " Stale." : ""}
       </p>
       <p>{current.customer ? current.customer.name : "No customer bound."}</p>
+      <section>
+        <h2>Past cases</h2>
+        {current.history.length === 0 ? (
+          <p>No past cases.</p>
+        ) : (
+          <ul>
+            {current.history.map((item) => (
+              <li key={item.id}>
+                {item.id}. {item.status}. {item.outcome}.
+                {item.refunded_lines.length > 0
+                  ? ` Refunded: ${item.refunded_lines.join(", ")}.`
+                  : ""}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      {current.status === "Resolved" || current.status === "Escalated" ? (
+        <form action={newCaseAction}>
+          <button type="submit">New case</button>
+        </form>
+      ) : null}
       {current.draft_text ? (
         <article className="turn">
           <p className="quiet">Agent draft</p>
