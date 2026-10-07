@@ -1,4 +1,5 @@
-# Offline evals join this workflow later, on the pull request into uat.
+# The release bar is the API test. The axe scan is the console job.
+# Either miss fails this workflow, so a push to uat does not deploy.
 name: CI
 
 on:
@@ -54,6 +55,20 @@ jobs:
     defaults:
       run:
         working-directory: apps/web
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: northstar
+          POSTGRES_PASSWORD: northstar
+          POSTGRES_DB: northstar
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U northstar -d northstar"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -69,6 +84,19 @@ jobs:
           AUTH_SECRET: ci-auth-secret-at-least-32-characters
           FASTAPI_URL: http://127.0.0.1:8000
           AUTH_TRUST_HOST: "true"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+      - name: Install API
+        working-directory: ${{ github.workspace }}
+        run: uv sync --frozen --all-packages
+      - name: Install browser
+        run: npx playwright install --with-deps chromium
+      - name: Accessibility
+        run: npx playwright test
+        env:
+          CI: "true"
+          DATABASE_URL: postgresql://northstar:northstar@localhost:5432/northstar
 
   deploy:
     name: Deploy
