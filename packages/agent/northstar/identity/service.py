@@ -86,6 +86,9 @@ class Identity:
         self._clock = clock
         self._secret = token_secret
 
+    def audit(self, staff_id: uuid.UUID | None, event: str, at: datetime) -> None:
+        self._store.audit(staff_id, event, at)
+
     def login(self, email: str, password: str) -> TokenPair:
         normalized = email.strip().lower()
         now = self._clock.now()

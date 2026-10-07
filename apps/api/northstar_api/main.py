@@ -226,6 +226,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="This case is not waiting.") from exc
         except ValueError as exc:
             raise HTTPException(status_code=404, detail="This case is not waiting.") from exc
+        identity.audit(staff.id, "approve", clock.now())
         return {"ticket_id": ticket_id}
 
     @app.post("/approvals/{case_id}/edit")
@@ -240,6 +241,7 @@ def create_app(
             raise HTTPException(status_code=422, detail="That amount is above the order.") from exc
         except ValueError as exc:
             raise HTTPException(status_code=404, detail="This case is not waiting.") from exc
+        identity.audit(staff.id, "edit", clock.now())
         return {"ticket_id": ticket_id, "amount_cents": amount}
 
     @app.post("/approvals/{case_id}/reject")
@@ -252,6 +254,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="This case is not waiting.") from exc
         except ValueError as exc:
             raise HTTPException(status_code=404, detail="This case is not waiting.") from exc
+        identity.audit(staff.id, "reject", clock.now())
         return {"ticket_id": None}
 
     @app.post("/cases/current/customer")

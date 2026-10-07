@@ -123,11 +123,12 @@ async function approveAction(formData: FormData) {
   if (!access) {
     redirect("/login");
   }
-  await fetch(`${apiUrl}/approvals/${String(formData.get("case_id") ?? "")}/approve`, {
+  const approved = await fetch(`${apiUrl}/approvals/${String(formData.get("case_id") ?? "")}/approve`, {
     method: "POST",
     headers: { Authorization: `Bearer ${access}` },
   });
-  redirect("/desk");
+  const body = (await approved.json()) as { ticket_id?: string };
+  redirect(body.ticket_id ? `/desk?ticket=${body.ticket_id}` : "/desk");
 }
 
 async function askAction(formData: FormData) {
@@ -188,7 +189,12 @@ async function logoutAction() {
   await signOut({ redirectTo: "/login" });
 }
 
-export default async function DeskPage() {
+export default async function DeskPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ ticket?: string }>;
+}) {
+  const ticket = (await searchParams).ticket;
   const session = await auth();
   if (!session?.user) {
     redirect("/login");
@@ -218,6 +224,8 @@ export default async function DeskPage() {
                 order_id: string;
                 age_seconds: number;
                 stale: boolean;
+                question: string;
+                draft: string;
               }[])
             : [],
         )
@@ -235,6 +243,7 @@ export default async function DeskPage() {
       outcome: string;
       refunded_lines: string[];
     }[];
+    ticket_id: string | null;
     messages: {
       role: string;
       body: string;
@@ -251,6 +260,8 @@ export default async function DeskPage() {
         {session.user.name} · {session.user.role}
       </p>
       <h1>Case desk</h1>
+      {ticket ? <p>Ticket {ticket}.</p> : null}
+      {current.ticket_id ? <p>Ticket {current.ticket_id}.</p> : null}
       {session.user.role === "lead" ? (
         <section>
           <h2>Waiting for approval</h2>
@@ -261,6 +272,8 @@ export default async function DeskPage() {
                 {item.order_id}: {item.action}, {item.amount_cents} cents, {item.age_seconds} seconds
                 {item.stale ? " Stale." : ""}
               </p>
+              <p>{item.question}</p>
+              <p>{item.draft}</p>
               <form action={approveAction}>
                 <input type="hidden" name="case_id" value={item.case_id} />
                 <button type="submit">Approve</button>
