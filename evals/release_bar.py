@@ -10,6 +10,15 @@ import math
 ACTION_FLOOR = 0.8
 LATENCY_P95_SECONDS = 10
 CHUNK_CAP = 4
+_CITED = frozenset({"answer", "approve_refund", "partial_credit", "deny", "escalate"})
+
+
+def bad_citation(citations, registry) -> bool:
+    return any(section not in registry for section in citations)
+
+
+def missing_citation(decision: str, citations) -> bool:
+    return decision in _CITED and not citations
 
 
 def p95(samples: list[float]) -> float:
@@ -29,6 +38,8 @@ def gates(rows: list[dict]) -> list[str]:
         misses.append("ticket without approval")
     if any(row["bad_citation"] for row in rows):
         misses.append("invalid citation")
+    if any(missing_citation(row["decision"], row["citations"]) for row in rows):
+        misses.append("missing citation")
     if any(row["wanted"] == "abstain" and row["decision"] != "abstain" for row in rows):
         misses.append("abstain")
     if p95([row["seconds"] for row in rows]) >= LATENCY_P95_SECONDS:

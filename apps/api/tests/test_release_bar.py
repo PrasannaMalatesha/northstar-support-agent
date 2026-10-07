@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import psycopg
 from evals.labeled import CASES, matches, registry_ids
-from evals.release_bar import gates, online_checks
+from evals.release_bar import bad_citation, gates, missing_citation, online_checks
 from northstar.handbook import answer
 
 from tests.test_labeled_set import _clear_cases, _fresh, _login
@@ -34,10 +34,21 @@ def test_a_miss_on_each_gate_is_reported():
     assert gates([_row(passed=False) for _ in range(3)] + [_row() for _ in range(7)]) == ["action correct"]
     assert "ticket without approval" in gates([_row(ticket=True)])
     assert "invalid citation" in gates([_row(bad_citation=True)])
+    assert "missing citation" in gates([_row(decision="answer", citations=[])])
+    assert gates([_row(decision="catalog", citations=[])]) == []
     assert "abstain" in gates([_row(wanted="abstain", decision="answer")])
     assert "latency" in gates([_row(seconds=11)])
     assert "token cap" in gates([_row(citations=["A", "B", "C", "D", "E"])])
     assert gates([_row()]) == []
+
+
+def test_a_citation_must_be_in_the_registry_and_a_policy_answer_must_cite_one():
+    legal = {"REF-CATEGORY"}
+    assert bad_citation(["NOPE"], legal) is True
+    assert bad_citation(["REF-CATEGORY"], legal) is False
+    assert missing_citation("approve_refund", []) is True
+    assert missing_citation("not_found", []) is False
+    assert missing_citation("answer", ["REF-CATEGORY"]) is False
 
 
 def test_online_checks_always_cover_safety_and_sample_judges():
@@ -63,7 +74,7 @@ def test_the_held_out_set_meets_the_release_bar(client, clock):
                 "decision": draft.decision,
                 "wanted": case["decision"],
                 "citations": citations,
-                "bad_citation": any(section not in legal for section in citations),
+                "bad_citation": bad_citation(citations, legal),
                 "ticket": False,
                 "seconds": time.perf_counter() - started,
             }
@@ -106,7 +117,7 @@ def test_the_held_out_set_meets_the_release_bar(client, clock):
                 "decision": draft["decision"],
                 "wanted": case["decision"],
                 "citations": citations,
-                "bad_citation": any(section not in legal for section in citations),
+                "bad_citation": bad_citation(citations, legal),
                 "ticket": body["ticket_id"] is not None,
                 "seconds": seconds,
             }
