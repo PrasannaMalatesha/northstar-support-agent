@@ -15,7 +15,7 @@ from northstar.escalate import handoff
 from northstar.graph import TurnTools, resume_turn, run_turn
 from northstar.memory import graph_for
 from northstar.agent_model import handbook_reply
-from northstar.handbook import Draft
+from northstar.handbook import Draft, guard_draft
 from northstar.privacy import SECRET_REPLY, has_secret, screen
 
 # ponytail: 1_000 tokens stands in for one handbook draft. Replace with the
@@ -287,6 +287,7 @@ class CaseStore:
         return self._save(case_id, question, draft, now)
 
     def _save(self, case_id: uuid.UUID, question: str, draft: Draft, now: datetime) -> dict:
+        draft = guard_draft(draft)
         with self._pool.connection() as conn:
             conn.execute(
                 """
@@ -677,6 +678,9 @@ class CaseStore:
         text: str,
         now: datetime,
     ) -> Draft:
+        checked = guard_draft(Draft(action, text, citations, {}, ()))
+        if checked.decision != action:
+            return checked
         with self._pool.connection() as conn:
             conn.execute(
                 """

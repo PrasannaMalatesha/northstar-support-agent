@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — Every saved draft is checked against the section registry
+
+Status: decision
+
+What changed: Before a draft is saved, and before a refund proposal is written, a citation that is not in `SECTION_IDS.md` or a policy decision with no citation becomes an abstain. The proposal row is not written in that case. The LangSmith SDK in this repo can create an evaluator, and it has no run-rule create method. A rule was not attached with a guessed payload. `openevals` is not installed, so a live groundedness judge was not added.
+
+Evidence: Issue #22 asks for safety code on every run. [Online evaluators](https://docs.langchain.com/langsmith/online-evaluations-llm-as-judge) attach through a run rule. The installed client exposes `evaluators.create` and no run-rule resource.
+
+Debug steps: None.
+
+Fix: `packages/agent/northstar/handbook.py` `guard_draft`. Attach the judge when the SDK can create the rule.
+
 ## 2026-10-07 — Dev cannot read another environment's handbook
 
 Status: decision

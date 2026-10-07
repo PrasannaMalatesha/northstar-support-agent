@@ -7,8 +7,6 @@ results/judge_calibration.md records a real agreement.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from northstar.handbook import answer
 
 _DECISIONS = frozenset(
@@ -75,8 +73,9 @@ CASES = (
 
 
 def registry_ids() -> set[str]:
-    text = Path("data/policy/SECTION_IDS.md").read_text()
-    return {line.split("|")[1].strip() for line in text.splitlines() if line.startswith("| ") and line.split("|")[1].strip() not in {"Id", "---"}}
+    from northstar.handbook import registry_ids as ids
+
+    return ids()
 
 
 def problems() -> list[str]:

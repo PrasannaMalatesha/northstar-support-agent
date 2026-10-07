@@ -96,6 +96,27 @@ def _abstain() -> Draft:
     return Draft("abstain", ABSTAIN_TEXT, (), {})
 
 
+_CITED = frozenset({"answer", "approve_refund", "partial_credit", "deny", "escalate"})
+
+
+def registry_ids() -> set[str]:
+    text = (policy_dir() / "SECTION_IDS.md").read_text()
+    return {
+        line.split("|")[1].strip()
+        for line in text.splitlines()
+        if line.startswith("| ") and line.split("|")[1].strip() not in {"Id", "---"}
+    }
+
+
+def guard_draft(draft: Draft) -> Draft:
+    """Every saved draft. A policy claim with a bad or missing section becomes an abstain."""
+    legal = registry_ids()
+    bad = any(section_id not in legal for section_id in draft.citations)
+    if bad or (draft.decision in _CITED and not draft.citations):
+        return _abstain()
+    return draft
+
+
 def _sections(directory: Path) -> list[tuple[str, str]]:
     found: list[tuple[str, str]] = []
     for path in sorted(directory.glob("*.md")):

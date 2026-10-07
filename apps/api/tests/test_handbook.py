@@ -1,3 +1,16 @@
+from northstar.handbook import Draft, guard_draft
+
+
+def test_a_bad_citation_is_not_saved_as_fact():
+    bad = guard_draft(Draft("answer", "Fourteen days.", ("NOPE",), {"NOPE": "strong"}, ()))
+    assert bad.decision == "abstain"
+    assert bad.citations == ()
+    uncited = guard_draft(Draft("approve_refund", "Approve.", (), {}, ()))
+    assert uncited.decision == "abstain"
+    kept = guard_draft(Draft("order", "Status: delivered.", (), {}, ()))
+    assert kept.decision == "order"
+
+
 def test_a_covered_question_is_cited_and_survives_a_reread(client):
     token = client.post(
         "/auth/login",
