@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — The walkthrough image is the turn chart
+
+Status: decision
+
+What changed: `diagrams/northstar-architecture.png` and a JPEG copy are rendered from the one-turn chart in `architecture.md`. There is no separate canvas file.
+
+Evidence: `AGENTS.md` says the walkthrough shows that image, and the chart is the layout.
+
+Debug steps: Opened the PNG. It shows the filter, the router, both agents, and the safe reply.
+
+Fix: Re-render that file when the boxes in the chart change.
+
 ## 2026-10-07 — The graph thread is stored in Postgres
 
 Status: decision

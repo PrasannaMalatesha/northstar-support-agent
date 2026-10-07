@@ -80,6 +80,8 @@ flowchart TD
   safeReply --> client
 ```
 
+The walkthrough image is `diagrams/northstar-architecture.png` (JPEG copy beside it), rendered from this chart.
+
 `intent_classifier` is one node. Eval strategy 2 runs that node alone and checks `command.goto` against `refund_agent` or `support_agent`. Source: [Evaluate a complex agent](https://docs.langchain.com/langsmith/evaluate-complex-agent).
 
 `compile_followup` writes state key `followup`. Final-response eval reads that key.
