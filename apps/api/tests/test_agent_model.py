@@ -1,5 +1,14 @@
-from northstar.agent_model import handbook_reply
+import os
+
+from northstar.agent_model import _load_local_env, handbook_reply
 from northstar.retrieve import retrieved_answer
+
+
+def test_pytest_does_not_load_local_secrets(monkeypatch):
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "yes")
+    monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
+    _load_local_env()
+    assert os.environ.get("LANGSMITH_TRACING") is None
 
 
 def test_a_test_run_keeps_the_retrieved_handbook_draft(monkeypatch):

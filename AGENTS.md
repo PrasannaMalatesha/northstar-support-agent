@@ -497,7 +497,7 @@ A finished change is not done until it is committed and pushed to that feature b
 
 A merge into an environment branch deploys that environment (Vercel and Render auto-deploy on the tracked branch). The handbook ingest runs per environment into its own Pinecone namespace, stamped with `policy_corpus_version`.
 
-Cache model HTTP with `LANGSMITH_TEST_CACHE`. Secrets: `OPENAI_API_KEY`, `LANGSMITH_API_KEY`, deploy tokens. Tracing: `LANGCHAIN_TRACING_V2=true`.
+Cache model HTTP with `LANGSMITH_TEST_CACHE`. Secrets stay in the server environment. Tracing: `LANGSMITH_TRACING=true`, which also sets `LANGCHAIN_TRACING_V2`. Local project: `northstar-local`.
 
 ## v0 then v1
 

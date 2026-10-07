@@ -7,6 +7,7 @@ holds the turn until PostgresSaver is the pause store.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from typing import Callable, Literal
@@ -103,9 +104,16 @@ def turn_path(question: str, tools: TurnTools) -> list[str]:
 
 
 def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None = None) -> Draft:
+    from northstar.agent_model import _load_local_env
+
+    _load_local_env()
     graph = graph or GRAPH
     config = None if thread_id is None else {"configurable": {"thread_id": thread_id}}
     result = graph.invoke({"question": question}, config, context=tools)
+    if os.environ.get("LANGSMITH_TRACING", "").lower() == "true":
+        from langchain_core.tracers.langchain import wait_for_all_tracers
+
+        wait_for_all_tracers()
     return Draft(
         result["decision"],
         result["followup"],

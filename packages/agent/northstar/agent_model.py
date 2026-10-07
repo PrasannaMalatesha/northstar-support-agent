@@ -66,6 +66,8 @@ def _phrase(question: str, handbook_lines: str) -> str:
 
 
 def _load_local_env() -> None:
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return
     for parent in Path(__file__).resolve().parents:
         env_file = parent / ".env"
         if not env_file.is_file():
@@ -75,7 +77,10 @@ def _load_local_env() -> None:
                 continue
             key, value = line.split("=", 1)
             os.environ.setdefault(key.strip(), value.strip())
-        return
+        break
+    if os.environ.get("LANGSMITH_TRACING", "").lower() == "true":
+        os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+        os.environ.setdefault("LANGCHAIN_CALLBACKS_BACKGROUND", "false")
 
 
 @lru_cache(maxsize=1)
