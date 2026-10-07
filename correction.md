@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-06 — The router is a StateGraph in front of the desk
+
+Status: decision
+
+What changed: A turn that passes the input checks now runs a LangGraph `StateGraph`. `intent_classifier` returns `Command(goto=...)` to `refund_agent` or `support_agent`. Both write `followup` in `compile_followup`. The nodes call the refund and support functions the desk already had. They are not `create_agent` subgraphs.
+
+Evidence: [Graph API](https://docs.langchain.com/oss/python/langgraph/graph-api) says a node may return `Command(goto=...)`, and that static edges from that same node would also run, so the classifier has no static edge. [Evaluate a complex agent](https://docs.langchain.com/langsmith/evaluate-complex-agent) reads `result["followup"]` and checks `command.goto` on the classifier node alone. No `OPENAI_API_KEY` is configured, so a model subgraph would not be a real call.
+
+Debug steps: None. The desk tests stay the check that refund, order, catalog, and handbook replies did not change.
+
+Fix: `packages/agent/northstar/graph.py` is the router. `PostgresSaver` and `create_agent` wait until a model key and a checkpointer are real. Do not mark the phase plan done on this step.
+
 ## 2026-10-06 — Modularity is a core requirement
 
 Status: decision

@@ -84,6 +84,8 @@ flowchart TD
 
 `compile_followup` writes state key `followup`. Final-response eval reads that key.
 
+The running graph is that router. `refund_agent` and `support_agent` call the desk's existing functions. Each becomes a `create_agent` subgraph when a model key is present. Source: [Graph API](https://docs.langchain.com/oss/python/langgraph/graph-api).
+
 ## 3. Support subgraph
 
 ```mermaid
