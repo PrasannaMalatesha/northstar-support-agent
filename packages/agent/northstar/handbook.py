@@ -1,8 +1,7 @@
 """Answer a handbook question from the frozen markdown, or abstain.
 
-ponytail: term overlap on the local files. Swap for Pinecone top-20 plus
-FlashRank inside answer() when the index exists. Ceiling: questions that
-need a paraphrase across many sections.
+ponytail: term overlap. The reranked path is retrieved_answer(). This
+function stays the v0 scorer passed to the evals by default.
 """
 
 from __future__ import annotations
@@ -85,8 +84,8 @@ def answer(question: str, directory: Path | None = None) -> Draft:
             continue
         lines.append(f"{rule} ({section_id})")
         citations.append(section_id)
-        # ponytail: top band is strong, the rest weak. Use the FlashRank
-        # score once the reranker exists.
+        # ponytail: top band is strong, the rest weak. retrieved_answer()
+        # uses the FlashRank score for the same split.
         match[section_id] = "strong" if weight >= best * 0.75 else "weak"
     if not lines:
         return _abstain()

@@ -86,6 +86,8 @@ flowchart TD
 
 The running graph is that router. `refund_agent` and `support_agent` call the desk's existing functions. Each becomes a `create_agent` subgraph when a model key is present. Source: [Graph API](https://docs.langchain.com/oss/python/langgraph/graph-api).
 
+A handbook turn calls `retrieved_answer`. Overlap picks 20 sections, then `flashrank.Ranker(model_name="ms-marco-MiniLM-L-12-v2")` keeps at most 4 at or above `RETRIEVAL_SCORE_TAU` (0.2). Pinecone replaces the overlap pick when the index exists. `answer()` stays the v0 scorer.
+
 ## 3. Support subgraph
 
 ```mermaid

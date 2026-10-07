@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-06 — Handbook rerank is FlashRank on a local top 20
+
+Status: decision
+
+What changed: A handbook turn on the desk calls `retrieved_answer`. Overlap still picks 20 sections. `flashrank.Ranker` with `ms-marco-MiniLM-L-12-v2` keeps at most 4 whose score is at least `RETRIEVAL_SCORE_TAU` (0.2). `answer()` is unchanged and remains the function the v0 scorer calls by default. The new function is passed into `score` and `score_handbook`.
+
+Evidence: On train_judge and dev, the weakest gold score was 0.41 (`FAQ-HOURS`) and the abstain scored 0. The 14-day trap's next section scored 0.15, and that section must stay out so the draft does not repeat "14 days". 0.2 sits in that gap. Pinecone was not called: `PINECONE_API_KEY` is unset. Loading the ranker raised this process from 60 MB to 157 MB max RSS on this Mac. That fits under the 512 MB Render instance. It was not measured on Render. The deploy hook is unset, so there is no running host to sample.
+
+Debug steps: Scored train_judge and dev at 0.5, 0.2, and 0.05. At 0.5, `support-hours` abstained. At 0.05, the 14-day trap kept a weak section. 0.2 passed both splits. The held-out handbook rows were checked after the threshold was chosen.
+
+Fix: `packages/agent/northstar/retrieve.py`. Swap the overlap pick for Pinecone top-20 when the index exists. Do not retune the threshold on the test split.
+
 ## 2026-10-06 — The router is a StateGraph in front of the desk
 
 Status: decision
