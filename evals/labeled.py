@@ -97,26 +97,111 @@ def problems() -> list[str]:
     return found
 
 
+def matches(case: dict, decision: str, citations: list[str] | tuple[str, ...], text: str) -> bool:
+    missing = [section for section in case["sections"] if section not in citations]
+    missing_text = [phrase for phrase in case.get("text_includes", ()) if phrase not in text]
+    forbidden = [phrase for phrase in case.get("text_excludes", ()) if phrase in text]
+    return decision == case["decision"] and not missing and not missing_text and not forbidden
+
+
 def score_handbook(answer_fn=answer) -> list[dict]:
     rows = []
     for case in CASES:
         if case["channel"] != "handbook":
             continue
         draft = answer_fn(case["question"])
-        missing = [section for section in case["sections"] if section not in draft.citations]
-        missing_text = [phrase for phrase in case.get("text_includes", ()) if phrase not in draft.text]
-        forbidden = [phrase for phrase in case.get("text_excludes", ()) if phrase in draft.text]
         rows.append(
             {
                 "id": case["id"],
                 "split": case["split"],
                 "decision": draft.decision,
                 "citations": list(draft.citations),
-                "passed": draft.decision == case["decision"] and not missing and not missing_text and not forbidden,
-                "missing_sections": missing,
+                "passed": matches(case, draft.decision, draft.citations, draft.text),
+                "missing_sections": [section for section in case["sections"] if section not in draft.citations],
             }
         )
     return rows
+
+
+def score_naive(answer_fn=answer, split: str = "test") -> list[dict]:
+    """v0: the handbook answerer sees every question. It does not look up an order."""
+    rows = []
+    for case in CASES:
+        if case["split"] != split:
+            continue
+        draft = answer_fn(case["question"])
+        rows.append(
+            {
+                "id": case["id"],
+                "passed": matches(case, draft.decision, draft.citations, draft.text),
+                "got": draft.decision,
+                "wanted": case["decision"],
+            }
+        )
+    return rows
+
+
+def spread(runs: list[dict[str, bool]]) -> int:
+    totals = [sum(1 for ok in run.values() if ok) for run in runs]
+    return max(totals) - min(totals)
+
+
+def flipped(runs: list[dict[str, bool]]) -> list[str]:
+    ids = runs[0].keys()
+    return [case_id for case_id in ids if len({run[case_id] for run in runs}) > 1]
+
+
+def preference(v0: dict[str, bool], v1: dict[str, bool]) -> dict[str, str]:
+    chosen = {}
+    for case_id in v0:
+        if v0[case_id] and v1[case_id]:
+            chosen[case_id] = "tie"
+        elif v1[case_id]:
+            chosen[case_id] = "v1"
+        elif v0[case_id]:
+            chosen[case_id] = "v0"
+        else:
+            chosen[case_id] = "neither"
+    return chosen
+
+
+def comparison_text(v0_runs: list[dict[str, bool]], v1_runs: list[dict[str, bool]], naive_rows: list[dict]) -> str:
+    v0 = v0_runs[0]
+    v1 = v1_runs[0]
+    chosen = preference(v0, v1)
+    v0_counts = ", ".join(str(sum(1 for ok in run.values() if ok)) for run in v0_runs)
+    v1_counts = ", ".join(str(sum(1 for ok in run.values() if ok)) for run in v1_runs)
+    v0_flips = flipped(v0_runs)
+    v1_flips = flipped(v1_runs)
+    flips = ", ".join(v0_flips + v1_flips) or "none"
+    lines = [
+        "# v0 against v1",
+        "",
+        "Both versions ran the same 15 held-out cases, three times.",
+        "v0 is the handbook answerer on every question.",
+        "v1 uses that answerer for handbook questions and the desk for the rest.",
+        "Preference is which version matched the gold label.",
+        "An LLM pairwise judge has not been run.",
+        "",
+        f"v0 pass counts: {v0_counts}. Spread: {spread(v0_runs)}.",
+        f"v1 pass counts: {v1_counts}. Spread: {spread(v1_runs)}.",
+        f"Flipped cases: {flips}.",
+        "",
+        "## Preference",
+    ]
+    for kind in ("v1", "v0", "tie", "neither"):
+        ids = [case_id for case_id, pick in chosen.items() if pick == kind]
+        lines.append(f"{kind}: {', '.join(ids) if ids else 'none'}.")
+    lines.extend(["", "## Known failures", "v0:"])
+    misses = [row for row in naive_rows if not row["passed"]]
+    lines.extend(f"- {row['id']} got {row['got']}, wanted {row['wanted']}" for row in misses)
+    lines.append("v1:")
+    v1_misses = [case_id for case_id, ok in v1.items() if not ok]
+    lines.extend(f"- {case_id}" for case_id in v1_misses)
+    if not v1_misses:
+        lines.append("- none")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def judges_may_score_test(calibration: str) -> bool:
