@@ -70,7 +70,7 @@ def _fields(draft: Draft) -> dict:
     }
 
 
-def _compile():
+def _compile(checkpointer=None):
     builder = StateGraph(TurnState, context_schema=TurnTools)
     builder.add_node("intent_classifier", intent_classifier)
     builder.add_node("refund_agent", refund_agent)
@@ -80,7 +80,7 @@ def _compile():
     builder.add_edge("refund_agent", "compile_followup")
     builder.add_edge("support_agent", "compile_followup")
     builder.add_edge("compile_followup", END)
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)
 
 
 GRAPH = _compile()
@@ -102,8 +102,10 @@ def turn_path(question: str, tools: TurnTools) -> list[str]:
     return names
 
 
-def run_turn(question: str, tools: TurnTools) -> Draft:
-    result = GRAPH.invoke({"question": question}, context=tools)
+def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None = None) -> Draft:
+    graph = graph or GRAPH
+    config = None if thread_id is None else {"configurable": {"thread_id": thread_id}}
+    result = graph.invoke({"question": question}, config, context=tools)
     return Draft(
         result["decision"],
         result["followup"],

@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — The graph thread is stored in Postgres
+
+Status: decision
+
+What changed: Each case turn is checkpointed with `PostgresSaver` on that case id. A second connection can read the same `followup`. The case row is still the approval record.
+
+Evidence: [Checkpointers](https://docs.langchain.com/oss/python/langgraph/checkpointers) say `PostgresSaver.from_conn_string` keeps the thread, and `setup()` creates the tables. `InMemorySaver` dies with the process.
+
+Debug steps: A refund turn was written on one connection and read back on another.
+
+Fix: One open connection per database URL for the process.
+
 ## 2026-10-07 — The agent model is Gemini 3 Flash
 
 Status: decision
