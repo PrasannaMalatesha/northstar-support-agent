@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — Tracing turns on from the local environment
+
+Status: decision
+
+What changed: A turn outside pytest loads `.env` and, when `LANGSMITH_TRACING=true`, also sets `LANGCHAIN_TRACING_V2`. The project name is `northstar-local`. Pytest does not load that file.
+
+Evidence: The langsmith-trace skill says a LangGraph app is traced by those environment variables. [Checkpointers](https://docs.langchain.com/oss/python/langgraph/checkpointers) are unchanged.
+
+Debug steps: A graph turn was sent and listed in the `northstar-local` project.
+
+Fix: Keys stay in `.env`. They are not committed.
+
 ## 2026-10-07 — The quiz judge agrees with the handbook labels
 
 Status: decision
