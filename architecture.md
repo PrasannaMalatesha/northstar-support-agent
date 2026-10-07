@@ -167,7 +167,7 @@ flowchart TB
 
 Short-term memory is the checkpointer: one conversation. Long-term memory is the store: facts that should exist in the next conversation. The store is not a source of refund rules. Those still come from Pinecone and must be cited.
 
-`MemorySaver` keeps checkpoints in RAM and drops them on restart ([persistence](https://docs.langchain.com/oss/python/langgraph/persistence)). The API uses Postgres in local and deployed environments. Call `checkpointer.setup()` and `store.setup()` once on an empty database. Keep `thread_id` inside the checkpointer column length; an oversized id is a database error, not a model failure.
+`MemorySaver` keeps checkpoints in RAM and drops them on restart ([persistence](https://docs.langchain.com/oss/python/langgraph/persistence)). The running graph writes each case id through `PostgresSaver`, in local and deployed environments. Call `checkpointer.setup()` once. Keep `thread_id` inside the checkpointer column length; an oversized id is a database error, not a model failure.
 
 ## 6. Retrieval steps
 

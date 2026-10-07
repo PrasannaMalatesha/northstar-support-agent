@@ -13,6 +13,7 @@ from datetime import datetime
 from northstar.clock import Clock
 from northstar.escalate import handoff
 from northstar.graph import TurnTools, run_turn
+from northstar.memory import graph_for
 from northstar.agent_model import handbook_reply
 from northstar.handbook import Draft
 from northstar.privacy import SECRET_REPLY, has_secret, screen
@@ -280,6 +281,8 @@ class CaseStore:
                 refund=lambda text: self._refund_draft(case_id, staff_id, text, now),
                 support=lambda text: self._support_draft(case_id, staff_id, text, now),
             ),
+            graph=graph_for(self._pool.conninfo),
+            thread_id=str(case_id),
         )
         return self._save(case_id, question, draft, now)
 
