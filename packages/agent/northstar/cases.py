@@ -12,6 +12,7 @@ from datetime import datetime
 
 from northstar.clock import Clock
 from northstar.handbook import Draft, answer
+from northstar.privacy import SECRET_REPLY, has_secret, screen
 
 # ponytail: 1_000 tokens stands in for one handbook draft. Replace with the
 # model's reported usage when a model is called. Request counts are in memory.
@@ -222,6 +223,8 @@ class CaseStore:
         if self._requests.get(key, 0) >= self._request_limit:
             return self._save(case_id, question, _plain("limit", REQUEST_LIMIT_TEXT), now)
         self._requests[key] = self._requests.get(key, 0) + 1
+        if has_secret(question):
+            return self._save(case_id, question, _plain("blocked", SECRET_REPLY), now)
         if _blocked(question):
             return self._save(case_id, question, _plain("safe", SAFE_REPLY), now)
         if _asks_for_refund(question):
@@ -248,7 +251,7 @@ class CaseStore:
                 INSERT INTO case_messages (case_id, role, body, created_at)
                 VALUES (%s, 'user', %s, %s)
                 """,
-                (case_id, question.strip(), now),
+                (case_id, screen(question.strip()), now),
             )
             conn.execute(
                 """
@@ -258,7 +261,7 @@ class CaseStore:
                 """,
                 (
                     case_id,
-                    draft.text,
+                    screen(draft.text),
                     draft.decision,
                     list(draft.citations),
                     [draft.match[section_id] for section_id in draft.citations],
