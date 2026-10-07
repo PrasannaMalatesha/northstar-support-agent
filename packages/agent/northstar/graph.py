@@ -1,8 +1,8 @@
 """Route one turn to the refund path or the support path.
 
-ponytail: these nodes call the desk functions. Replace each with a
-create_agent subgraph when OPENAI_API_KEY exists. No checkpointer here:
-the case row holds the turn until PostgresSaver is the pause store.
+ponytail: these nodes call the desk functions. Handbook wording uses
+Gemini when GOOGLE_API_KEY is set. No checkpointer here: the case row
+holds the turn until PostgresSaver is the pause store.
 """
 
 from __future__ import annotations

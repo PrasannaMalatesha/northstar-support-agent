@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — The agent model is Gemini 3 Flash
+
+Status: decision
+
+What changed: Handbook replies on the server are phrased by `gemini-3-flash-preview`. The key is `GOOGLE_API_KEY`. Citations still come from the retrieved sections. During pytest the retrieved draft is kept. The judge stays on OpenRouter.
+
+Evidence: [ChatGoogleGenerativeAI](https://docs.langchain.com/oss/python/integrations/chat/google_generative_ai) reads `GOOGLE_API_KEY`. The model id is `gemini-3-flash-preview` ([model card](https://ai.google.dev/gemini-api/docs/models/gemini-3-flash-preview)).
+
+Debug steps: None yet.
+
+Fix: The key stays in the local `.env`, which git ignores.
+
 ## 2026-10-07 — The judge is Nemotron on OpenRouter
 
 Status: decision
