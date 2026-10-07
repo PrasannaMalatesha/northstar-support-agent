@@ -12,6 +12,7 @@ from datetime import datetime
 
 from northstar.clock import Clock
 from northstar.escalate import handoff
+from northstar.graph import TurnTools, run_turn
 from northstar.handbook import Draft, answer
 from northstar.privacy import SECRET_REPLY, has_secret, screen
 
@@ -272,21 +273,13 @@ class CaseStore:
             )
         if _blocked(question):
             return self._save(case_id, question, _plain("safe", SAFE_REPLY), now)
-        if _asks_for_refund(question):
-            return self._save(case_id, question, self._refund_draft(case_id, staff_id, question, now), now)
-        order_id = _order_id(question)
-        if order_id or (self._customer(case_id) is None and _asks_for_an_order(question)):
-            if self._customer(case_id) is None:
-                return self._save(case_id, question, _plain("unbound", UNBOUND_ORDER_TEXT), now)
-            if order_id:
-                return self._save(case_id, question, self._order_draft(case_id, order_id, question), now)
-        catalog = self._catalog_draft(question)
-        if catalog is not None:
-            return self._save(case_id, question, catalog, now)
-        if self._used(staff_id, day) + TOKENS_PER_TURN > self._token_budget:
-            return self._save(case_id, question, _plain("quota", QUOTA_TEXT), now)
-        draft = answer(question)
-        self._charge(staff_id, day, TOKENS_PER_TURN)
+        draft = run_turn(
+            question,
+            TurnTools(
+                refund=lambda text: self._refund_draft(case_id, staff_id, text, now),
+                support=lambda text: self._support_draft(case_id, staff_id, text, now),
+            ),
+        )
         return self._save(case_id, question, draft, now)
 
     def _save(self, case_id: uuid.UUID, question: str, draft: Draft, now: datetime) -> dict:
@@ -587,6 +580,22 @@ class CaseStore:
             )
             conn.commit()
 
+    def _support_draft(self, case_id: uuid.UUID, staff_id: uuid.UUID, question: str, now: datetime) -> Draft:
+        order_id = _order_id(question)
+        if order_id or (self._customer(case_id) is None and _asks_for_an_order(question)):
+            if self._customer(case_id) is None:
+                return _plain("unbound", UNBOUND_ORDER_TEXT)
+            if order_id:
+                return self._order_draft(case_id, order_id, question)
+        catalog = self._catalog_draft(question)
+        if catalog is not None:
+            return catalog
+        day = now.date()
+        if self._used(staff_id, day) + TOKENS_PER_TURN > self._token_budget:
+            return _plain("quota", QUOTA_TEXT)
+        self._charge(staff_id, day, TOKENS_PER_TURN)
+        return answer(question)
+
     def _refund_draft(self, case_id: uuid.UUID, staff_id: uuid.UUID, question: str, now: datetime) -> Draft:
         order_id = _order_id(question)
         if order_id is None:
@@ -819,10 +828,6 @@ def _is_stale(proposed_at: datetime | None, now: datetime) -> bool:
     if proposed_at is None:
         return False
     return (now - proposed_at).total_seconds() > 24 * 60 * 60
-
-
-def _asks_for_refund(question: str) -> bool:
-    return re.search(r"\brefunds?\b|\bcredit\b", question.lower()) is not None
 
 
 def _asks_for_an_order(question: str) -> bool:
