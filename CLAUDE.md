@@ -18,7 +18,14 @@ git pull origin dev
 
 Slice 1 P0 is complete. #22 and #1 are closed. `uat`, `dev`, `prod`, and `main` are protected: a PR is required, `Test API` and `Lint and build console` must pass, admins included, no force pushes. Every change goes through a PR into `dev`.
 
-Do not invent deploy hooks. Do not promote `dev` → `uat` or `prod` unless Malatesha asks. Do not create tickets from slice 2 / P1 or slice 3 / P2 unless asked. Phase checkboxes in `docs/plans/slice-1-build-phases.md` stay unchecked except phase 0, unless asked. `PostgresStore` is slice 2.
+Slice 2 and slice 3 tickets exist:
+
+- [#64](https://github.com/PrasannaMalatesha/northstar-support-agent/issues/64) Spec, slice 2 (P1, R13 to R20). Sub-issues #66 to #77.
+- [#65](https://github.com/PrasannaMalatesha/northstar-support-agent/issues/65) Spec, slice 3 (P2). Sub-issues #78 to #81. Blocked by #64: slice 3 starts only after slice 2 is in use.
+
+Start with any slice 2 ticket that has no open blocker. #66 (a gated proposal carries any action) unblocks #68, #69, #70, #71, #72, #74, #75. #67, #73, #76, #77 can start now. #79 (customer chat) has no `ready-for-agent` label: `prd.md` must first decide how a customer identifies themselves in the chat. Do not create more tickets unless asked.
+
+Do not invent deploy hooks. Do not promote `dev` → `uat` or `prod` unless Malatesha asks. Phase checkboxes in `docs/plans/slice-1-build-phases.md` stay unchecked except phase 0, unless asked. `PostgresStore` is slice 2.
 
 ---
 
@@ -105,5 +112,5 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 ## Continue checklist
 
 1. Sync `dev`.
-2. Ask Malatesha what is next: middleware wiring, the screen recording, or promoting `dev` → `uat`.
+2. Pick a slice 2 ticket from the frontier above (start with #66), or ask Malatesha about middleware wiring, the screen recording, or promoting `dev` → `uat`.
 3. Rewrite the Where to start / Still open sections of this file for the next stop.
