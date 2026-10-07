@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from evals.judge import final_answer_correct, grader_messages, score_examples
+from evals.judge import calibration_text, final_answer_correct, grader_messages, score_examples
+from evals.labeled import judges_may_score_test
 
 
 def test_the_quiz_judge_does_not_score_without_a_key_or_touch_calibration(monkeypatch):
@@ -42,8 +43,15 @@ def test_the_quiz_judge_does_not_score_without_a_key_or_touch_calibration(monkey
             }
         ],
         grade=grade,
-        calibration=calibration,
+        calibration="test split: closed\n",
     )
     assert rows == [{"id": "held-out", "is_correct": None}]
     assert Path("results/judge_calibration.md").read_text() == calibration
-    assert "Judges have not been run." in calibration
+
+
+def test_the_test_split_opens_only_when_every_calibration_row_agrees():
+    closed = calibration_text([{"id": "a", "human": True, "judge": False}])
+    opened = calibration_text([{"id": "a", "human": True, "judge": True}])
+    assert "test split: closed" in closed
+    assert judges_may_score_test(closed) is False
+    assert judges_may_score_test(opened) is True

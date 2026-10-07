@@ -97,6 +97,28 @@ def score_examples(
     return scored
 
 
+def calibration_text(rows: list[dict]) -> str:
+    agreed = sum(1 for row in rows if row["human"] == row["judge"])
+    lines = [
+        "# Judge calibration",
+        "",
+        "The quiz judge scored the handbook rows in train_judge.",
+        "The student text is the handbook answerer. The ground truth is the gold section rule, or the abstain text.",
+        "Desk rows in that split stay on code checks.",
+        "",
+        f"agreement: {agreed}/{len(rows)}",
+        "",
+    ]
+    for row in rows:
+        human = "correct" if row["human"] else "wrong"
+        judge = "correct" if row["judge"] else "wrong"
+        lines.append(f"- {row['id']}: human {human}, judge {judge}")
+    lines.append("")
+    lines.append("test split: open" if rows and agreed == len(rows) else "test split: closed")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _live_grade(question: str, reference: str, response: str) -> bool:
     grade = _grader().invoke(grader_messages(question, reference, response))
     return bool(grade["is_correct"])
