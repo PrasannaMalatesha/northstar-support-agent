@@ -115,7 +115,7 @@ Handbook answers use retrieval. Catalog answers use Postgres rows. Order answers
 
 ## 4. Refund subgraph and human approval
 
-The Chinook sample writes the refund inside the graph. This graph does not. `interrupt` pauses the thread in Postgres. Resume uses the same `thread_id`. Source: [Interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts).
+The Chinook sample writes the refund inside the graph. This graph does not. When the decision is a proposal and the thread has a checkpointer, `compile_followup` calls `interrupt` and the thread stays in Postgres. A lead approve, edit, or reject resumes that same `thread_id`. The case row still writes the ticket. Source: [Interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts).
 
 ```mermaid
 flowchart TD

@@ -1,8 +1,8 @@
 """Route one turn to the refund path or the support path.
 
-ponytail: these nodes call the desk functions. Handbook wording uses
-Gemini when GOOGLE_API_KEY is set. No checkpointer here: the case row
-holds the turn until PostgresSaver is the pause store.
+ponytail: these nodes call the desk functions. A proposal pauses in
+compile_followup only when a checkpointer is attached. The case row
+still writes the ticket.
 """
 
 from __future__ import annotations
@@ -12,9 +12,11 @@ import re
 from dataclasses import dataclass
 from typing import Callable, Literal
 
+from langgraph.config import get_config
+from langgraph.constants import CONFIG_KEY_CHECKPOINTER
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
-from langgraph.types import Command
+from langgraph.types import Command, interrupt
 from typing_extensions import TypedDict
 
 from northstar.handbook import Draft
@@ -57,8 +59,25 @@ def support_agent(state: TurnState, runtime: Runtime[TurnTools]) -> dict:
     return _fields(runtime.context.support(state["question"]))
 
 
+_PAUSE = frozenset({"approve_refund", "partial_credit", "deny"})
+
+
 def compile_followup(state: TurnState) -> dict:
+    # https://docs.langchain.com/oss/python/langgraph/interrupts
+    if state.get("decision") in _PAUSE and _checkpointer_present():
+        interrupt(state["decision"])
     return {"followup": state["text"]}
+
+
+def _checkpointer_present() -> bool:
+    conf = get_config().get("configurable") or {}
+    return conf.get(CONFIG_KEY_CHECKPOINTER) is not None
+
+
+def resume_turn(graph, thread_id: str, decision: str) -> None:
+    config = {"configurable": {"thread_id": thread_id}}
+    if graph.get_state(config).next:
+        graph.invoke(Command(resume=decision), config)
 
 
 def _fields(draft: Draft) -> dict:
@@ -110,13 +129,14 @@ def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None 
     graph = graph or GRAPH
     config = None if thread_id is None else {"configurable": {"thread_id": thread_id}}
     result = graph.invoke({"question": question}, config, context=tools)
+    followup = result["followup"] if "followup" in result else result["text"]
     if os.environ.get("LANGSMITH_TRACING", "").lower() == "true":
         from langchain_core.tracers.langchain import wait_for_all_tracers
 
         wait_for_all_tracers()
     return Draft(
         result["decision"],
-        result["followup"],
+        followup,
         tuple(result["citations"]),
         result["match"],
         tuple(result["steps"]),
