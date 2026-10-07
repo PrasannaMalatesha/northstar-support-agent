@@ -6,17 +6,19 @@ Still slice 1. Owner: Malatesha (`PrasannaMalatesha`). No `Co-authored-by` and n
 
 ## Done
 
-Branch from `origin/dev`. Desk behavior for GitHub issues #2–#22 is on `dev`. [PR #50](https://github.com/PrasannaMalatesha/northstar-support-agent/pull/50) pauses a refund proposal on the graph thread with `interrupt` until a lead approves, edits, or rejects. The case row is still the ticket. The pairwise judge preferred v1 on the four held-out desk rows and tied the identical handbook replies (`results/v0_v1.md`). A live turn with `GOOGLE_API_KEY` asks `create_agent`; the desk tool still decides. Pytest keeps the direct call.
+Branch from `origin/dev`. Issues #2–#4 and #6–#21 are closed. Their acceptance criteria are met on `dev`.
 
 ## Pending
 
-- Middleware is not attached. The agent stays invoked inside the node: its state is `messages`, and the parent state is not, so `add_node` is the wrong mount ([Subgraphs](https://docs.langchain.com/oss/python/langgraph/use-subgraphs)). The trajectory recorder appends tool names from the `tools` task.
-- `evaluate_comparative` still needs two uploaded experiments. The recorded pairwise run is the same judge locally.
-- `PostgresStore` is slice 2.
-- Deploy hooks are unset. Do not invent them. Do not promote `dev` to `uat` or `prod` unless asked.
-- Phase checkboxes stay unchecked except phase 0, unless asked.
-- Do not close issue #1 unless asked. Do not recreate issues #2–#22.
-- Screen recording is not done.
+Close an issue when its acceptance criteria are met. Do not leave a finished issue open.
+
+Still open:
+
+- #5 The waking screen and login are in the console. There is no dev deployment, so the console does not yet talk only to the dev API, database, and handbook namespace. Do not invent deploy hooks.
+- #22 The held-out release bar and the axe scan run in CI. Online judges are not attached to live LangSmith runs.
+- #1 stays open while #5 and #22 are open.
+
+Also still unfinished, and not their own issues: middleware is not attached, and the screen recording is not done. `PostgresStore` is slice 2. Do not promote `dev` to `uat` or `prod` unless asked. Phase checkboxes stay unchecked except phase 0, unless asked.
 
 ## Continue
 
