@@ -16,12 +16,7 @@ git checkout dev
 git pull origin dev
 ```
 
-PR #61 (edit judge, handoff through the graph) is merged. The fix that writes the judge score to the LangGraph root is on `feature/judge-root-run`. Then:
-
-1. Merge `feature/judge-root-run` if its PR is still open and green.
-2. #22 box "a miss blocks promotion to uat" is **not met**. `uat` (and `dev`, `prod`, `main`) have no branch protection and the repo has no rulesets, so a red CI does not block a merge into `uat`. AGENTS.md asks for protection on all four. The fix is a GitHub setting: require the `Test API` and `Lint and build console` checks on `uat`. Only do this with Malatesha's go-ahead.
-3. After that, close #22, then #1.
-4. Update this file before you stop.
+Slice 1 P0 is complete. #22 and #1 are closed. `uat`, `dev`, `prod`, and `main` are protected: a PR is required, `Test API` and `Lint and build console` must pass, admins included, no force pushes. Every change goes through a PR into `dev`.
 
 Do not invent deploy hooks. Do not promote `dev` → `uat` or `prod` unless Malatesha asks. Do not create tickets from slice 2 / P1 or slice 3 / P2 unless asked. Phase checkboxes in `docs/plans/slice-1-build-phases.md` stay unchecked except phase 0, unless asked. `PostgresStore` is slice 2.
 
@@ -38,7 +33,7 @@ Issues **#2–#21** are closed on GitHub. Desk, auth, cases, orders, catalog, re
 | #59 | Safety code on every LangGraph root run; OpenRouter groundedness on abstain / escalate / 10% sample |
 | #60 | Handoff notes for #22 (this file) |
 | #61 | Judge every edited draft or amount; handoff escalations run through the graph; one sampling rule |
-| `feature/judge-root-run` | The judge writes to the LangGraph root, not a child model call (bug found on a live turn) |
+| #62 | The judge writes to the LangGraph root, not a child model call (bug found on a live turn) |
 
 #57 was closed unmerged, because #60 replaced it.
 
@@ -54,25 +49,15 @@ How the online path works now:
 
 ## Still open
 
-| Issue | Title | Status |
-| --- | --- | --- |
-| [#22](https://github.com/PrasannaMalatesha/northstar-support-agent/issues/22) | The release bar and an axe pass gate uat | **OPEN** — uat branch protection missing (see Where to start) |
-| [#1](https://github.com/PrasannaMalatesha/northstar-support-agent/issues/1) | Spec: Northstar Support Agent, slice 1 | **OPEN** — close only after #22 |
+No open slice 1 issues. #22 closed after branch protection made a CI miss block the merge into `uat`. #1 closed after #22.
 
-### #22 acceptance (from the issue)
-
-- [x] Action correct ≥ 80% on the held-out set (`test_the_held_out_set_meets_the_release_bar`, CI).
-- [x] Zero tickets without approval. Zero invalid citations. Every abstain row abstains (release bar, CI).
-- [x] p95 turn latency under 10s excluding approval wait; no token cap exceeded (release bar, CI).
-- [x] Login, case desk, waiting list: axe scan + keyboard walkthrough (`apps/web/tests/screens.spec.ts`, CI).
-- [ ] A miss blocks promotion to uat. CI fails on a miss and the Deploy job `needs` it, but nothing blocks the merge into `uat`. Needs branch protection with required checks.
-- [x] Online checks: safety code on every LangGraph run; judges cover a sample plus every abstain, escalation, and edit. Checked live on `northstar-local` 2026-10-07: `safety = 1` from the run rule and `policy_groundedness = 1` from the judge, both on the LangGraph root. Only `northstar-local` exists in LangSmith. When `northstar-dev`/`uat`/`prod` get traffic, run `uv run python -m northstar.online` with that `LANGSMITH_PROJECT` to attach the rule.
-
-Also unfinished (not separate GitHub tickets unless you open them):
+Unfinished work, not GitHub tickets unless Malatesha opens them:
 
 - Built-in LangChain middleware is not fully wired on the `create_agent` subgraphs (PII, HITL, call limits, etc. per `AGENTS.md`).
 - Screen recording for the submission walkthrough is not done.
+- Only the `northstar-local` LangSmith project exists. When `northstar-dev`/`uat`/`prod` get traffic, attach the safety rule with `uv run python -m northstar.online` and that `LANGSMITH_PROJECT`.
 - Turns that end before the graph (request limit, secret block, slur/jailbreak block) have no LangGraph trace. That is by design: a deterministic block ends before any model call.
+- `:memory:.ses` in the repo root is a stray untracked file. Malatesha asked to keep it for now. Do not commit or delete it.
 - Do not start slice 2.
 
 ---
@@ -119,8 +104,6 @@ Also unfinished (not separate GitHub tickets unless you open them):
 
 ## Continue checklist
 
-1. Sync `dev`. Merge `feature/judge-root-run` if its PR is still open and green.
-2. With Malatesha's go-ahead, protect `uat` with the required checks `Test API` and `Lint and build console` (AGENTS.md also asks for `dev`, `prod`, `main`).
-3. Close #22, then #1.
-4. Next work only when asked: middleware wiring, then the screen recording.
-5. Rewrite the Where to start / Still open sections of this file for the next stop.
+1. Sync `dev`.
+2. Ask Malatesha what is next: middleware wiring, the screen recording, or promoting `dev` → `uat`.
+3. Rewrite the Where to start / Still open sections of this file for the next stop.
