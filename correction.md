@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — Every edit and every handoff escalation is judged
+
+Status: decision
+
+What changed: The judge sample now covers every run a person edited, as AGENTS.md asks ("a 10% random sample plus every run that abstained, escalated, or was edited by a specialist"). A live turn stores its LangGraph root run id on the assistant row in `case_messages.run_id`. When the specialist resolves or escalates with final text that differs from the draft, or a lead edits the proposed amount, the API posts `policy_groundedness` feedback to that same run with `edited=True`. The judge reads the specialist's final text, or the draft plus the lead's new amount. A legal or exception handoff used to return before the graph ran, so it had no LangGraph trace and neither the safety rule nor the judge saw it. It now goes through `run_turn` with the handoff as the fixed desk draft, so it has a root run with `decision = escalate`. The sampling rule lives only in `northstar.online.should_judge`. `evals.release_bar.online_checks` imports it instead of keeping a copy.
+
+Evidence: Before the change, `online._should_judge` took only the decision and the sample, and `release_bar.online_checks` already took `edited`. The rule existed in two places and they disagreed. `CaseStore.ask` called `handoff()` before `run_turn`, so the checkpointer had no state for an escalated case thread. [Online evaluators](https://docs.langchain.com/langsmith/online-evaluations-llm-as-judge).
+
+Debug steps: `apps/api/tests/test_edit_judge.py` drives the API with a fake grader and a fake feedback writer. It checks that an edited draft is judged on its turn's run id, that an unchanged draft is not, that a lead's amount edit is judged, and that a chargeback handoff leaves `decision = escalate` in the graph checkpoint. No OpenRouter call runs in CI.
+
+Fix: `packages/agent/northstar/online.py`, `packages/agent/northstar/cases.py`, `packages/agent/northstar/graph.py`, `evals/release_bar.py`. With a live model key, a handoff now costs one `create_agent` call, the same as any other routed turn. The desk still returns the fixed handoff text. A run can get two `policy_groundedness` scores: one from the sample at turn time and one after the edit.
+
 ## 2026-10-07 — Safety scores every LangGraph trace, and a judge scores a sample
 
 Status: decision

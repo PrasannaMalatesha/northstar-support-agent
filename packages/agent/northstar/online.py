@@ -1,6 +1,7 @@
 """Safety score on every LangGraph trace, and a groundedness judge on a sample.
 
-The judge runs when the decision is abstain or escalate, or on a 10 percent sample.
+The judge runs when the decision is abstain or escalate, when a person edited
+the draft or the amount, or on a 10 percent sample.
 https://docs.langchain.com/langsmith/trace-query-syntax
 """
 
@@ -31,24 +32,36 @@ def safety_code(section_ids: set[str]) -> str:
     )
 
 
-def _should_judge(decision: str, sample: float) -> bool:
-    # Same rule as evals.release_bar.online_checks. The API does not import evals.
-    return decision in {"abstain", "escalate"} or sample < 0.1
+def should_judge(decision: str, sample: float, edited: bool = False) -> bool:
+    # The one sampling rule. evals.release_bar.online_checks reads it from here.
+    return decision in {"abstain", "escalate"} or edited or sample < 0.1
 
 
-def record_judge(run_id: str, question: str, decision: str, text: str, citations, sample: float, grade=None, post=None):
+def record_judge(
+    run_id: str,
+    question: str,
+    decision: str,
+    text: str,
+    citations,
+    sample: float,
+    grade=None,
+    post=None,
+    edited: bool = False,
+):
     """Write a groundedness score when this run is in the judge sample. None when it is not."""
-    if not _should_judge(decision, sample):
+    if not should_judge(decision, sample, edited):
         return None
-    if grade is None:
-        grade = _live_grounded
+    grade = grade or _live_grounded
+    post = post or _post_feedback
     score = 1 if grade(question, text, tuple(citations)) else 0
-    if post is None:
-        from langsmith import Client
-
-        post = lambda run, value: Client().create_feedback(run, key="policy_groundedness", score=value)
     post(run_id, score)
     return score
+
+
+def _post_feedback(run_id: str, score: int) -> None:
+    from langsmith import Client
+
+    Client().create_feedback(run_id, key="policy_groundedness", score=score)
 
 
 def _live_grounded(question: str, text: str, citations: tuple[str, ...]) -> bool:

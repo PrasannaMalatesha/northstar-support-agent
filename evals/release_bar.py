@@ -1,11 +1,13 @@
 """Release bar from prd.md. A miss is a list entry. Empty means the bar passed.
 
-ponytail: online_checks is the sampling rule only. Wire it to LangSmith when live runs exist.
+online_checks reads the live sampling rule from northstar.online, so the two cannot drift.
 """
 
 from __future__ import annotations
 
 import math
+
+from northstar.online import should_judge
 
 ACTION_FLOOR = 0.8
 LATENCY_P95_SECONDS = 10
@@ -50,5 +52,4 @@ def gates(rows: list[dict]) -> list[str]:
 
 
 def online_checks(decision: str, edited: bool, sample: float) -> dict[str, bool]:
-    judge = decision in {"abstain", "escalate"} or edited or sample < 0.1
-    return {"safety": True, "judge": judge}
+    return {"safety": True, "judge": should_judge(decision, sample, edited)}

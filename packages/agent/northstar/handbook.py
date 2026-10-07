@@ -32,6 +32,8 @@ class Draft:
     citations: tuple[str, ...]
     match: dict[str, str]
     steps: tuple[str, ...] = STEPS
+    # LangSmith root run of the turn, so a later edit can score that same trace.
+    run_id: str | None = None
 
 
 ABSTAIN_TEXT = (

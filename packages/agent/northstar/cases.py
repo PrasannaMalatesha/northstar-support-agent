@@ -16,6 +16,7 @@ from northstar.graph import TurnTools, resume_turn, run_turn
 from northstar.memory import graph_for
 from northstar.agent_model import handbook_reply
 from northstar.handbook import Draft, guard_draft
+from northstar.online import record_judge
 from northstar.privacy import SECRET_REPLY, has_secret, screen
 
 # ponytail: 1_000 tokens stands in for one handbook draft. Replace with the
@@ -99,6 +100,7 @@ CREATE TABLE IF NOT EXISTS case_messages (
 );
 ALTER TABLE case_messages ADD COLUMN IF NOT EXISTS strengths text[] NOT NULL DEFAULT '{}';
 ALTER TABLE case_messages ADD COLUMN IF NOT EXISTS steps text[] NOT NULL DEFAULT '{}';
+ALTER TABLE case_messages ADD COLUMN IF NOT EXISTS run_id text;
 CREATE TABLE IF NOT EXISTS usage_days (
     staff_id uuid NOT NULL REFERENCES staff_users (id),
     day date NOT NULL,
@@ -237,6 +239,8 @@ class CaseStore:
                 (status, "" if draft is None else draft["body"], final_text.strip(), case_id),
             )
             conn.commit()
+        if draft is not None and final_text.strip() != draft["body"]:
+            self._judge_edit(case_id, final_text=final_text.strip())
         return self._view(case_id)
 
     def _mark_escalated(self, case_id: uuid.UUID, handoff_text: str) -> None:
@@ -267,26 +271,23 @@ class CaseStore:
         if escalated is not None:
             section, text = escalated
             self._mark_escalated(case_id, text)
-            return self._save(
-                case_id,
-                question,
-                Draft("escalate", text, (section,), {section: "strong"}, ()),
-                now,
-            )
+            # Through the graph, so the escalation has a LangGraph trace for the safety rule and the judge.
+            fixed = Draft("escalate", text, (section,), {section: "strong"}, ())
+            tools = TurnTools(refund=lambda _text: fixed, support=lambda _text: fixed)
+            return self._save(case_id, question, self._turn(case_id, question, tools), now)
         if _blocked(question):
             return self._save(case_id, question, _plain("safe", SAFE_REPLY), now)
-        draft = run_turn(
-            question,
-            TurnTools(
-                refund=lambda text: self._refund_draft(case_id, staff_id, text, now),
-                support=lambda text: self._support_draft(case_id, staff_id, text, now),
-            ),
-            graph=graph_for(self._pool.conninfo),
-            thread_id=str(case_id),
+        tools = TurnTools(
+            refund=lambda text: self._refund_draft(case_id, staff_id, text, now),
+            support=lambda text: self._support_draft(case_id, staff_id, text, now),
         )
-        return self._save(case_id, question, draft, now)
+        return self._save(case_id, question, self._turn(case_id, question, tools), now)
+
+    def _turn(self, case_id: uuid.UUID, question: str, tools: TurnTools) -> Draft:
+        return run_turn(question, tools, graph=graph_for(self._pool.conninfo), thread_id=str(case_id))
 
     def _save(self, case_id: uuid.UUID, question: str, draft: Draft, now: datetime) -> dict:
+        run_id = draft.run_id
         draft = guard_draft(draft)
         with self._pool.connection() as conn:
             conn.execute(
@@ -299,8 +300,8 @@ class CaseStore:
             conn.execute(
                 """
                 INSERT INTO case_messages
-                    (case_id, role, body, decision, citations, strengths, steps, created_at)
-                VALUES (%s, 'assistant', %s, %s, %s, %s, %s, %s)
+                    (case_id, role, body, decision, citations, strengths, steps, run_id, created_at)
+                VALUES (%s, 'assistant', %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     case_id,
@@ -309,6 +310,7 @@ class CaseStore:
                     list(draft.citations),
                     [draft.match[section_id] for section_id in draft.citations],
                     list(draft.steps),
+                    run_id,
                     now,
                 ),
             )
@@ -572,6 +574,8 @@ class CaseStore:
             )
             conn.commit()
         self._resume(case_id, "edit")
+        if amount_cents != proposal["proposal_amount_cents"]:
+            self._judge_edit(case_id, amount_cents=amount_cents)
         return str(ticket_id), amount_cents
 
     def reject(self, lead_id: uuid.UUID, case_id: uuid.UUID, reason: str) -> None:
@@ -587,6 +591,44 @@ class CaseStore:
             )
             conn.commit()
         self._resume(case_id, "reject")
+
+    def _judge_edit(self, case_id: uuid.UUID, final_text: str | None = None, amount_cents: int | None = None) -> None:
+        """Score the turn a person edited. AGENTS.md: judges cover every specialist edit."""
+        with self._pool.connection() as conn:
+            draft = conn.execute(
+                """
+                SELECT id, body, decision, citations, run_id FROM case_messages
+                WHERE case_id = %s AND role = 'assistant'
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (case_id,),
+            ).fetchone()
+            if draft is None or draft["run_id"] is None:
+                return
+            asked = conn.execute(
+                """
+                SELECT body FROM case_messages
+                WHERE case_id = %s AND role = 'user' AND id < %s
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (case_id, draft["id"]),
+            ).fetchone()
+        text = final_text or f"{draft['body']}\nThe lead changed the amount to {amount_cents} cents."
+        try:
+            record_judge(
+                draft["run_id"],
+                "" if asked is None else asked["body"],
+                draft["decision"] or "",
+                text,
+                draft["citations"],
+                1.0,
+                edited=True,
+            )
+        except Exception:
+            # A LangSmith or judge outage must not undo a close or a ticket.
+            pass
 
     def _resume(self, case_id: uuid.UUID, decision: str) -> None:
         resume_turn(graph_for(self._pool.conninfo), str(case_id), decision)
