@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — The quiz judge does not score without a model key
+
+Status: decision
+
+What changed: `evals/judge.py` is the teacher-quiz grader from the complex-agent guide. `final_answer_correct` returns no score when `OPENAI_API_KEY` is unset. `score_examples` skips the test split while `results/judge_calibration.md` still says the judges have not been run. Nothing writes an agreement number.
+
+Evidence: [Evaluate a complex agent](https://docs.langchain.com/langsmith/evaluate-complex-agent) grades only factual accuracy against the ground truth, rejects conflicting statements, and allows extra detail that stays accurate. Structured output is `reasoning` plus `is_correct`. Temperature is 0. The judge model is `JUDGE_MODEL`, default `gpt-4o-mini`. No key is configured in this environment.
+
+Debug steps: None. The calibration file is compared before and after the check.
+
+Fix: Call the model only after a key exists. Record agreement in `results/judge_calibration.md` from that run, then allow the test split.
+
 ## 2026-10-06 — Handbook rerank is FlashRank on a local top 20
 
 Status: decision

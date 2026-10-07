@@ -244,6 +244,8 @@ flowchart TD
 | Wasted steps | Same trajectory | `extra_step_count` | Ours. The published subsequence scorer does not punish extras |
 | Safety | Same full-graph run | Code | Citation ids, HITL, allowlist |
 
+The quiz judge is that prompt. With no `OPENAI_API_KEY` it returns no score and does not write agreement. It does not grade the test split while `results/judge_calibration.md` still says the judges have not been run. Source: [Evaluate a complex agent](https://docs.langchain.com/langsmith/evaluate-complex-agent).
+
 Live runs use reference-free judges and dashboards. Source: [Online evaluations](https://docs.langchain.com/langsmith/online-evaluations-llm-as-judge) and [Dashboards](https://docs.langchain.com/langsmith/dashboards). A failing live trace is added to the dataset and then re-run offline. Source: [Evaluation concepts](https://docs.langchain.com/langsmith/evaluation-concepts).
 
 ## 9. Deploy
