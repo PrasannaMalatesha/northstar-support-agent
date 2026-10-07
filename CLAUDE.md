@@ -6,7 +6,7 @@ Still slice 1. Owner: Malatesha (`PrasannaMalatesha`). No `Co-authored-by` and n
 
 ## Done
 
-Branch from `origin/dev`. Issues #2–#4 and #6–#21 are closed. `local` and `dev` can read only the `handbook-dev` namespace. The console calls `FASTAPI_URL` or a same-origin path.
+Branch from `origin/dev`. Issues #2–#21 are closed. `local` and `dev` can read only the `handbook-dev` namespace. The console calls `FASTAPI_URL` or a same-origin path.
 
 ## Pending
 
@@ -16,7 +16,6 @@ Still open:
 
 - #22 The held-out release bar and the axe scan run in CI. Online judges are not attached to live LangSmith runs.
 - #1 stays open while #22 is open.
-- #5 closes when this namespace guard is on `dev`.
 
 Also still unfinished: middleware is not attached, and the screen recording is not done. `PostgresStore` is slice 2. Do not invent deploy hooks. Do not promote `dev` to `uat` or `prod` unless asked. Phase checkboxes stay unchecked except phase 0, unless asked.
 
