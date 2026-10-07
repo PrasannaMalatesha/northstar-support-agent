@@ -1,8 +1,9 @@
 """Route one turn to the refund path or the support path.
 
-ponytail: these nodes call the desk functions. A proposal pauses in
-compile_followup only when a checkpointer is attached. The case row
-still writes the ticket.
+ponytail: pytest and a missing model key call the desk functions directly.
+A live key uses create_agent with that same function as the only tool.
+The desk draft is kept. A proposal pauses in compile_followup only when
+a checkpointer is attached. The case row still writes the ticket.
 """
 
 from __future__ import annotations
@@ -52,11 +53,50 @@ def intent_classifier(
 
 
 def refund_agent(state: TurnState, runtime: Runtime[TurnTools]) -> dict:
-    return _fields(runtime.context.refund(state["question"]))
+    return _fields(_decide(state["question"], runtime.context.refund, "refund_agent"))
 
 
 def support_agent(state: TurnState, runtime: Runtime[TurnTools]) -> dict:
-    return _fields(runtime.context.support(state["question"]))
+    return _fields(_decide(state["question"], runtime.context.support, "support_agent"))
+
+
+def _decide(question: str, draft_fn: Callable[[str], Draft], name: str) -> Draft:
+    # https://docs.langchain.com/oss/python/langchain/agents
+    if os.environ.get("PYTEST_CURRENT_TEST") or not os.environ.get("GOOGLE_API_KEY"):
+        return draft_fn(question)
+    try:
+        return _ask_agent(question, draft_fn, name)
+    except Exception:
+        return draft_fn(question)
+
+
+def _ask_agent(question: str, draft_fn: Callable[[str], Draft], name: str) -> Draft:
+    from langchain.agents import create_agent
+    from langchain_core.tools import tool
+
+    from northstar.agent_model import _model
+
+    held: dict[str, Draft] = {}
+    asked = question
+
+    @tool
+    def desk(question: str) -> str:
+        """Return the Northstar desk decision for this question. Call once."""
+        # ponytail: ignore the model argument. The routed question is the one the desk sees.
+        draft = draft_fn(asked)
+        held["draft"] = draft
+        return draft.text
+
+    create_agent(
+        _model(),
+        [desk],
+        system_prompt=(
+            "Call the desk tool once with the specialist's question. "
+            "Do not invent an amount, an order, or a rule."
+        ),
+        name=name,
+    ).invoke({"messages": [{"role": "user", "content": question}]})
+    return held["draft"]
 
 
 _PAUSE = frozenset({"approve_refund", "partial_credit", "deny"})

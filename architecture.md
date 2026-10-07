@@ -86,7 +86,7 @@ The walkthrough image is `diagrams/northstar-architecture.png` (JPEG copy beside
 
 `compile_followup` writes state key `followup`. Final-response eval reads that key.
 
-The running graph is that router. `refund_agent` and `support_agent` call the desk's existing functions. Each becomes a `create_agent` subgraph when a model key is present. Source: [Graph API](https://docs.langchain.com/oss/python/langgraph/graph-api).
+The running graph is that router. With a model key, `refund_agent` and `support_agent` each call `create_agent` and one desk tool. The desk draft is the decision. Pytest keeps the direct call. Source: [Agents](https://docs.langchain.com/oss/python/langchain/agents).
 
 A handbook turn calls `retrieved_answer`. Overlap picks 20 sections, then `flashrank.Ranker(model_name="ms-marco-MiniLM-L-12-v2")` keeps at most 4 at or above `RETRIEVAL_SCORE_TAU` (0.2). Pinecone replaces the overlap pick when the index exists. `answer()` stays the v0 scorer.
 

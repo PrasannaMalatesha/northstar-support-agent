@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — A live turn asks create_agent, and the desk still decides
+
+Status: decision
+
+What changed: When `GOOGLE_API_KEY` is set and pytest is not running, the refund and support nodes call `create_agent` with the existing desk function as the only tool. The tool ignores the model's question and uses the routed one. If the agent errors or skips the tool, the node calls the desk function itself. Pytest stays on that direct call.
+
+Evidence: [Agents](https://docs.langchain.com/oss/python/langchain/agents). `create_agent` returns a compiled graph. It is invoked inside the node, not mounted as a subgraph, so the trajectory names stay the same.
+
+Debug steps: None.
+
+Fix: `packages/agent/northstar/graph.py`. Mount the agent as a subgraph when the trajectory must list the inner tool call. Middleware stays off until a limit or a PII pass is the bug.
+
 ## 2026-10-07 — The pairwise judge prefers v1 on the four desk rows
 
 Status: decision

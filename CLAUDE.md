@@ -6,11 +6,11 @@ Still slice 1. Owner: Malatesha (`PrasannaMalatesha`). No `Co-authored-by` and n
 
 ## Done
 
-Branch from `origin/dev`. Desk behavior for GitHub issues #2–#22 is on `dev`. [PR #50](https://github.com/PrasannaMalatesha/northstar-support-agent/pull/50) pauses a refund proposal on the graph thread with `interrupt` until a lead approves, edits, or rejects. The case row is still the ticket. The pairwise judge preferred v1 on the four held-out desk rows and tied the identical handbook replies (`results/v0_v1.md`).
+Branch from `origin/dev`. Desk behavior for GitHub issues #2–#22 is on `dev`. [PR #50](https://github.com/PrasannaMalatesha/northstar-support-agent/pull/50) pauses a refund proposal on the graph thread with `interrupt` until a lead approves, edits, or rejects. The case row is still the ticket. The pairwise judge preferred v1 on the four held-out desk rows and tied the identical handbook replies (`results/v0_v1.md`). A live turn with `GOOGLE_API_KEY` asks `create_agent`; the desk tool still decides. Pytest keeps the direct call.
 
 ## Pending
 
-- `support_agent` and `refund_agent` are plain nodes. Use `create_agent` when the model must choose tools.
+- The agent is invoked inside the node. Mount it as a subgraph when the trajectory must list the inner tool. Middleware is not attached.
 - `evaluate_comparative` still needs two uploaded experiments. The recorded pairwise run is the same judge locally.
 - `PostgresStore` is slice 2.
 - Deploy hooks are unset. Do not invent them. Do not promote `dev` to `uat` or `prod` unless asked.
