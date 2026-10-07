@@ -3,7 +3,8 @@ from pathlib import Path
 from evals.judge import final_answer_correct, grader_messages, score_examples
 
 
-def test_the_quiz_judge_does_not_score_without_a_key_or_touch_calibration():
+def test_the_quiz_judge_does_not_score_without_a_key_or_touch_calibration(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     calibration = Path("results/judge_calibration.md").read_text()
     messages = grader_messages("How long is the apparel window?", "30 days.", "14 days.")
     assert messages[0]["content"].startswith("You are a teacher grading a quiz.")

@@ -53,6 +53,10 @@ def grader_messages(question: str, reference: str, response: str) -> list[dict[s
     ]
 
 
+JUDGE_MODEL_DEFAULT = "nvidia/nemotron-3-ultra-550b-a55b:free"
+OPENROUTER_BASE = "https://openrouter.ai/api/v1"
+
+
 def final_answer_correct(
     inputs: dict,
     outputs: dict,
@@ -60,7 +64,7 @@ def final_answer_correct(
     grade: GradeFn | None = None,
 ) -> bool | None:
     if grade is None:
-        if not os.environ.get("OPENAI_API_KEY"):
+        if not os.environ.get("OPENROUTER_API_KEY"):
             return None
         grade = _live_grade
     return bool(grade(inputs["question"], reference_outputs["response"], outputs["response"]))
@@ -102,9 +106,13 @@ def _live_grade(question: str, reference: str, response: str) -> bool:
 def _grader():
     from langchain.chat_models import init_chat_model
 
-    name = os.environ.get("JUDGE_MODEL") or "gpt-4o-mini"
-    if ":" not in name:
-        name = f"openai:{name}"
-    return init_chat_model(name, temperature=0).with_structured_output(
-        Grade, method="json_schema", strict=True
-    )
+    # The model id contains a colon (`:free`). Pass the provider separately
+    # so that colon is not read as an OpenAI model prefix.
+    name = os.environ.get("JUDGE_MODEL") or JUDGE_MODEL_DEFAULT
+    return init_chat_model(
+        name,
+        model_provider="openai",
+        base_url=OPENROUTER_BASE,
+        api_key=os.environ["OPENROUTER_API_KEY"],
+        temperature=0,
+    ).with_structured_output(Grade, method="json_schema", strict=True)
