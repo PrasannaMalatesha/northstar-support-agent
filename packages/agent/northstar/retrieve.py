@@ -28,6 +28,12 @@ CANDIDATES = 20
 KEEP = 4
 INDEX = "northstar-handbook"
 NAMESPACE = "handbook-dev"
+_NAMESPACES = {
+    "local": "handbook-dev",
+    "dev": "handbook-dev",
+    "uat": "handbook-uat",
+    "prod": "handbook-prod",
+}
 DIMENSION = 1536
 EMBEDDING_MODEL = "models/gemini-embedding-001"
 # Lowest gold score on train_judge and dev is 0.41 (FAQ-HOURS).
@@ -81,7 +87,7 @@ def _pinecone_top(question: str) -> list[tuple[str, str]]:
     store = PineconeVectorStore(
         index=_index(),
         embedding=_embeddings(),
-        namespace=os.environ.get("PINECONE_NAMESPACE") or NAMESPACE,
+        namespace=_namespace(),
     )
     docs = store.similarity_search(question, k=CANDIDATES)
     return [(str(doc.metadata["section_id"]), doc.page_content) for doc in docs]
@@ -108,7 +114,7 @@ def ingest_handbook(directory: Path | None = None) -> int:
         if pc.describe_index(name).status.ready:
             break
         time.sleep(2)
-    namespace = os.environ.get("PINECONE_NAMESPACE") or NAMESPACE
+    namespace = _namespace()
     store = PineconeVectorStore(index=pc.Index(name), embedding=_embeddings(), namespace=namespace)
     store.add_texts(
         texts=[body for _, body in sections],
@@ -117,6 +123,21 @@ def ingest_handbook(directory: Path | None = None) -> int:
         namespace=namespace,
     )
     return len(sections)
+
+
+def namespace_for(env: str | None, requested: str | None) -> str:
+    """One environment, one handbook namespace. A mismatch is refused."""
+    name = (env or "local").strip().lower()
+    allowed = _NAMESPACES.get(name)
+    if allowed is None:
+        raise RuntimeError(f"Unknown environment {name}.")
+    if requested and requested != allowed:
+        raise RuntimeError(f"{name} may only use {allowed}.")
+    return allowed
+
+
+def _namespace() -> str:
+    return namespace_for(os.environ.get("NORTHSTAR_ENV"), os.environ.get("PINECONE_NAMESPACE"))
 
 
 def _index():
