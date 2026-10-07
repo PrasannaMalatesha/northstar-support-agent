@@ -13,8 +13,8 @@ from datetime import datetime
 from northstar.clock import Clock
 from northstar.escalate import handoff
 from northstar.graph import TurnTools, run_turn
+from northstar.agent_model import handbook_reply
 from northstar.handbook import Draft
-from northstar.retrieve import retrieved_answer
 from northstar.privacy import SECRET_REPLY, has_secret, screen
 
 # ponytail: 1_000 tokens stands in for one handbook draft. Replace with the
@@ -595,7 +595,7 @@ class CaseStore:
         if self._used(staff_id, day) + TOKENS_PER_TURN > self._token_budget:
             return _plain("quota", QUOTA_TEXT)
         self._charge(staff_id, day, TOKENS_PER_TURN)
-        return retrieved_answer(question)
+        return handbook_reply(question)
 
     def _refund_draft(self, case_id: uuid.UUID, staff_id: uuid.UUID, question: str, now: datetime) -> Draft:
         order_id = _order_id(question)

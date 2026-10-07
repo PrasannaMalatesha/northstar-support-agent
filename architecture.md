@@ -33,7 +33,7 @@ Walk the diagrams in this order:
 | Guardrails | LangChain middleware | Input block, PII, output check | [Guardrails](https://docs.langchain.com/oss/python/langchain/guardrails) |
 | Pause | `interrupt` then `Command(resume=...)` | Refund approval | [Interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts) |
 | Traces and evals | LangSmith | Experiments, online judges, dashboards | [Evaluation](https://docs.langchain.com/langsmith/evaluation) |
-| Models | OpenAI for the agent. OpenRouter for the judge | Agent default `gpt-4o-mini`. Judge default `nvidia/nemotron-3-ultra-550b-a55b:free` | Keys stay on the API |
+| Models | Gemini for the agent. OpenRouter for the judge | Agent `gemini-3-flash-preview`. Judge `nvidia/nemotron-3-ultra-550b-a55b:free` | Keys stay on the API |
 
 Next.js never holds the model key. FastAPI holds `OPENAI_API_KEY`, `PINECONE_API_KEY`, `LANGSMITH_API_KEY`, and `DATABASE_URL`.
 
