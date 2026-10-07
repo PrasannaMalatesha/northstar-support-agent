@@ -230,4 +230,5 @@ def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None 
         tuple(result["citations"]),
         result["match"],
         tuple(result["steps"]),
+        run_id,
     )

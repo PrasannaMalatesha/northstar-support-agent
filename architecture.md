@@ -248,7 +248,7 @@ flowchart TD
 
 The quiz judge is that prompt, called through OpenRouter as `nvidia/nemotron-3-ultra-550b-a55b:free`. With no `OPENROUTER_API_KEY` it returns no score and does not write agreement. It does not grade the test split while `results/judge_calibration.md` still says the judges have not been run. Source: [Evaluate a complex agent](https://docs.langchain.com/langsmith/evaluate-complex-agent).
 
-Live runs use reference-free judges and dashboards. Source: [Online evaluations](https://docs.langchain.com/langsmith/online-evaluations-llm-as-judge) and [Dashboards](https://docs.langchain.com/langsmith/dashboards). A failing live trace is added to the dataset and then re-run offline. Source: [Evaluation concepts](https://docs.langchain.com/langsmith/evaluation-concepts).
+Live runs use reference-free judges and dashboards. The safety code check scores every LangGraph root run. The groundedness judge scores every abstain, every escalation, every draft or amount a person edited, and a 10 percent sample. Source: [Online evaluations](https://docs.langchain.com/langsmith/online-evaluations-llm-as-judge) and [Dashboards](https://docs.langchain.com/langsmith/dashboards). A failing live trace is added to the dataset and then re-run offline. Source: [Evaluation concepts](https://docs.langchain.com/langsmith/evaluation-concepts).
 
 ## 9. Deploy
 
