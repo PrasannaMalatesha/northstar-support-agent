@@ -1,7 +1,7 @@
-"""Rerank the handbook sections that overlap the question.
+"""Rerank handbook sections.
 
-ponytail: overlap picks the 20 candidates. Replace that pick with Pinecone
-top-20 when PINECONE_API_KEY and the index exist. FlashRank stays.
+ponytail: overlap picks the 20 candidates when PINECONE_API_KEY is unset
+or during pytest. Otherwise Pinecone returns the 20. FlashRank stays.
 """
 
 from __future__ import annotations
@@ -26,6 +26,10 @@ from northstar.handbook import (
 MODEL = "ms-marco-MiniLM-L-12-v2"
 CANDIDATES = 20
 KEEP = 4
+INDEX = "northstar-handbook"
+NAMESPACE = "handbook-dev"
+DIMENSION = 1536
+EMBEDDING_MODEL = "models/gemini-embedding-001"
 # Lowest gold score on train_judge and dev is 0.41 (FAQ-HOURS).
 # The 14-day trap's next section is 0.15. Abstain scores 0.
 TAU = 0.2
@@ -33,7 +37,8 @@ TAU = 0.2
 
 def retrieved_answer(question: str, directory: Path | None = None) -> Draft:
     directory = directory or policy_dir()
-    picked = _overlap(question, _sections(directory))
+    sections = _sections(directory)
+    picked = _candidates(question, sections)
     if not picked:
         return _abstain()
     bodies = {section_id: body for section_id, body in picked}
@@ -62,6 +67,87 @@ def retrieved_answer(question: str, directory: Path | None = None) -> Draft:
     if not lines:
         return _abstain()
     return Draft("answer", "\n".join(lines), tuple(citations), match)
+
+
+def _candidates(question: str, sections: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    if os.environ.get("PYTEST_CURRENT_TEST") or not os.environ.get("PINECONE_API_KEY"):
+        return _overlap(question, sections)
+    return _pinecone_top(question)
+
+
+def _pinecone_top(question: str) -> list[tuple[str, str]]:
+    from langchain_pinecone import PineconeVectorStore
+
+    store = PineconeVectorStore(
+        index=_index(),
+        embedding=_embeddings(),
+        namespace=os.environ.get("PINECONE_NAMESPACE") or NAMESPACE,
+    )
+    docs = store.similarity_search(question, k=CANDIDATES)
+    return [(str(doc.metadata["section_id"]), doc.page_content) for doc in docs]
+
+
+def ingest_handbook(directory: Path | None = None) -> int:
+    import time
+
+    from langchain_pinecone import PineconeVectorStore
+    from pinecone import Pinecone, ServerlessSpec
+
+    directory = directory or policy_dir()
+    sections = _sections(directory)
+    pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
+    name = os.environ.get("PINECONE_INDEX") or INDEX
+    if name not in [item.name for item in pc.list_indexes()]:
+        pc.create_index(
+            name=name,
+            dimension=DIMENSION,
+            metric="cosine",
+            spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+        )
+    for _ in range(30):
+        if pc.describe_index(name).status.ready:
+            break
+        time.sleep(2)
+    namespace = os.environ.get("PINECONE_NAMESPACE") or NAMESPACE
+    store = PineconeVectorStore(index=pc.Index(name), embedding=_embeddings(), namespace=namespace)
+    store.add_texts(
+        texts=[body for _, body in sections],
+        metadatas=[{"section_id": section_id} for section_id, _ in sections],
+        ids=[section_id for section_id, _ in sections],
+        namespace=namespace,
+    )
+    return len(sections)
+
+
+def _index():
+    from pinecone import Pinecone
+
+    name = os.environ.get("PINECONE_INDEX") or INDEX
+    return Pinecone(api_key=os.environ["PINECONE_API_KEY"]).Index(name)
+
+
+def _embeddings():
+    from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+    inner = GoogleGenerativeAIEmbeddings(
+        model=EMBEDDING_MODEL,
+        google_api_key=os.environ["GOOGLE_API_KEY"],
+        output_dimensionality=DIMENSION,
+    )
+
+    class _Unit:
+        def embed_documents(self, texts: list[str]) -> list[list[float]]:
+            return [_unit(vector) for vector in inner.embed_documents(texts)]
+
+        def embed_query(self, text: str) -> list[float]:
+            return _unit(inner.embed_query(text))
+
+    return _Unit()
+
+
+def _unit(vector: list[float]) -> list[float]:
+    norm = math.sqrt(sum(item * item for item in vector)) or 1.0
+    return [item / norm for item in vector]
 
 
 def _overlap(question: str, sections: list[tuple[str, str]]) -> list[tuple[str, str]]:
