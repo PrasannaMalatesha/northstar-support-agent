@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — Tool names come from the tools task this install emits
+
+Status: decision
+
+What changed: `task_names` appends each tool name after a task named `tools`. The parent debug stream already includes that task when `create_agent` is invoked inside the node. The agent is not passed to `add_node`, because its state is `messages` and the parent state is not.
+
+Evidence: [Subgraphs](https://docs.langchain.com/oss/python/langgraph/use-subgraphs) say different state schemas are invoked inside a node. [Evaluate a complex agent](https://docs.langchain.com/langsmith/evaluate-complex-agent) reads `payload["input"]["messages"][-1].tool_calls`. A nested agent on this install emits `payload["input"]` as the tool-call list, and the parent stream shows `model`, then `tools`.
+
+Debug steps: Streamed a nested `create_agent` with `stream_mode="debug"` and `subgraphs=True`. Indexing `input["messages"]` raised `TypeError` because `input` was a list.
+
+Fix: `packages/agent/northstar/graph.py` reads both shapes.
+
 ## 2026-10-07 — A live turn asks create_agent, and the desk still decides
 
 Status: decision
