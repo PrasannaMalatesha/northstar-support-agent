@@ -12,6 +12,7 @@ from evals.labeled import (
     score_handbook,
     score_naive,
 )
+from evals.pairwise import picks_from
 
 _TEST_URL = os.environ.get(
     "TEST_DATABASE_URL",
@@ -113,7 +114,7 @@ def _clear_cases() -> None:
         conn.execute("DELETE FROM usage_days")
 
 
-def _desk_passed(client, clock) -> dict[str, bool]:
+def _desk_passed(client, clock, texts: dict | None = None) -> dict[str, bool]:
     _clear_cases()
     clock.moment = _START
     headers = _login(client, "specialist@northstar.example", "northstar-specialist")
@@ -139,6 +140,8 @@ def _desk_passed(client, clock) -> dict[str, bool]:
             json={"question": case["question"]},
         ).json()
         draft = body["messages"][-1]
+        if texts is not None:
+            texts[case["id"]] = draft["body"]
         ok = (
             draft["decision"] == case["decision"]
             and all(section in draft["citations"] for section in case["sections"])
@@ -166,4 +169,7 @@ def test_held_out_v0_against_v1_is_recorded(client, clock):
             }
         )
     text = comparison_text(v0_runs, v1_runs, naive_runs[0])
-    assert Path("results/v0_v1.md").read_text() == text
+    recorded = Path("results/v0_v1.md").read_text()
+    assert recorded.startswith(text)
+    held_out = {case["id"] for case in CASES if case["split"] == "test"}
+    assert set(picks_from(recorded)) == held_out

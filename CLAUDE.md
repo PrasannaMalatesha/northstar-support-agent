@@ -6,12 +6,12 @@ Still slice 1. Owner: Malatesha (`PrasannaMalatesha`). No `Co-authored-by` and n
 
 ## Done
 
-Branch from `origin/dev`. Desk behavior for GitHub issues #2–#22 is on `dev`. [PR #50](https://github.com/PrasannaMalatesha/northstar-support-agent/pull/50) pauses a refund proposal on the graph thread with `interrupt` until a lead approves, edits, or rejects. The case row is still the ticket.
+Branch from `origin/dev`. Desk behavior for GitHub issues #2–#22 is on `dev`. [PR #50](https://github.com/PrasannaMalatesha/northstar-support-agent/pull/50) pauses a refund proposal on the graph thread with `interrupt` until a lead approves, edits, or rejects. The case row is still the ticket. The pairwise judge preferred v1 on the four held-out desk rows and tied the identical handbook replies (`results/v0_v1.md`).
 
 ## Pending
 
 - `support_agent` and `refund_agent` are plain nodes. Use `create_agent` when the model must choose tools.
-- No LLM pairwise run. `results/v0_v1.md` is label match only.
+- `evaluate_comparative` still needs two uploaded experiments. The recorded pairwise run is the same judge locally.
 - `PostgresStore` is slice 2.
 - Deploy hooks are unset. Do not invent them. Do not promote `dev` to `uat` or `prod` unless asked.
 - Phase checkboxes stay unchecked except phase 0, unless asked.
