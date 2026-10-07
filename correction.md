@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — A proposal pauses the graph thread
+
+Status: decision
+
+What changed: A refund, partial credit, or denial pauses in `compile_followup` with `interrupt` when the thread has a checkpointer. Approve, edit, and reject resume that thread. The case row still inserts the ticket. Turns with no checkpointer, including the path scorer, do not pause.
+
+Evidence: [Interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts). The node restarts on resume, so the pause is after the proposal is already in state. Putting it in the refund node would propose twice.
+
+Debug steps: A refund turn on one connection left `compile_followup` pending. A second connection read that interrupt. Resume wrote `followup`.
+
+Fix: `packages/agent/northstar/graph.py`. `create_agent` subgraphs stay plain nodes until the model has to choose tools.
+
 ## 2026-10-07 — Handbook candidates come from Pinecone when the key is set
 
 Status: decision

@@ -32,6 +32,7 @@ We do not copy their music-store SQL bot. Their refund node writes immediately. 
 5. Adopted the official three experiments: final response, intent node alone, trajectory. The published trajectory score is `trajectory_subsequence` (fraction of expected steps found in order). Extra wasted steps are counted separately, because that official score does not punish them.
 6. Stacked guardrails: cheap input blocks first, then PII redaction, then human approval, then an output check. A blocked input does not spend an agent-model call.
 7. Split storage. Pinecone holds policy vectors. Postgres holds chats, the HITL pause, cross-thread user memory, orders, and tickets.
+8. A refund proposal pauses the graph thread with `interrupt`. The lead's decision resumes it. The case row is still the ticket.
 
 ## Why Next.js and FastAPI
 

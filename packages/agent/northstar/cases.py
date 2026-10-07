@@ -12,7 +12,7 @@ from datetime import datetime
 
 from northstar.clock import Clock
 from northstar.escalate import handoff
-from northstar.graph import TurnTools, run_turn
+from northstar.graph import TurnTools, resume_turn, run_turn
 from northstar.memory import graph_for
 from northstar.agent_model import handbook_reply
 from northstar.handbook import Draft
@@ -544,6 +544,7 @@ class CaseStore:
             ticket_id = self._write_ticket(conn, case_id, row["proposal_amount_cents"])
             conn.execute("UPDATE cases SET status = 'Open' WHERE id = %s", (case_id,))
             conn.commit()
+        self._resume(case_id, "approve")
         return str(ticket_id)
 
     def edit_amount(self, lead_id: uuid.UUID, case_id: uuid.UUID, amount_cents: int) -> tuple[str, int]:
@@ -569,6 +570,7 @@ class CaseStore:
                 (amount_cents, case_id),
             )
             conn.commit()
+        self._resume(case_id, "edit")
         return str(ticket_id), amount_cents
 
     def reject(self, lead_id: uuid.UUID, case_id: uuid.UUID, reason: str) -> None:
@@ -583,6 +585,10 @@ class CaseStore:
                 (reason.strip(), case_id),
             )
             conn.commit()
+        self._resume(case_id, "reject")
+
+    def _resume(self, case_id: uuid.UUID, decision: str) -> None:
+        resume_turn(graph_for(self._pool.conninfo), str(case_id), decision)
 
     def _support_draft(self, case_id: uuid.UUID, staff_id: uuid.UUID, question: str, now: datetime) -> Draft:
         order_id = _order_id(question)
