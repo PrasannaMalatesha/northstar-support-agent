@@ -14,9 +14,8 @@ Close an issue when its acceptance criteria are met.
 
 Still open:
 
-- #22 The held-out release bar and the axe scan run in CI. Online judges are not attached to live LangSmith runs.
-- #1 stays open while #22 is open.
-- #5 closes when this namespace guard is on `dev`.
+- #22 Safety code now checks every saved draft against the section registry. A bad or missing citation becomes an abstain. Online judges are still not attached: this LangSmith SDK has no run-rule create method, and `openevals` is not installed.
+- #1 stays open while #22 is open. Issues #2–#21 are closed.
 
 Also still unfinished: middleware is not attached, and the screen recording is not done. `PostgresStore` is slice 2. Do not invent deploy hooks. Do not promote `dev` to `uat` or `prod` unless asked. Phase checkboxes stay unchecked except phase 0, unless asked.
 
