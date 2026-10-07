@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — The pairwise judge prefers v1 on the four desk rows
+
+Status: decision
+
+What changed: The held-out replies were compared by the quiz judge's model, with the order randomized. Identical handbook replies were a tie and were not sent. The judge preferred v1 on exception, proposer-cannot-approve, catalog-material, and out-of-window. It preferred v0 on none.
+
+Evidence: [Pairwise evaluation](https://docs.langchain.com/langsmith/evaluate-pairwise). `evaluate_comparative` needs two existing experiment names. Those experiments are not uploaded, so this run is the same judge locally.
+
+Debug steps: None. The picks are in `results/v0_v1.md`.
+
+Fix: `evals/pairwise.py`. Upload the two experiments before calling `evaluate_comparative`.
+
 ## 2026-10-07 — A proposal pauses the graph thread
 
 Status: decision
