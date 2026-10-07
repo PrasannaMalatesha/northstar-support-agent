@@ -10,7 +10,7 @@ Branch from `origin/dev`. Desk behavior for GitHub issues #2–#22 is on `dev`. 
 
 ## Pending
 
-- The agent is invoked inside the node. Mount it as a subgraph when the trajectory must list the inner tool. Middleware is not attached.
+- Middleware is not attached. The agent stays invoked inside the node: its state is `messages`, and the parent state is not, so `add_node` is the wrong mount ([Subgraphs](https://docs.langchain.com/oss/python/langgraph/use-subgraphs)). The trajectory recorder appends tool names from the `tools` task.
 - `evaluate_comparative` still needs two uploaded experiments. The recorded pairwise run is the same judge locally.
 - `PostgresStore` is slice 2.
 - Deploy hooks are unset. Do not invent them. Do not promote `dev` to `uat` or `prod` unless asked.

@@ -146,20 +146,45 @@ def _compile(checkpointer=None):
 GRAPH = _compile()
 
 
-def turn_path(question: str, tools: TurnTools) -> list[str]:
-    # ponytail: node names only. Append tool-call names when a node named
-    # "tools" exists, as the complex-agent guide does.
+def task_names(stream) -> list[str]:
+    """Node names, plus each tool name when the task is `tools`.
+
+    The guide sample reads ``payload["input"]["messages"][-1].tool_calls``.
+    This install's tools task puts the tool-call list on ``payload["input"]``.
+    https://docs.langchain.com/langsmith/evaluate-complex-agent
+    """
     names = []
-    for item in GRAPH.stream(
-        {"question": question},
-        context=tools,
-        stream_mode="debug",
-        subgraphs=True,
-    ):
-        chunk = item[-1]
-        if isinstance(chunk, dict) and chunk.get("type") == "task":
-            names.append(chunk["payload"]["name"])
+    for item in stream:
+        chunk = item[-1] if isinstance(item, tuple) else item
+        if not isinstance(chunk, dict) or chunk.get("type") != "task":
+            continue
+        payload = chunk["payload"]
+        names.append(payload["name"])
+        if payload.get("name") == "tools":
+            names.extend(_tool_call_names(payload.get("input")))
     return names
+
+
+def _tool_call_names(incoming) -> list[str]:
+    calls = incoming
+    if isinstance(incoming, dict):
+        messages = incoming.get("messages") or []
+        last = messages[-1] if messages else None
+        calls = last.get("tool_calls") if isinstance(last, dict) else getattr(last, "tool_calls", None)
+    if not isinstance(calls, list):
+        return []
+    return [call["name"] for call in calls if isinstance(call, dict) and call.get("name")]
+
+
+def turn_path(question: str, tools: TurnTools) -> list[str]:
+    return task_names(
+        GRAPH.stream(
+            {"question": question},
+            context=tools,
+            stream_mode="debug",
+            subgraphs=True,
+        )
+    )
 
 
 def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None = None) -> Draft:

@@ -235,7 +235,7 @@ Evaluator `correct` is `outputs["route"] == reference_outputs["route"]`. Include
 
 Same E2E dataset. Reference `trajectory` is an ordered list of node and tool names, for example `["refund_agent", "retrieve_policy", "lookup_order"]` or `["support_agent", "retrieve_policy"]`.
 
-Record the path with `graph.astream(..., subgraphs=True, stream_mode="debug")`, as the docs specify. On `chunk["type"] == "task"`, append `chunk["payload"]["name"]`. When the payload name is `tools`, also append each tool call name. Docs: [streaming subgraphs](https://docs.langchain.com/oss/python/langgraph/streaming).
+Record the path with `graph.astream(..., subgraphs=True, stream_mode="debug")`, as the docs specify. On `chunk["type"] == "task"`, append `chunk["payload"]["name"]`. When the payload name is `tools`, also append each tool call name. The guide sample reads `payload["input"]["messages"][-1].tool_calls` ([Evaluate a complex agent](https://docs.langchain.com/langsmith/evaluate-complex-agent)). This install's tools task sets `payload["input"]` to that tool-call list. Read whichever shape is present. Docs: [streaming subgraphs](https://docs.langchain.com/oss/python/langgraph/streaming).
 
 `trajectory_subsequence(outputs, reference_outputs)` returns the fraction of expected steps found in order. If the reference is longer than the actual path, the docs implementation returns `False`. Otherwise it walks both lists and returns `i / len(reference)`. Extra steps do not lower this score.
 
