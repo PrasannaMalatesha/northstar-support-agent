@@ -19,6 +19,7 @@ from northstar.memory import graph_for
 from northstar.agent_model import handbook_reply
 from northstar.handbook import ABSTAIN_TEXT, Draft, guard_draft
 from northstar.online import record_edit, record_judge
+from northstar.preferences import recall, remember, stated
 from northstar.privacy import SECRET_REPLY, has_secret, screen
 
 # ponytail: 1_000 tokens stands in for one handbook draft. Replace with the
@@ -283,6 +284,17 @@ class CaseStore:
             )
             conn.commit()
 
+    def _customer_id(self, case_id: uuid.UUID) -> uuid.UUID | None:
+        with self._pool.connection() as conn:
+            row = conn.execute("SELECT customer_id FROM cases WHERE id = %s", (case_id,)).fetchone()
+        return None if row is None else row["customer_id"]
+
+    def _remember_preferences(self, case_id: uuid.UUID, question: str, now: datetime) -> None:
+        prefs = stated(question)
+        customer_id = self._customer_id(case_id) if prefs else None
+        if customer_id is not None:
+            remember(self._pool.conninfo, customer_id, prefs, _iso(now))
+
     def _tried(self, case_id: uuid.UUID) -> tuple[str, ...]:
         """What the agent already did on this case, for the handoff packet."""
         with self._pool.connection() as conn:
@@ -327,6 +339,7 @@ class CaseStore:
         self._requests[key] = self._requests.get(key, 0) + 1
         if has_secret(question):
             return self._save(case_id, question, _plain("blocked", SECRET_REPLY), now)
+        self._remember_preferences(case_id, question, now)
         escalated = handoff(question, self._tried(case_id))
         if escalated is not None:
             section, text = escalated.section, escalated.text
@@ -400,6 +413,7 @@ class CaseStore:
             "stale": row["status"] == "Waiting for approval" and _is_stale(row["proposed_at"], self._clock.now()),
             "rejection_reason": row["rejection_reason"],
             "history": self._history(case_id),
+            "preferences": self._preferences(case_id),
         }
 
     def _history(self, case_id: uuid.UUID) -> list[dict]:
@@ -441,6 +455,10 @@ class CaseStore:
                 }
             )
         return history
+
+    def _preferences(self, case_id: uuid.UUID) -> dict[str, str]:
+        customer_id = self._customer_id(case_id)
+        return {} if customer_id is None else recall(self._pool.conninfo, customer_id)
 
     def _status(self, case_id: uuid.UUID) -> str:
         return self._case_row(case_id)["status"]

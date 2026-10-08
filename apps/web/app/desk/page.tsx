@@ -263,6 +263,7 @@ export default async function DeskPage({
     refund_amount_cents: number | null;
     proposed_amount_cents: number | null;
     customer: { name: string; email: string } | null;
+    preferences: Record<string, string>;
     history: {
       id: string;
       status: string;
@@ -365,6 +366,9 @@ export default async function DeskPage({
       <p>{current.customer ? current.customer.name : "No customer bound."}</p>
       <section>
         <h2>Past cases</h2>
+        {current.preferences.contact_channel ? (
+          <p>Stated preference: contact by {current.preferences.contact_channel}.</p>
+        ) : null}
         {current.history.length === 0 ? (
           <p>No past cases.</p>
         ) : (
