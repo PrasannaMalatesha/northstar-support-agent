@@ -107,4 +107,4 @@ Every later ticket cites a section id. The handbook was written and frozen as `n
 
 ## What is not built yet
 
-No application code, no index, no database, and no experiment results. `correction.md` is where later bugs and approach changes go.
+Slice 1 is built, and issues #1 to #22 are closed. The submission screen recording is not done. Slice 2 and slice 3 are tickets under #64 and #65. `correction.md` is where later bugs and approach changes go.

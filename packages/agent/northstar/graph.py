@@ -13,6 +13,7 @@ import os
 import random
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Callable, Literal
 
 from langgraph.config import get_config
@@ -23,6 +24,7 @@ from langgraph.types import Command, interrupt
 from typing_extensions import TypedDict
 
 from northstar.handbook import Draft
+from northstar.privacy import SECRET_REPLY
 
 
 class TurnState(TypedDict, total=False):
@@ -62,13 +64,25 @@ def support_agent(state: TurnState, runtime: Runtime[TurnTools]) -> dict:
     return _fields(_decide(state["question"], runtime.context.support, "support_agent"))
 
 
+LOOKUP_FAILED_TEXT = "The lookup failed. No facts were filled in. Try again."
+
+
 def _decide(question: str, draft_fn: Callable[[str], Draft], name: str) -> Draft:
     # https://docs.langchain.com/oss/python/langchain/agents
     if os.environ.get("PYTEST_CURRENT_TEST") or not os.environ.get("GOOGLE_API_KEY"):
         return draft_fn(question)
+    return _agent_draft(question, draft_fn, name)
+
+
+def _agent_draft(question: str, draft_fn: Callable[[str], Draft], name: str) -> Draft:
+    from langchain.agents.middleware.pii import PIIDetectionError
+
     try:
         return _ask_agent(question, draft_fn, name)
+    except PIIDetectionError:
+        return Draft("blocked", SECRET_REPLY, (), {}, ())
     except Exception:
+        # The model failed. The desk still decides, without a model.
         return draft_fn(question)
 
 
@@ -97,8 +111,61 @@ def _ask_agent(question: str, draft_fn: Callable[[str], Draft], name: str) -> Dr
             "Do not invent an amount, an order, or a rule."
         ),
         name=name,
+        middleware=_middleware(held),
     ).invoke({"messages": [{"role": "user", "content": question}]})
+    if held.get("failed"):
+        return Draft("lookup_failed", LOOKUP_FAILED_TEXT, (), {}, ())
     return held["draft"]
+
+
+def _middleware(held: dict) -> list:
+    """Built-in middleware on each create_agent subgraph. First in the list is outermost.
+
+    https://docs.langchain.com/oss/python/langchain/middleware/built-in
+    HumanInTheLoopMiddleware is not here: the subgraph has no ticket tool. The lead's
+    decision in the API and the interrupt in compile_followup are the gate.
+    SummarizationMiddleware is not here: the subgraph sees one message per turn.
+    """
+    from langchain.agents.middleware import (
+        ModelCallLimitMiddleware,
+        ModelFallbackMiddleware,
+        ModelRetryMiddleware,
+        PIIMiddleware,
+        ToolCallLimitMiddleware,
+        ToolErrorMiddleware,
+        ToolRetryMiddleware,
+    )
+
+    from northstar.agent_model import _fallback_model
+    from northstar.privacy import detector
+
+    def pii(kind: str, strategy: str, find=None) -> PIIMiddleware:
+        return PIIMiddleware(
+            kind,
+            strategy=strategy,
+            detector=find,
+            apply_to_input=True,
+            apply_to_output=True,
+            apply_to_tool_results=True,
+        )
+
+    def failed(_exc: Exception, _request) -> str:
+        held["failed"] = True
+        return "Lookup failed. Do not fill in facts."
+
+    fallback = _fallback_model()
+    return [
+        pii("secret", "block", detector("secret")),
+        pii("email", "redact"),
+        pii("credit_card", "mask"),
+        pii("phone", "redact", detector("phone")),
+        ModelCallLimitMiddleware(run_limit=3, exit_behavior="end"),
+        ToolCallLimitMiddleware(tool_name="desk", run_limit=1),
+        *([ModelFallbackMiddleware(fallback)] if fallback is not None else []),
+        ModelRetryMiddleware(max_retries=2, on_failure="error"),
+        ToolErrorMiddleware(on_error=failed),
+        ToolRetryMiddleware(max_retries=1, tools=["desk"], on_failure="error"),
+    ]
 
 
 _PAUSE = frozenset({"approve_refund", "partial_credit", "deny"})
@@ -189,6 +256,20 @@ def turn_path(question: str, tools: TurnTools) -> list[str]:
     )
 
 
+@lru_cache(maxsize=1)
+def _scrubbed_client():
+    """LangSmith client that runs screen() on every traced input and output.
+
+    Traces get the same masking as the saved text. https://docs.langchain.com/langsmith/mask-inputs-outputs
+    """
+    from langsmith import Client
+    from langsmith.anonymizer import create_anonymizer
+
+    from northstar.privacy import screen
+
+    return Client(anonymizer=create_anonymizer(lambda text, _path: screen(text)))
+
+
 def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None = None) -> Draft:
     from northstar.agent_model import _load_local_env
 
@@ -198,18 +279,22 @@ def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None 
     config = {} if thread_id is None else {"configurable": {"thread_id": thread_id}}
     run_id = None
     if traced:
-        # Name the LangGraph root run up front. Collected runs can list a child model call first.
-        from langsmith import uuid7
+        import langsmith
 
-        root = uuid7()
+        # Name the LangGraph root run up front. Collected runs can list a child model call first.
+        root = langsmith.uuid7()
         config["run_id"] = root
         run_id = str(root)
-    result = graph.invoke({"question": question}, config or None, context=tools)
+        with langsmith.tracing_context(client=_scrubbed_client()):
+            result = graph.invoke({"question": question}, config, context=tools)
+    else:
+        result = graph.invoke({"question": question}, config or None, context=tools)
     followup = result["followup"] if "followup" in result else result["text"]
     if traced:
         from langchain_core.tracers.langchain import wait_for_all_tracers
 
         wait_for_all_tracers()
+        _scrubbed_client().flush()
         if run_id is not None:
             try:
                 from northstar.online import record_judge

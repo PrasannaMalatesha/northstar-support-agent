@@ -13,6 +13,27 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — Built-in middleware on the create_agent subgraphs, and masked traces
+
+Status: decision
+
+What changed: Each `create_agent` subgraph now runs behind built-in middleware:
+- `PIIMiddleware`: secrets blocked, email redacted, card masked, phone redacted, on input, model output, and tool results. Phone and secrets use detectors built from the same patterns as `privacy.screen`.
+- `ModelCallLimitMiddleware`: 3 calls per run, then end.
+- `ToolCallLimitMiddleware`: the desk runs once per run.
+- `ModelRetryMiddleware`, and `ModelFallbackMiddleware` only when `AGENT_FALLBACK_MODEL` is set.
+- `ToolErrorMiddleware` outside `ToolRetryMiddleware` (`on_failure="error"`), so a desk failure returns a `lookup_failed` draft that fills in no facts.
+
+A secret block returns the fixed secret reply. A model failure still falls back to the desk without a model. `HumanInTheLoopMiddleware` and `SummarizationMiddleware` are not attached. The subgraph has no ticket tool, because the lead's API decision after the `compile_followup` interrupt writes the ticket. The subgraph sees one message per turn. `AGENTS.md` now says so under the middleware table.
+
+A live turn also showed that the raw question reached LangSmith on the LangGraph root, the router, the node runs, and the PII middleware's own runs. Only the model calls were masked. `run_turn` now traces through a client whose anonymizer applies `privacy.screen` to every input and output.
+
+Evidence: [Built-in middleware](https://docs.langchain.com/oss/python/langchain/middleware/built-in). `ToolErrorMiddleware`'s docstring in langchain 1.4.3 says to compose it with `ToolRetryMiddleware` placed inner with `on_failure="error"`. [Mask inputs and outputs](https://docs.langchain.com/langsmith/mask-inputs-outputs). `langsmith.anonymizer.create_anonymizer` takes a `(text, path) -> text` replacer.
+
+Debug steps: `apps/api/tests/test_middleware.py` drives the real `create_agent` with a scripted chat model. It checks that the model never sees email, phone, or a full card, that the desk runs once when the model asks twice, that a failing desk is retried once and then returns `lookup_failed`, and that a secret stops the turn before any model call. All four fail when the middleware list is empty. Live Gemini turn on `northstar-local`: all middleware runs appear in the trace, one desk call, and the email, phone, and card appear in none of the 37 runs.
+
+Fix: `packages/agent/northstar/graph.py`, `packages/agent/northstar/privacy.py`, `packages/agent/northstar/agent_model.py`, `.env.example`. A desk retry runs the desk again, so a transient failure after the token charge charges the daily budget twice.
+
 ## 2026-10-07 — Branch protection on uat, dev, prod, and main
 
 Status: decision

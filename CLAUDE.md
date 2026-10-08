@@ -41,6 +41,7 @@ Issues **#2–#21** are closed on GitHub. Desk, auth, cases, orders, catalog, re
 | #60 | Handoff notes for #22 (this file) |
 | #61 | Judge every edited draft or amount; handoff escalations run through the graph; one sampling rule |
 | #62 | The judge writes to the LangGraph root, not a child model call (bug found on a live turn) |
+| `feature/agent-middleware` | Built-in middleware on the `create_agent` subgraphs (PII, call limits, retry, fallback, lookup failed); traces masked by a LangSmith anonymizer |
 
 #57 was closed unmerged, because #60 replaced it.
 
@@ -60,7 +61,6 @@ No open slice 1 issues. #22 closed after branch protection made a CI miss block 
 
 Unfinished work, not GitHub tickets unless Malatesha opens them:
 
-- Built-in LangChain middleware is not fully wired on the `create_agent` subgraphs (PII, HITL, call limits, etc. per `AGENTS.md`).
 - Screen recording for the submission walkthrough is not done.
 - Only the `northstar-local` LangSmith project exists. When `northstar-dev`/`uat`/`prod` get traffic, attach the safety rule with `uv run python -m northstar.online` and that `LANGSMITH_PROJECT`.
 - Turns that end before the graph (request limit, secret block, slur/jailbreak block) have no LangGraph trace. That is by design: a deterministic block ends before any model call.
@@ -104,7 +104,6 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 - Promoting `dev` → `uat` → `prod`.
 - Inventing Render/Vercel deploy hooks.
 - Screen recording (submission artifact; not a code ticket unless opened).
-- Full middleware attach (follow-up after #22 unless Malatesha prioritizes it).
 - `trd.md` (do not write until asked).
 
 ---
@@ -112,5 +111,5 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 ## Continue checklist
 
 1. Sync `dev`.
-2. Pick a slice 2 ticket from the frontier above (start with #66), or ask Malatesha about middleware wiring, the screen recording, or promoting `dev` → `uat`.
+2. Pick a slice 2 ticket from the frontier above (start with #66), or ask Malatesha about the screen recording or promoting `dev` → `uat`.
 3. Rewrite the Where to start / Still open sections of this file for the next stop.

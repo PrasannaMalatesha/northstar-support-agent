@@ -83,6 +83,16 @@ def _load_local_env() -> None:
         os.environ.setdefault("LANGCHAIN_CALLBACKS_BACKGROUND", "false")
 
 
+def _fallback_model():
+    """The second model for ModelFallbackMiddleware. None when AGENT_FALLBACK_MODEL is unset."""
+    name = os.environ.get("AGENT_FALLBACK_MODEL")
+    if not name:
+        return None
+    from langchain_google_genai import ChatGoogleGenerativeAI
+
+    return ChatGoogleGenerativeAI(model=name, google_api_key=os.environ["GOOGLE_API_KEY"], temperature=0)
+
+
 @lru_cache(maxsize=1)
 def _model():
     from langchain_google_genai import ChatGoogleGenerativeAI
