@@ -99,6 +99,8 @@ SLICE2_CASES = (
     {"id": "shipment-in-window", "customer": "mira.shah@northstar.example", "question": "Order NS-1010 hasn't arrived yet.", "decision": "answer", "sections": ("SHIP-SLA",), "status": "Open", "action": None},
     {"id": "shipment-delivered-not-received", "customer": "mira.shah@northstar.example", "question": "Order NS-1006 says delivered but I did not receive it.", "decision": "answer", "sections": ("SHIP-DNR",), "status": "Open", "action": None},
     {"id": "shipment-not-shipped", "customer": "mira.shah@northstar.example", "question": "Order NS-1005 is late.", "decision": "answer", "sections": ("SHIP-SLA",), "status": "Open", "action": None},
+    {"id": "policy-conflict", "customer": "mira.shah@northstar.example", "question": "The website said I have 60 days to return order NS-1001.", "decision": "escalate", "sections": ("ESC-WHEN",), "status": "Escalated", "action": None},
+    {"id": "suspected-fraud", "customer": "mira.shah@northstar.example", "question": "I did not place order NS-1001.", "decision": "escalate", "sections": ("ESC-FRAUD",), "status": "Escalated", "action": None},
     {"id": "refund-before-delivery", "customer": "mira.shah@northstar.example", "question": "Refund order NS-1004.", "decision": "answer", "sections": ("ORD-CANCEL",), "status": "Open", "action": None},
 )
 

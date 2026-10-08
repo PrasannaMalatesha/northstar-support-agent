@@ -242,6 +242,7 @@ export default async function DeskPage({
     stale: boolean;
     draft_text: string;
     final_text: string;
+    handoff: string;
     customer: { name: string; email: string } | null;
     history: {
       id: string;
@@ -344,6 +345,12 @@ export default async function DeskPage({
         <form action={newCaseAction}>
           <button type="submit">New case</button>
         </form>
+      ) : null}
+      {current.handoff ? (
+        <article className="turn">
+          <h2>Handoff</h2>
+          <p className="handoff">{current.handoff}</p>
+        </article>
       ) : null}
       {current.draft_text ? (
         <article className="turn">

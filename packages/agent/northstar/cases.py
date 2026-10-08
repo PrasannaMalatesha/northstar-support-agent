@@ -13,7 +13,7 @@ from datetime import datetime
 
 from northstar.actions import FAMILIES, Order, Proposal, Reply, family_decisions, gated, order_id as _order_id
 from northstar.clock import Clock
-from northstar.escalate import handoff
+from northstar.escalate import handoff, manual_handoff
 from northstar.graph import TurnTools, resume_turn, run_turn
 from northstar.memory import graph_for
 from northstar.agent_model import handbook_reply
@@ -83,6 +83,7 @@ ALTER TABLE cases ADD COLUMN IF NOT EXISTS rejection_reason text;
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS amount_cents integer;
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS proposal_id uuid;
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS proposal_details text NOT NULL DEFAULT '';
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS handoff_text text NOT NULL DEFAULT '';
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS proposal_id uuid;
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS action text;
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS order_id text;
@@ -243,6 +244,7 @@ class CaseStore:
         case_id = self._open(staff_id)
         if self._status(case_id) != "Open":
             raise CaseClosed()
+        packet = self._manual_packet(case_id, final_text) if status == "Escalated" else ""
         with self._pool.connection() as conn:
             draft = conn.execute(
                 """
@@ -256,10 +258,10 @@ class CaseStore:
             conn.execute(
                 """
                 UPDATE cases
-                SET status = %s, draft_text = %s, final_text = %s
+                SET status = %s, draft_text = %s, final_text = %s, handoff_text = %s
                 WHERE id = %s
                 """,
-                (status, "" if draft is None else draft["body"], final_text.strip(), case_id),
+                (status, "" if draft is None else draft["body"], final_text.strip(), packet, case_id),
             )
             conn.commit()
         if draft is not None and final_text.strip() != draft["body"]:
@@ -271,12 +273,44 @@ class CaseStore:
             conn.execute(
                 """
                 UPDATE cases
-                SET status = 'Escalated', draft_text = %s
+                SET status = 'Escalated', draft_text = %s, handoff_text = %s
                 WHERE id = %s
                 """,
-                (handoff_text, case_id),
+                (handoff_text, handoff_text, case_id),
             )
             conn.commit()
+
+    def _tried(self, case_id: uuid.UUID) -> tuple[str, ...]:
+        """What the agent already did on this case, for the handoff packet."""
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT decision, citations FROM case_messages
+                WHERE case_id = %s AND role = 'assistant' AND decision IS NOT NULL
+                ORDER BY id
+                """,
+                (case_id,),
+            ).fetchall()
+        return tuple(
+            row["decision"] + (f" ({', '.join(row['citations'])})" if row["citations"] else "") for row in rows
+        )
+
+    def _manual_packet(self, case_id: uuid.UUID, note: str) -> str:
+        with self._pool.connection() as conn:
+            asked = conn.execute(
+                "SELECT body FROM case_messages WHERE case_id = %s AND role = 'user' ORDER BY id DESC LIMIT 1",
+                (case_id,),
+            ).fetchone()
+            cited = conn.execute(
+                """
+                SELECT DISTINCT unnest(citations) AS section FROM case_messages
+                WHERE case_id = %s AND role = 'assistant'
+                """,
+                (case_id,),
+            ).fetchall()
+        sections = tuple(sorted(row["section"] for row in cited))
+        question = "" if asked is None else asked["body"]
+        return manual_handoff(question, sections, self._tried(case_id), note).text
 
     def ask(self, staff_id: uuid.UUID, question: str) -> dict:
         case_id = self._open(staff_id)
@@ -290,9 +324,9 @@ class CaseStore:
         self._requests[key] = self._requests.get(key, 0) + 1
         if has_secret(question):
             return self._save(case_id, question, _plain("blocked", SECRET_REPLY), now)
-        escalated = handoff(question)
+        escalated = handoff(question, self._tried(case_id))
         if escalated is not None:
-            section, text = escalated
+            section, text = escalated.section, escalated.text
             self._mark_escalated(case_id, text)
             # Through the graph, so the escalation has a LangGraph trace for the safety rule and the judge.
             fixed = Draft("escalate", text, (section,), {section: "strong"}, ())
@@ -353,6 +387,7 @@ class CaseStore:
             "action": row["proposal_action"],
             "refund_amount_cents": row["proposal_amount_cents"],
             "proposal_details": row["proposal_details"],
+            "handoff": row["handoff_text"],
             "policy_citations": list(row["proposal_citations"] or []),
             "ticket_id": self._ticket_id(case_id),
             "stale": row["status"] == "Waiting for approval" and _is_stale(row["proposed_at"], self._clock.now()),
@@ -410,7 +445,7 @@ class CaseStore:
                 SELECT cases.status, cases.draft_text, cases.final_text,
                        cases.proposal_action, cases.proposal_amount_cents,
                        cases.proposal_citations, cases.proposal_details, cases.proposed_at,
-                       cases.rejection_reason,
+                       cases.rejection_reason, cases.handoff_text,
                        customers.name, customers.email
                 FROM cases
                 LEFT JOIN customers ON customers.id = cases.customer_id

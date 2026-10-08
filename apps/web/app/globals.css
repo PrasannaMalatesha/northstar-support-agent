@@ -112,3 +112,7 @@ button:disabled {
 .status {
   margin-top: 1rem;
 }
+
+.handoff {
+  white-space: pre-line;
+}
