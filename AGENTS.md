@@ -18,6 +18,16 @@ Implement only when Malatesha says to build. Until then, update this file when d
 
 During implementation, export a presentation image from the Northstar architecture canvas. Write `diagrams/northstar-architecture.png` (and a JPEG copy if the renderer supports it) into this repo. The canvas is the layout source. The image is what gets shown in a walkthrough. Update the image in the same change if the architecture boxes change.
 
+## Core requirements
+
+Readability, maintainability, and modularity are required.
+
+- A feature lives in one module. A change to that feature stays in that module and its tests.
+- Callers depend on a small interface. A new retrieval engine, model, or database is a new adapter behind that interface. It does not edit the caller.
+- A small change must not force edits across the codebase. If it does, the boundary is wrong. Fix the boundary before adding the next feature.
+- A name says what the module does. A reader follows one feature without reading unrelated modules.
+- A rule has one source. The handbook, the section registry, and the eval cases are not copied into a second place.
+
 ## Stack
 
 - Next.js for the support console (chat and refund approval)
@@ -26,14 +36,14 @@ During implementation, export a presentation image from the Northstar architectu
 - LangSmith traces, datasets, experiments, feedback, dashboards, alerts, online evaluators
 - Offline evals: `langsmith.evaluate` / `aevaluate` and `@pytest.mark.langsmith`
 - Trajectory: `trajectory_subsequence` from the complex-agent guide, plus `agentevals` when tool arguments must match
-- Model: OpenAI `gpt-4o-mini` by default, overridable by env. Judge model: `JUDGE_MODEL`, same default
+- Model: `gemini-3-flash-preview` for the agent (`GOOGLE_API_KEY`, `AGENT_MODEL`). Judge model: `JUDGE_MODEL`, default `deepseek/deepseek-v4.1-flash` on OpenRouter (`OPENROUTER_API_KEY`). The judge is not the agent model. ([Google GenAI](https://docs.langchain.com/oss/python/integrations/chat/google_generative_ai), [OpenRouter](https://openrouter.ai/docs/quickstart))
 - Vector database: Pinecone, via `langchain-pinecone` `PineconeVectorStore` ([Pinecone integration](https://docs.langchain.com/oss/python/integrations/vectorstores/pinecone)). Policy chunks only. Not chat history
-- Rerank after Pinecone top-k: `ContextualCompressionRetriever` + `FlashrankRerank` (`langchain_community`, `flashrank` package, model `ms-marco-MiniLM-L-12-v2`, ONNX on CPU, no Torch) ([FlashrankRerank](https://reference.langchain.com/python/langchain-community/document_compressors/flashrank_rerank/FlashrankRerank)). Same reranker in local, CI, dev, uat, and prod. Wrapped behind one `Reranker` port so `PineconeRerank` or `CrossEncoderReranker` can replace it without touching the graph
+- Rerank after Pinecone top-k: the `flashrank` package `Ranker` with model `ms-marco-MiniLM-L-12-v2` (ONNX on CPU, no Torch), called from the `Reranker` adapter. Pass the model name; the old wrapper's default is `ms-marco-MultiBERT-L-12`, which is the wrong model. Keep at most 4 chunks at or above `RETRIEVAL_SCORE_TAU`. Same reranker in local, CI, dev, uat, and prod. `langchain-community` was sunset on 2026-05-22, so do not import `FlashrankRerank` ([sunset](https://github.com/langchain-ai/langchain-community/issues/674), [FlashRank](https://github.com/PrithivirajDamodaran/FlashRank)). A replacement is a new adapter: hosted `PineconeRerank` ([Pinecone rerank](https://docs.langchain.com/oss/python/integrations/retrievers/pinecone_rerank)) stays behind the port and is not the default
 - PostgreSQL for everything that must survive a restart:
   - Short-term memory: `PostgresSaver` / `AsyncPostgresSaver` keyed by `thread_id` ([checkpointers](https://docs.langchain.com/oss/python/langgraph/checkpointers)). This is the conversation and the HITL pause
   - Long-term memory: `PostgresStore` keyed by namespace and key, shared across threads ([add memory](https://docs.langchain.com/oss/python/langgraph/add-memory), [stores](https://docs.langchain.com/oss/python/langgraph/stores))
   - App tables: refund tickets and approval audit
-- Local Postgres matches production. `MemorySaver` is not the production checkpointer; the docs state it dies on process restart
+- Local Postgres matches production. `InMemorySaver` is not the production checkpointer; the checkpointer docs use it for experimentation and it dies on process restart ([checkpointers](https://docs.langchain.com/oss/python/langgraph/checkpointers))
 - Postgres host: Neon free plan, one project, one Neon branch per environment (`dev`, `uat`, `prod`). Render free Postgres is not used: one per workspace and deleted 30 days after creation ([Render free](https://render.com/docs/free), [Neon limits](https://neon.com/faqs/free-plan-limits-and-quotas))
 - Share: Vercel (Next.js) + Render (FastAPI), one Render service per environment. LangSmith Developer for traces and evals
 
@@ -66,7 +76,7 @@ These stay next to this file. A decision is not done until the matching file is 
 | This file | Product, architecture, eval, security, and deploy decisions |
 | LangSmith docs | How tracing, datasets, experiments, and online evals work |
 
-Corpus version is stamped on every run as `policy_corpus_version` (start at `northstar-policy-v1`).
+Corpus version is stamped on every run as `policy_corpus_version`. The frozen handbook is `northstar-policy-v2`.
 
 The handbook is written by this project and then frozen. The topics follow common marketplace practice. The sentences are original Northstar text. Amazon, Flipkart, and other retailers are not copied. The running agent does not add sections.
 
@@ -78,13 +88,17 @@ Slice 1 token budget fails closed. Retrieve 20, pass at most 4 reranked chunks i
 
 | File | Section IDs | Covers |
 | --- | --- | --- |
-| `returns-and-refunds.md` | `REF-WINDOW`, `REF-ELIGIBILITY`, `REF-PARTIAL`, `REF-DENY`, `REF-DAMAGED`, `REF-FINAL-SALE` | Window, eligibility, partial credit, denials, damage, non-returnables |
-| `shipping-and-delivery.md` | `SHIP-SLA`, `SHIP-DELAY`, `SHIP-LOST`, `SHIP-ADDRESS` | SLAs, delays, lost packages, address changes |
-| `warranty.md` | `WAR-COVERAGE`, `WAR-EXCLUSIONS`, `WAR-CLAIM` | Coverage, exclusions, claims |
-| `order-changes.md` | `ORD-CANCEL`, `ORD-MODIFY`, `ORD-TRACK` | Cancel, modify, tracking |
-| `support-escalation.md` | `ESC-WHEN`, `ESC-ABUSE`, `ESC-LEGAL` | Escalation, abuse, legal / chargeback |
-| `privacy-and-pii.md` | `PII-MINIMIZE`, `PII-SHARE` | What support may say about customer data |
-| `faq-general.md` | `FAQ-HOURS`, `FAQ-CONTACT`, `FAQ-ACCOUNT` | Hours, contact, account |
+| `company-overview.md` | `CO-ABOUT`, `CO-CATEGORIES`, `CO-SCOPE` | Who Northstar is, the four categories, what support does not do |
+| `returns-and-refunds.md` | `REF-WINDOW`, `REF-CATEGORY`, `REF-CONDITION`, `REF-ELIGIBILITY`, `REF-PARTIAL`, `REF-DENY`, `REF-DAMAGED`, `REF-WRONG-ITEM`, `REF-MISSING-ITEM`, `REF-FINAL-SALE`, `REF-METHOD`, `REF-TIMING`, `REF-SHIP-COST`, `REF-GIFT`, `REF-HOLIDAY`, `REF-INSPECTION` | Window, category lengths, condition, eligibility, partial credit, denials, damage, wrong and missing items, final sale, method, timing, label fee, gifts, holiday, inspection |
+| `exchanges.md` | `EXC-ELIGIBILITY`, `EXC-STOCK`, `EXC-LIMIT`, `EXC-PROCESS`, `EXC-DIFFERENT-ITEM`, `REP-REPLACEMENT` | Size or color swaps, stock, one exchange, a different item, replacement of a damaged item |
+| `shipping-and-delivery.md` | `SHIP-REGIONS`, `SHIP-OPTIONS`, `SHIP-SLA`, `SHIP-DELAY`, `SHIP-LOST`, `SHIP-ADDRESS`, `SHIP-SPLIT`, `SHIP-DNR`, `SHIP-REFUSED` | Where Northstar ships, prices, SLAs, delays, lost packages, address changes, split shipments, delivered-not-received, refusals |
+| `warranty.md` | `WAR-COVERAGE`, `WAR-EXCLUSIONS`, `WAR-CLAIM`, `WAR-REMEDY`, `WAR-RECALL` | Coverage after the return window, exclusions, claims, remedy, recall |
+| `order-changes.md` | `ORD-CANCEL`, `ORD-MODIFY`, `ORD-TRACK`, `ORD-PARTIAL-CANCEL` | Cancel, modify, tracking, cancel one line |
+| `payments-and-pricing.md` | `PAY-METHODS`, `PAY-CHARGE-TIMING`, `PAY-TAX`, `PAY-PRICE-ADJUST`, `PAY-PRICE-ERROR`, `PAY-DUPLICATE` | Methods, when the card is charged, tax, price drops, pricing errors, duplicate holds |
+| `promotions-and-gift-cards.md` | `PROMO-CODES`, `PROMO-RETURNS`, `PROMO-THRESHOLD`, `GC-TERMS`, `GC-LOST`, `STORE-CREDIT` | Codes, discounted refunds, free-shipping threshold, gift cards, store credit |
+| `support-escalation.md` | `ESC-WHEN`, `ESC-ABUSE`, `ESC-LEGAL`, `ESC-FRAUD` | Escalation, abuse, legal / chargeback, fraud |
+| `privacy-and-pii.md` | `PII-MINIMIZE`, `PII-SHARE`, `PII-PAYMENT`, `PII-DELETE` | What support may say, card numbers, deletion |
+| `faq-general.md` | `FAQ-HOURS`, `FAQ-CONTACT`, `FAQ-ACCOUNT`, `FAQ-PASSWORD`, `FAQ-EMAILS`, `FAQ-SIZING` | Hours, contact, account, passwords, marketing email, sizes |
 
 Gold labels cite real section IDs only. A citation that is not in the registry is a failed example, not a valid answer.
 
@@ -134,7 +148,7 @@ Guardrails run before `intent_classifier` and again after `compile_followup`.
 
 Generation context is the reranked chunks plus tool JSON. If the answer is not in that context, say so and ask a clarifying question.
 
-Retrieval shape: embed the query, Pinecone similarity top-20 with `section_id` metadata, `FlashrankRerank(model="ms-marco-MiniLM-L-12-v2", top_n=4, score_threshold=RETRIEVAL_SCORE_TAU)`, expose `relevance_score` on the trace, abstain when nothing passes the threshold. Trace child runs `retrieve` and `rerank`. Tune `RETRIEVAL_SCORE_TAU` on `dev` only, never on `test`. Phase 2 measures FlashRank memory on the Render free instance (512 MB) first and records the number in `correction.md`. Embedding dimension must match the Pinecone index. The official Pinecone notebook uses dimension 1536 with a matching OpenAI embedding; set both from env and do not mix models.
+Retrieval shape: embed the query, Pinecone similarity top-20 with `section_id` metadata (`PineconeVectorStore`, namespace per environment), then the `Reranker` adapter calls `flashrank.Ranker(model_name="ms-marco-MiniLM-L-12-v2")` and keeps at most 4 passages whose score is at least `RETRIEVAL_SCORE_TAU`. Expose that score on the trace as `relevance_score`. Abstain when nothing passes the threshold. Trace child runs `retrieve` and `rerank`. Tune `RETRIEVAL_SCORE_TAU` on `dev` only, never on `test`. Phase 2 measures FlashRank memory on the Render free instance (512 MB) first and records the number in `correction.md`. Embedding dimension must match the Pinecone index. The official Pinecone notebook uses dimension 1536 with a matching OpenAI embedding and `ServerlessSpec(cloud="aws", region="us-east-1")`; set both from env and do not mix models. Starter indexes are us-east-1 only ([Pinecone pricing](https://www.pinecone.io/pricing/)).
 
 ## Grounding
 
@@ -169,7 +183,7 @@ Deterministic checks run first. A model judge never replaces a hard block.
 ### Stack order
 
 1. **Before-agent input filter.** Banned abuse and jailbreak patterns, auth, rate limit, max length. Violation returns a fixed safe reply and jumps to end.
-2. **PII middleware** on user input, tool arguments, and final output. Email and phone: `redact`. Payment-like numbers: `mask`. API keys and secrets: `block`. Hash only when a stable pseudonym is required for logs.
+2. **PII middleware** on user input, tool arguments, and final output. Built-in types are `email`, `credit_card`, `ip`, `mac_address`, and `url` ([built-in middleware](https://docs.langchain.com/oss/python/langchain/middleware/built-in)). Email: `redact`. Card numbers: `mask` via `credit_card`. Phone is not a built-in type; use a custom detector and `redact`. API keys and secrets: a custom detector with `block`. Hash only when a stable pseudonym is required for logs.
 3. **Human-in-the-loop** on `create_refund_ticket` only. Checkpointer holds the thread. Resume with `Command(resume=...)`: `approve` runs the tool, `edit` runs the revised args, `reject` returns feedback and creates no ticket.
 4. **After-agent output check.** OpenAI moderation plus a lightweight safety classifier. Unsafe or uncited policy claims are replaced with a safe fallback or an abstain. The user never sees the raw unsafe draft.
 
@@ -203,7 +217,7 @@ Dataset: `Northstar Support: E2E`. Each example has `inputs.question` and `outpu
 
 Target `run_graph` invokes the graph and returns `{"response": result["followup"], "trajectory": ...}`.
 
-Evaluator `final_answer_correct` is the docs teacher-quiz judge. System prompt grades only factual accuracy against the ground-truth response, rejects conflicting statements, and allows extra detail when that detail is still accurate relative to the ground truth. Structured output is `reasoning` plus `is_correct` (bool). Judge model is `JUDGE_MODEL`, default `gpt-4o-mini`. The docs sample currently calls `init_chat_model("gpt-5.4-mini", temperature=0).with_structured_output(Grade, method="json_schema", strict=True)`. Pin temperature to 0. Do not change the rubric to reward style.
+Evaluator `final_answer_correct` is the docs teacher-quiz judge. System prompt grades only factual accuracy against the ground-truth response, rejects conflicting statements, and allows extra detail when that detail is still accurate relative to the ground truth. Structured output is `reasoning` plus `is_correct` (bool). Judge model is `JUDGE_MODEL`, default `deepseek/deepseek-v4.1-flash` via OpenRouter, temperature 0. The docs sample calls `init_chat_model(..., temperature=0).with_structured_output(Grade, method="json_schema", strict=True)`. Do not change the rubric to reward style. Do not point `JUDGE_MODEL` at the agent model.
 
 This judge does not check citations. The docs rubric can mark a paraphrase correct with no section id. Northstar also runs code checks `citation_valid` and `citation_required` on the same experiment. An uncited policy claim fails even when `is_correct` is true. A separate groundedness judge scores 0 when a claim is not in the retrieved chunks. The quiz judge sees question, ground truth, and student response. The groundedness judge sees retrieved chunks and the student response, not the open web.
 
@@ -221,7 +235,7 @@ Evaluator `correct` is `outputs["route"] == reference_outputs["route"]`. Include
 
 Same E2E dataset. Reference `trajectory` is an ordered list of node and tool names, for example `["refund_agent", "retrieve_policy", "lookup_order"]` or `["support_agent", "retrieve_policy"]`.
 
-Record the path with `graph.astream(..., subgraphs=True, stream_mode="debug")`, as the docs specify. On `chunk["type"] == "task"`, append `chunk["payload"]["name"]`. When the payload name is `tools`, also append each tool call name. Docs: [streaming subgraphs](https://docs.langchain.com/oss/python/langgraph/streaming).
+Record the path with `graph.astream(..., subgraphs=True, stream_mode="debug")`, as the docs specify. On `chunk["type"] == "task"`, append `chunk["payload"]["name"]`. When the payload name is `tools`, also append each tool call name. The guide sample reads `payload["input"]["messages"][-1].tool_calls` ([Evaluate a complex agent](https://docs.langchain.com/langsmith/evaluate-complex-agent)). This install's tools task sets `payload["input"]` to that tool-call list. Read whichever shape is present. Docs: [streaming subgraphs](https://docs.langchain.com/oss/python/langgraph/streaming).
 
 `trajectory_subsequence(outputs, reference_outputs)` returns the fraction of expected steps found in order. If the reference is longer than the actual path, the docs implementation returns `False`. Otherwise it walks both lists and returns `i / len(reference)`. Extra steps do not lower this score.
 
@@ -312,7 +326,7 @@ Dataset splits: `train_judge` (few-shot calibration only), `dev`, `test`. Slices
 
 Calibrate LLM judges on human labels before trusting `test` or online scores. Record agreement in `results/judge_calibration.md`.
 
-Online evaluators are reference-free, filtered to root runs, sampled for cost. Low groundedness or reply quality goes to an annotation queue. Schema or safety failures are candidates for the golden dataset. A separate automation rule can alert after the feedback key exists.
+Online evaluators are reference-free, filtered to root runs, sampled for cost. Two LangSmith rules sit on the tracing project, created from code by `uv run python -m northstar.online`: the `safety` code evaluator and the `langsmith_groundedness` LLM judge (the OpenRouter key is a LangSmith workspace secret). The in-app sampled judge (`policy_groundedness`) runs beside them. Low groundedness or reply quality goes to an annotation queue. Schema or safety failures are candidates for the golden dataset. A separate automation rule can alert after the feedback key exists.
 
 Feedback loop: live trace, online score, human label, dataset version, offline experiment, ship only when `test` does not regress.
 
@@ -322,14 +336,16 @@ The router is a LangGraph `StateGraph` with an `intent_classifier` node and `Com
 
 | Middleware | Setting | Problem it covers |
 | --- | --- | --- |
-| `PIIMiddleware` | email and phone redacted, card numbers masked, secrets blocked | Data leakage |
-| `HumanInTheLoopMiddleware` | `create_refund_ticket` only | Excessive agency, permissions |
+| `PIIMiddleware` | `email` redacted, `credit_card` masked, phone via a custom detector and redacted, secrets via a custom detector and blocked | Data leakage |
+| `HumanInTheLoopMiddleware` | `interrupt_on` for `create_refund_ticket` only, `allowed_decisions` `approve`, `edit`, `reject`. Requires a checkpointer | Excessive agency, permissions |
 | `ToolCallLimitMiddleware` | `run_limit` per tool, `thread_limit` overall | Tool misuse, unbounded usage |
 | `ModelCallLimitMiddleware` | per run and per thread | Unbounded usage, loops |
 | `ModelRetryMiddleware` | exponential backoff on 429 and 5xx | Rate limits, provider failures |
 | `ModelFallbackMiddleware` | second model | Dependency outage |
-| `ToolRetryMiddleware`, `ToolErrorMiddleware` | retry transient errors, then a "lookup failed" message | Failure recovery. Never fill in facts |
+| `ToolRetryMiddleware`, `ToolErrorMiddleware` | retry transient errors, then a "lookup failed" message. `ToolErrorMiddleware` requires `langchain>=1.3.14`. Place retry inner and `on_failure="error"` so the error middleware sees the exception | Failure recovery. Never fill in facts |
 | `SummarizationMiddleware` | trigger above the message cap | Context overflow |
+
+Slice 1 wiring: each subgraph's only tool is the desk, which returns the decision from code. PII (all four detectors on input, output, and tool results), the model and desk call limits (3 model calls, 1 desk call per run), model retry, the fallback model (only when `AGENT_FALLBACK_MODEL` is set), and tool retry plus the lookup-failed error are attached. `HumanInTheLoopMiddleware` is not attached because the subgraph has no ticket tool. The ticket is written only by the lead's approve or edit in the API, after the graph pauses in `compile_followup`, and that is the gate. `SummarizationMiddleware` is not attached because the subgraph receives one message per turn. Traces pass through a LangSmith anonymizer that applies the same PII screen, so raw email, phone, card, and secrets do not reach LangSmith ([mask inputs and outputs](https://docs.langchain.com/langsmith/mask-inputs-outputs)).
 
 Structured output: `response_format=ToolStrategy(schema=<Pydantic model>, handle_errors=True)`. Never a raw JSON-schema dict: the docs warn that dict schemas are not validated, so `handle_errors` cannot retry ([structured output](https://docs.langchain.com/oss/python/langchain/structured-output)).
 
@@ -374,6 +390,8 @@ Drift:
 - Human review: low online scores and specialist edits go to an annotation queue, then into the golden set under a new dataset version.
 
 ## Code structure (SOLID, DRY)
+
+The core requirements above are the rule. This is where the modules go.
 
 - `domain/`: pure types and rules (amount math, window checks). No I/O.
 - `ports/`: `PolicyRetriever`, `Reranker`, `OrderRepository`, `CatalogRepository`, `TicketRepository`, `CaseRepository`, `CustomerMemory`, `Judge`.
@@ -468,6 +486,8 @@ Repository: [PrasannaMalatesha/northstar-support-agent](https://github.com/Prasa
 
 `dev`, `uat`, and `prod` are created from `main`. Work happens on `feature/*` cut from `dev`. Promotion is always by PR, in one direction. Hotfix: `hotfix/*` from `prod`, PR into `prod`, then merged down into `uat` and `dev`. Branch protection on `dev`, `uat`, `prod`, and `main`; free GitHub branch protection needs a public repo.
 
+A finished change is not done until it is committed and pushed to that feature branch on GitHub. If a pull request into `dev` is not already open, open one. When that pull request's checks pass, merge it into `dev`. Do not leave it open for Malatesha to merge. Do not leave completed code only on the local machine. Do not commit secrets. Do not push straight to `main`, `uat`, or `prod`.
+
 ## CI and deploy
 
 | PR into | Gate |
@@ -479,7 +499,7 @@ Repository: [PrasannaMalatesha/northstar-support-agent](https://github.com/Prasa
 
 A merge into an environment branch deploys that environment (Vercel and Render auto-deploy on the tracked branch). The handbook ingest runs per environment into its own Pinecone namespace, stamped with `policy_corpus_version`.
 
-Cache model HTTP with `LANGSMITH_TEST_CACHE`. Secrets: `OPENAI_API_KEY`, `LANGSMITH_API_KEY`, deploy tokens. Tracing: `LANGCHAIN_TRACING_V2=true`.
+Cache model HTTP with `LANGSMITH_TEST_CACHE`. Secrets stay in the server environment. Tracing: `LANGSMITH_TRACING=true`, which also sets `LANGCHAIN_TRACING_V2`. Local project: `northstar-local`.
 
 ## v0 then v1
 
@@ -536,8 +556,8 @@ This layout follows `docs/plans/slice-1-build-phases.md`. Deep modules (`identit
 - https://docs.langchain.com/oss/python/langgraph/stores
 - https://docs.langchain.com/oss/python/langgraph/interrupts
 - https://docs.langchain.com/oss/python/langchain/guardrails
-- https://docs.langchain.com/oss/python/integrations/document_transformers/cross_encoder_reranker
-- https://reference.langchain.com/python/langchain-community/document_compressors/flashrank_rerank/FlashrankRerank
+- https://github.com/PrithivirajDamodaran/FlashRank
+- https://github.com/langchain-ai/langchain-community/issues/674
 - https://docs.langchain.com/oss/python/integrations/retrievers/pinecone_rerank
 - https://docs.langchain.com/langsmith/evaluate-rag-tutorial
 - https://docs.langchain.com/langsmith/openevals
