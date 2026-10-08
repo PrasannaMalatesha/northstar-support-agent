@@ -14,6 +14,7 @@ from northstar.actions import FAMILIES, Order, Proposal, Reply, family_decisions
 from northstar.clock import Clock
 from northstar.escalate import handoff, manual_handoff
 from northstar.graph import TurnTools, resume_turn, run_turn
+from northstar.language import is_spanish, to_english, to_spanish
 from northstar.memory import graph_for
 from northstar.agent_model import handbook_reply
 from northstar.handbook import ABSTAIN_TEXT, Draft, guard_draft
@@ -37,9 +38,16 @@ SAFE_REPLY = (
 )
 _BLOCKED = (
     "ignore the handbook",
+    "ignore the manual",
+    "ignore the instructions",
+    "ignore your instructions",
     "ignore previous",
     "ignore these rules",
     "retard",
+    # Spanish, checked on the customer's own words before translation (issue #81).
+    "ignora el manual",
+    "ignora las reglas",
+    "ignora las instrucciones",
 )
 
 SCHEMA_SQL = """
@@ -340,22 +348,26 @@ class CaseStore:
         self._requests[key] = self._requests.get(key, 0) + 1
         if has_secret(question):
             return self._save(case_id, question, _plain("blocked", SECRET_REPLY), now)
-        self._remember_preferences(case_id, question, now)
-        escalated = handoff(question, self._tried(case_id))
+        # A Spanish question is decided in English and answered in Spanish (issue #81).
+        spanish = is_spanish(question)
+        asked = to_english(screen(question)) if spanish else question
+        reply = (lambda draft: to_spanish(draft)) if spanish else (lambda draft: draft)
+        self._remember_preferences(case_id, asked, now)
+        escalated = handoff(asked, self._tried(case_id))
         if escalated is not None:
             section, text = escalated.section, escalated.text
             self._mark_escalated(case_id, text)
             # Through the graph, so the escalation has a LangGraph trace for the safety rule and the judge.
             fixed = Draft("escalate", text, (section,), {section: "strong"}, ())
             tools = TurnTools(refund=lambda _text: fixed, support=lambda _text: fixed)
-            return self._save(case_id, question, self._turn(case_id, question, tools), now)
-        if _blocked(question):
-            return self._save(case_id, question, _plain("safe", SAFE_REPLY), now)
+            return self._save(case_id, question, reply(self._turn(case_id, asked, tools)), now)
+        if _blocked(question) or _blocked(asked):
+            return self._save(case_id, question, reply(_plain("safe", SAFE_REPLY)), now)
         tools = TurnTools(
             refund=lambda text: self._gated_draft(case_id, staff_id, text, now),
             support=lambda text: self._support_draft(case_id, staff_id, text, now),
         )
-        return self._save(case_id, question, self._turn(case_id, question, tools), now)
+        return self._save(case_id, question, reply(self._turn(case_id, asked, tools)), now)
 
     def _turn(self, case_id: uuid.UUID, question: str, tools: TurnTools) -> Draft:
         return run_turn(question, tools, graph=graph_for(self._pool.conninfo), thread_id=str(case_id))

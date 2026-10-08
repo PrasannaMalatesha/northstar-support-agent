@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from evals.labeled import CASES, INTENT_CASES, SLICE2_CASES, judges_may_score_test, matches
+from evals.labeled import CASES, INTENT_CASES, SLICE2_CASES, SPANISH_CASES, judges_may_score_test, matches
 
 E2E = "Northstar Support: E2E"
 INTENT = "Northstar Support: Intent Classifier"
@@ -57,6 +57,7 @@ def e2e_example(case: dict, version: str) -> dict:
             "response": reference(case) if channel == "handbook" else "",
             "text_includes": list(case.get("text_includes", ())),
             "text_excludes": list(case.get("text_excludes", ())),
+            "language": case.get("language", "en"),
         },
         "metadata": {"case_id": case["id"], "channel": channel, "version": version},
         "split": case.get("split", "dev"),
@@ -94,6 +95,7 @@ def sync(client) -> None:
     about = "Northstar golden cases. Splits train_judge, dev, test are frozen at first use."
     added = _add(client, E2E, about, [e2e_example(case, "slice1") for case in CASES], "slice1")
     added += _add(client, E2E, about, [e2e_example(case, "slice2") for case in SLICE2_CASES], "slice2")
+    added += _add(client, E2E, about, [e2e_example(case, "slice3-es") for case in SPANISH_CASES], "slice3-es")
     routes = _add(client, INTENT, "Hand-labeled routes. The latest user message decides.", [intent_example(case) for case in INTENT_CASES])
     print(f"{E2E}: {added} added. {INTENT}: {routes} added.")
 
@@ -216,11 +218,20 @@ def answer_correct(inputs: dict, outputs: dict, reference_outputs: dict) -> dict
     return {"key": "answer_correct", "score": None if ok is None else int(ok)}
 
 
+def reply_language(inputs: dict, outputs: dict, reference_outputs: dict) -> dict:
+    """A Spanish case must get a Spanish reply (issue #81). English rows are skipped."""
+    from northstar.language import is_spanish
+
+    if reference_outputs.get("language", "en") != "es":
+        return {"key": "reply_language", "score": None, "comment": "English row"}
+    return {"key": "reply_language", "score": int(is_spanish(outputs["response"]))}
+
+
 def correct(inputs: dict, outputs: dict, reference_outputs: dict) -> bool:
     return outputs["route"] == reference_outputs["route"]
 
 
-E2E_EVALUATORS = [label_match, citation_valid, status_correct, answer_correct]
+E2E_EVALUATORS = [label_match, citation_valid, status_correct, reply_language, answer_correct]
 
 
 # Commands -----------------------------------------------------------------

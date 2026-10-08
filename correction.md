@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-08 — Spanish replies (issue #81)
+
+Status: decision
+
+What changed: A Spanish question gets a Spanish draft that cites the English section ids. `northstar/language.py`: a marker check spots Spanish with no model call, so English turns pay nothing. The question (after the secret check, and screened) is translated to English once; preferences, escalation triggers, the safe-reply block, gated-action rules, retrieval, and citations all run on that English text unchanged. The draft is translated back with section ids, order ids, and amounts kept; a dropped section id is appended in English, and a model failure leaves the English draft. The customer's own words are saved. The staff handoff packet stays English. Both groundedness judges are told the reply may be Spanish and compare it with the English section text. Experiments add a `reply_language` check on Spanish rows.
+
+Evidence: `SPANISH_CASES` (handbook answer, abstain, unknown catalog item, refund proposal, chargeback escalation, jailbreak), dataset tag `slice3-es` (74 cases). Tests in `test_spanish.py` use a stand-in translator: each case keeps its English decision, citations, and status; an English question makes no translation call; a secret stops before translation; a dropped section id is put back.
+
+Debug steps: The first live dev experiment on `slice3-es` missed two rows. es-jailbreak: Gemini translated "Ignora el manual" as "Ignore the manual", which the block list did not know, so the turn fell through to "Pick a customer first" (safe, but not the safe reply). es-refund: the reply was Spanish ("Aprobado. Monto: 12800 centavos."), but the marker check had none of those words.
+
+Fix: The block list adds "ignore the manual", "ignore the instructions", "ignore your instructions", and the Spanish "ignora el manual", "ignora las reglas", "ignora las instrucciones" (checked on the original and the translation). The marker list adds common reply words. No English question in the labeled sets reads as Spanish. The test's stand-in translation now says "manual", as Gemini did.
+
 ## 2026-10-08 — "Do you sell X?" now asks the catalog (the promoted surfboard case)
 
 Status: bug
