@@ -16,17 +16,15 @@ git checkout dev
 git pull origin dev
 ```
 
-## Stop point (2026-10-08, before the demo)
+## Stop point (2026-10-07 night, before the demo)
 
-Tip of `origin/dev`: `99c2a04` (PR #99, docs; last code change PR #98). `uv run pytest`: 130 passed. CI green. Nothing promoted to `uat` or `prod`.
+Tip of `origin/dev`: the merge of the desk policy-question fix (after PR #102). `uv run pytest`: 136 passed. CI green. Nothing promoted to `uat` or `prod`.
 
-Last session, in order:
-1. Slice 2 #66 to #77 built, merged (PRs #85 to #97), closed with parent #64.
-2. A browser dry run of the demo (live Gemini, fresh database) passed every step after three fixes in PR #98:
-   - a paused turn showed the previous turn's reply (stale `followup` in the checkpoint);
-   - the live judge ran inside the request, so a sampled turn waited about a minute;
-   - an amount edit did not confirm with the ticket id.
-3. The console walkthrough is scripted (`apps/web/playwright.walkthrough.config.ts`). It was re-recorded from `dev` at `99c2a04` after PR #98 (passed, live Gemini). The video is in `apps/web/walkthrough-results/` (gitignored, local only).
+This session, in order:
+1. Slices 1 and 2 were already done and closed. The console walkthrough was re-recorded after PR #98 (local, gitignored, in `apps/web/walkthrough-results/`).
+2. Issue #101 (PR #102): the golden dataset and experiments now run in LangSmith. `make evals-sync` writes `Northstar Support: E2E` (tags `slice1`, `slice2`) and `Northstar Support: Intent Classifier`. `uv run python -m evals.experiments run --split test --repetitions 3` runs v0, v1 (the live desk), and the router. `promote <run_id>` adds a reviewed specialist edit under a new tag.
+3. The first v1 experiment found desk bugs on policy questions that mention an order, start with "If", end in ", right?", or say "how much"/"price". Fixed. Live: test split v1 1.0 (v0 0.733), dev split with slice 2 v1 1.0 (v0 0.333), router 1.0.
+4. The OpenRouter judge key hit its free daily cap (50 requests, resets 2026-10-08 19:00 CDT). Until then the quiz judge and the live groundedness judge fail (the live one only logs). The experiments above ran with `--no-judge`. #101 stays open for the judge scores: after the reset, or after Malatesha adds OpenRouter credits, run `uv run python -m evals.experiments run --split test --repetitions 3` and close #101.
 
 Next, only when Malatesha asks: slice 3 (#65), the hand-recorded LangSmith part of the walkthrough, or promoting `dev` → `uat`.
 
@@ -35,7 +33,6 @@ How to run the demo:
 - **Database:** use a fresh one, so old cases and tickets do not trigger duplicate blocks. Set `DATABASE_URL` to a new database. The dry run used `northstar_demo`, with the API on 8020 and the console on 3020 via the untracked `.claude/launch.json`.
 - **Two logins at once:** use two hostnames, specialist on `specialist.localhost:3020` and lead on `127.0.0.1:3020`.
 - **Pace:** live turns take up to about 10 s.
-- **Known quirk:** any question containing "price" goes to the catalog lookup ("Do you price match…?" gets "I don't have that item in the catalog."). This is slice 1 behavior, left as is.
 
 Demo script, binding Mira Shah (`mira.shah@northstar.example`):
 - **Handbook:** "How long does a customer have to return a pair of shoes?" Cited answer.
@@ -166,7 +163,7 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 
 ## Continue checklist
 
-1. `git checkout dev && git pull origin dev`. Confirm the tip is `52ea39c` or later and `uv run pytest` passes.
-2. Read the Stop point section above. Ask Malatesha what is next: the demo prep, slice 3 (#65), the LangSmith part of the walkthrough, or promoting `dev` → `uat`.
+1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (136 or more).
+2. Read the Stop point section above. Ask Malatesha what is next: the judge scores for #101, the demo prep, slice 3 (#65), the LangSmith part of the walkthrough, or promoting `dev` → `uat`.
 3. Every change: a `feature/*` branch from `origin/dev`, a PR into `dev`, merged only when CI is green.
 4. Rewrite the Stop point section before you stop.

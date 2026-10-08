@@ -388,7 +388,7 @@ def family_decisions(decision: str) -> list[str]:
 _ORDER_ID = re.compile(r"\bNS-\d+\b", re.IGNORECASE)
 # A policy question with no order id is a handbook question, not a request to act.
 _POLICY_QUESTION = re.compile(
-    r"^\s*(can|could|how|what|when|why|is|are|does|do|will)\b.*\?\s*$",
+    r"^\s*(can|could|how|what|when|why|is|are|does|do|will|if)\b.*\?\s*$|^.*,\s*right\?\s*$",
     re.IGNORECASE | re.DOTALL,
 )
 

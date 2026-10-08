@@ -334,7 +334,7 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "run":
         report = run(client, args.split, args.repetitions, args.tag, judge=not args.no_judge)
         print(report)
-        Path("results/langsmith_experiments.md").write_text("# LangSmith experiments\n\n" + report)
+        Path(f"results/langsmith_{args.split}.md").write_text("# LangSmith experiments\n\n" + report)
     else:
         sections = [section for section in args.sections.split(",") if section]
         print(promote(client, args.run_id, args.decision, sections, args.split, args.status))
