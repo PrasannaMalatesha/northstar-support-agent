@@ -2,7 +2,7 @@
 
 Read `AGENTS.md` before changing behavior. Product: `prd.md`. Spec: `docs/spec.md`. Build order: `docs/plans/slice-1-build-phases.md`. This file is only the stop point. It is not a second spec.
 
-Still **slice 1** (P0). Owner: Malatesha (`PrasannaMalatesha`). Every commit, PR, issue, and release is authored by Malatesha only. No `Co-authored-by`, no "Made with" footers, no tool credits in commits, PRs, docs, or code. Do not print or commit `.env`.
+Slices 1 and 2 are done. Owner: Malatesha (`PrasannaMalatesha`). Every commit, PR, issue, and release is authored by Malatesha only. No `Co-authored-by`, no "Made with" footers, no tool credits in commits, PRs, docs, or code. Do not print or commit `.env`.
 
 Canonical docs win over this file when they disagree. Update this file when you stop so the next session can continue.
 
@@ -15,6 +15,42 @@ git fetch origin
 git checkout dev
 git pull origin dev
 ```
+
+## Stop point (2026-10-08, before the demo)
+
+Tip of `origin/dev`: `52ea39c` (PR #98). `uv run pytest`: 130 passed. CI green. Nothing promoted to `uat` or `prod`.
+
+Last session, in order:
+1. Slice 2 #66 to #77 built, merged (PRs #85 to #97), closed with parent #64.
+2. A browser dry run of the demo (live Gemini, fresh database) passed every step after three fixes in PR #98:
+   - a paused turn showed the previous turn's reply (stale `followup` in the checkpoint);
+   - the live judge ran inside the request, so a sampled turn waited about a minute;
+   - an amount edit did not confirm with the ticket id.
+3. The console walkthrough is scripted (`apps/web/playwright.walkthrough.config.ts`). The video recorded before PR #98 shows the stale-reply bug, so re-record it from current `dev`.
+
+Next, only when Malatesha asks: slice 3 (#65), the hand-recorded LangSmith part of the walkthrough, or promoting `dev` → `uat`.
+
+How to run the demo:
+- **Servers:** restart any API or console started before PR #98, because they run old code (`make api`, `make web`).
+- **Database:** use a fresh one, so old cases and tickets do not trigger duplicate blocks. Set `DATABASE_URL` to a new database. The dry run used `northstar_demo`, with the API on 8020 and the console on 3020 via the untracked `.claude/launch.json`.
+- **Two logins at once:** use two hostnames, specialist on `specialist.localhost:3020` and lead on `127.0.0.1:3020`.
+- **Pace:** live turns take up to about 10 s.
+- **Known quirk:** any question containing "price" goes to the catalog lookup ("Do you price match…?" gets "I don't have that item in the catalog."). This is slice 1 behavior, left as is.
+
+Demo script, binding Mira Shah (`mira.shah@northstar.example`):
+- **Handbook:** "How long does a customer have to return a pair of shoes?" Cited answer.
+- **Cancel:** "Please cancel order NS-1004." The lead approves and gets a ticket.
+- **Address change:** "New address for order NS-1005: please ship it to 40 Elm Ave, Round Rock TX 78664."
+- **Exchange:** "Exchange order NS-1001 for size L." Proposal. Then "Exchange order NS-1006 for size M." Refused, EXC-STOCK.
+- **Warranty:** "The desk speaker on order NS-1007 stopped working."
+- **Lost package:** "Order NS-1009 never arrived." The lead edits the amount.
+- **Gaps list:** "What is your favorite color?" appears in the lead's handbook gaps list.
+- **Escalation:** "The website said I have 60 days to return order NS-1001." Escalated, with a handoff packet (owner: policy).
+- **Preference:** a new case with "I prefer email. Please refund order NS-1001." The preference and history show, and the amount is unchanged.
+
+`:memory:.ses` (stray, untracked) stays as is, per Malatesha. Do not commit or delete it.
+
+## Done so far
 
 Slice 1 P0 is complete. #22 and #1 are closed. `uat`, `dev`, `prod`, and `main` are protected: a PR is required, `Test API` and `Lint and build console` must pass, admins included, no force pushes. Every change goes through a PR into `dev`.
 
@@ -57,7 +93,10 @@ Issues **#2–#21** are closed on GitHub. Desk, auth, cases, orders, catalog, re
 | #60 | Handoff notes for #22 (this file) |
 | #61 | Judge every edited draft or amount; handoff escalations run through the graph; one sampling rule |
 | #62 | The judge writes to the LangGraph root, not a child model call (bug found on a live turn) |
-| `feature/agent-middleware` | Built-in middleware on the `create_agent` subgraphs (PII, call limits, retry, fallback, lookup failed); traces masked by a LangSmith anonymizer |
+| #83 | Built-in middleware on the `create_agent` subgraphs; traces masked by a LangSmith anonymizer |
+| #84 | Console walkthrough recording script |
+| #85–#97 | Slice 2 (#66 to #77) |
+| #98 | Dry-run fixes: stale reply on a paused turn, judge off the request path, edit confirms with the ticket id |
 
 #57 was closed unmerged, because #60 replaced it.
 
@@ -126,6 +165,7 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 
 ## Continue checklist
 
-1. Sync `dev`.
-2. Ask Malatesha what is next: slice 3 (#65), the LangSmith part of the recording, or promoting `dev` → `uat`.
-3. Rewrite the Where to start / Still open sections of this file for the next stop.
+1. `git checkout dev && git pull origin dev`. Confirm the tip is `52ea39c` or later and `uv run pytest` passes.
+2. Read the Stop point section above. Ask Malatesha what is next: the demo prep, slice 3 (#65), re-recording the walkthrough, or promoting `dev` → `uat`.
+3. Every change: a `feature/*` branch from `origin/dev`, a PR into `dev`, merged only when CI is green.
+4. Rewrite the Stop point section before you stop.
