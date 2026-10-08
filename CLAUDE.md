@@ -37,14 +37,16 @@ Results are in `results/langsmith_test.md` and `results/langsmith_dev.md`.
 Slice 3 (#65) has started. Malatesha's decisions:
 - Build order: #81 (Spanish) → #80 (damaged-item photo) → #78 (SSO) → #79 (customer chat). The demo comes after slice 3.
 - #81: Spanish is the one extra language. Built (`northstar/language.py`, `SPANISH_CASES`, tag `slice3-es`), live 1.0 on all checks over 3 repetitions. The parked branch `feature/spanish-replies` is superseded.
-- #78: Google single sign-on. Malatesha creates the OAuth app; the client id and secret go into `.env` only.
+- #78: Google single sign-on. Built; on when the client id and secret are in `.env`.
 - #79: a customer identifies with an order id plus the email on that order (no account, no password). Record this in `prd.md` in the #79 PR before building.
 
 #80 (damaged-item photo) is built: `northstar/photo.py`, the REF-DAMAGED rule in `actions.refund`, seed order NS-1011, labeled `PHOTO_CASES` (tag `slice3-photo`).
 
 #79 (customer chat) is built: `/chat` in the console; `POST /chat/start`, `GET /chat`, `POST /chat/messages` in the API; chat token audience `northstar-chat`; chat cases owned by the disabled `chat@northstar.example`. Same agent and gates; only identity, scope, and the customer view differ. `prd.md` records the order id plus email decision.
 
-Next: #78 (Google SSO, needs Malatesha's OAuth client id and secret in `.env`).
+#78 (Google SSO) is built and tested: `POST /auth/sso` checks Google's ID token itself; the role comes from `staff_users`. It turns on when Malatesha puts `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` in `.env` (redirect URI `http://localhost:3000/api/auth/callback/google`). Until then the password login is unchanged.
+
+Slice 3 (#65) is complete.
 
 How to run the demo:
 - **Servers:** restart any API or console started before PR #98, because they run old code (`make api`, `make web`).

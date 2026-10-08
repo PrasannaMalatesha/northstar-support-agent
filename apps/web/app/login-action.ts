@@ -29,7 +29,8 @@ async function sameOrigin(): Promise<boolean> {
 }
 
 export async function loginAction(formData: FormData) {
-  if (!(await sameOrigin())) {
+  // With single sign-on on, the password path is closed (issue #78).
+  if (process.env.AUTH_GOOGLE_ID || !(await sameOrigin())) {
     redirect("/login?error=1");
   }
   const email = String(formData.get("email") ?? "");

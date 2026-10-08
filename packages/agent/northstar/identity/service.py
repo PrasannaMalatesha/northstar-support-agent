@@ -7,6 +7,7 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from typing import Protocol
 
 import jwt
@@ -21,6 +22,9 @@ LOCKOUT_FAILURES = 5
 LOCKOUT_MINUTES = 15
 ISSUER = "northstar-api"
 AUDIENCE = "northstar-console"
+# Google single sign-on (issue #78). The API checks Google's signature itself; the role comes from staff_users.
+GOOGLE_ISSUERS = ("https://accounts.google.com", "accounts.google.com")
+GOOGLE_KEYS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 # A customer chat token is a different audience, so it can never pass as a staff token (issue #79).
 CHAT_AUDIENCE = "northstar-chat"
 CHAT_MINUTES = 30
@@ -151,6 +155,33 @@ class Identity:
             raise TokenInvalid()
         return staff
 
+    def sso_login(self, id_token: str, client_id: str) -> TokenPair:
+        """Staff tokens for a Google ID token, or LoginInvalid.
+
+        Signature, audience, issuer, expiry, and a verified email are all checked here. The browser's
+        word is never taken, and the identity provider never sets the role: the staff record does.
+        """
+        now = self._clock.now()
+        try:
+            claims = jwt.decode(
+                id_token,
+                _google_key(id_token),
+                algorithms=["RS256"],
+                audience=client_id,
+                issuer=GOOGLE_ISSUERS,
+                leeway=60,
+            )
+        except Exception as exc:
+            self._store.audit(None, "sso_login_failure", now)
+            raise LoginInvalid() from exc
+        email = str(claims.get("email") or "").strip().lower()
+        staff = self._store.get_by_email(email) if claims.get("email_verified") is True and email else None
+        if staff is None or staff.disabled:
+            self._store.audit(None if staff is None else staff.id, "sso_login_failure", now)
+            raise LoginInvalid()
+        self._store.audit(staff.id, "sso_login_success", now)
+        return self._issue(staff, now)
+
     def start_chat(self, email: str, order_id: str, find_customer) -> str:
         """A chat token for the customer who owns this order and email, or LoginInvalid.
 
@@ -250,3 +281,13 @@ def staff_id_for(email: str) -> uuid.UUID:
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+@lru_cache(maxsize=1)
+def _google_keys() -> jwt.PyJWKClient:
+    # Google's published signing keys, fetched and cached by PyJWT.
+    return jwt.PyJWKClient(GOOGLE_KEYS_URL, cache_keys=True)
+
+
+def _google_key(id_token: str):
+    return _google_keys().get_signing_key_from_jwt(id_token).key
