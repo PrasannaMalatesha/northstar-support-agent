@@ -260,6 +260,8 @@ export default async function DeskPage({
     draft_text: string;
     final_text: string;
     handoff: string;
+    refund_amount_cents: number | null;
+    proposed_amount_cents: number | null;
     customer: { name: string; email: string } | null;
     history: {
       id: string;
@@ -382,6 +384,13 @@ export default async function DeskPage({
         <form action={newCaseAction}>
           <button type="submit">New case</button>
         </form>
+      ) : null}
+      {current.proposed_amount_cents !== null &&
+      current.refund_amount_cents !== null &&
+      current.proposed_amount_cents !== current.refund_amount_cents ? (
+        <p className="quiet">
+          The lead changed the amount from {current.proposed_amount_cents} to {current.refund_amount_cents} cents.
+        </p>
       ) : null}
       {current.handoff ? (
         <article className="turn">

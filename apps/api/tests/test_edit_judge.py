@@ -25,6 +25,8 @@ def judged(monkeypatch):
 
     monkeypatch.setattr(online, "_live_grounded", grade)
     monkeypatch.setattr(online, "_post_feedback", lambda run_id, score: seen["posted"].append((run_id, score)))
+    seen["edits"] = []
+    monkeypatch.setattr(online, "_send_edit", lambda run_id, pair: seen["edits"].append((run_id, pair)))
     return seen
 
 
@@ -66,6 +68,11 @@ def test_a_specialist_edit_of_the_draft_is_judged_on_that_turn(client, judged):
     question, text, _citations = judged["graded"][0]
     assert question == "How long do I have to return shoes?"
     assert text == final
+    run_id, pair = judged["edits"][0]
+    assert run_id == "run-draft"
+    assert pair["before"] == case["messages"][-1]["body"]
+    assert pair["after"] == final
+    assert pair["question"] == "How long do I have to return shoes?"
 
 
 def test_an_unchanged_draft_is_not_judged_at_close(client, judged):
@@ -79,6 +86,7 @@ def test_an_unchanged_draft_is_not_judged_at_close(client, judged):
     draft = case["messages"][-1]["body"]
     client.post("/cases/current/resolve", headers=specialist, json={"final_text": draft})
     assert judged["posted"] == []
+    assert judged["edits"] == []
 
 
 def test_a_lead_amount_edit_is_judged_on_the_proposal_turn(client, judged):
@@ -95,6 +103,11 @@ def test_a_lead_amount_edit_is_judged_on_the_proposal_turn(client, judged):
     assert edited.status_code == 200
     assert judged["posted"] == [("run-proposal", 1)]
     assert "5000 cents" in judged["graded"][0][1]
+    assert judged["edits"][0][1]["before"] == "12800 cents"
+    assert judged["edits"][0][1]["after"] == "5000 cents"
+    shown = client.get("/cases/current", headers=specialist).json()
+    assert shown["proposed_amount_cents"] == 12800
+    assert shown["refund_amount_cents"] == 5000
 
 
 def test_a_handoff_escalation_runs_through_the_graph(client):
