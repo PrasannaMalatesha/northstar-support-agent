@@ -127,6 +127,7 @@ def _live_grade(question: str, reference: str, response: str) -> bool:
 @lru_cache(maxsize=1)
 def _grader():
     from langchain.chat_models import init_chat_model
+    from langchain_core.rate_limiters import InMemoryRateLimiter
 
     # The model id contains a colon (`:free`). Pass the provider separately
     # so that colon is not read as an OpenAI model prefix.
@@ -137,4 +138,8 @@ def _grader():
         base_url=OPENROUTER_BASE,
         api_key=os.environ["OPENROUTER_API_KEY"],
         temperature=0,
+        timeout=60,
+        max_retries=3,
+        # https://docs.langchain.com/langsmith/handle-model-rate-limiting
+        rate_limiter=InMemoryRateLimiter(requests_per_second=0.5, max_bucket_size=2),
     ).with_structured_output(Grade, method="json_schema", strict=True)

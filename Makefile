@@ -1,4 +1,4 @@
-.PHONY: db api web test
+.PHONY: db api web test evals-sync evals
 
 db:
 	docker compose up -d --wait
@@ -11,3 +11,9 @@ web:
 
 test:
 	uv run pytest
+
+evals-sync:
+	uv run python -m evals.experiments sync
+
+evals:
+	uv run python -m evals.experiments run --split test --repetitions 3

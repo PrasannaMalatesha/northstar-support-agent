@@ -251,3 +251,24 @@ def comparison_text(v0_runs: list[dict[str, bool]], v1_runs: list[dict[str, bool
 def judges_may_score_test(calibration: str) -> bool:
     """The test split opens only when the calibration file says so. A number is not invented here."""
     return "test split: open" in calibration
+
+
+# Router labels for the intent classifier experiment. Hand labeled by request type:
+# a request for an action that waits for a lead goes to refund_agent, everything else to
+# support_agent. The latest user message decides, so the multi-turn rows end on the label.
+INTENT_CASES = (
+    {"id": "route-refund", "messages": ("Please refund order NS-1001.",), "route": "refund_agent"},
+    {"id": "route-used-refund", "messages": ("The wool coat was used. Refund order NS-1001.",), "route": "refund_agent"},
+    {"id": "route-cancel", "messages": ("Please cancel order NS-1004.",), "route": "refund_agent"},
+    {"id": "route-address", "messages": ("New address for order NS-1005: please ship it to 40 Elm Ave, Round Rock TX 78664.",), "route": "refund_agent"},
+    {"id": "route-exchange", "messages": ("Exchange order NS-1006 for size M.",), "route": "refund_agent"},
+    {"id": "route-warranty", "messages": ("The desk speaker on order NS-1007 stopped working.",), "route": "refund_agent"},
+    {"id": "route-lost", "messages": ("Order NS-1009 never arrived.",), "route": "refund_agent"},
+    {"id": "route-return-window", "messages": ("How long may apparel and footwear be returned?",), "route": "support_agent"},
+    {"id": "route-hours", "messages": ("What are the support hours on weekdays?",), "route": "support_agent"},
+    {"id": "route-address-policy", "messages": ("Can the ship-to address be changed after the order is shipped?",), "route": "support_agent"},
+    {"id": "route-catalog", "messages": ("How much is the wool coat?",), "route": "support_agent"},
+    {"id": "route-out-of-corpus", "messages": ("What is your favorite color?",), "route": "support_agent"},
+    {"id": "route-refund-then-policy", "messages": ("Please refund order NS-1001.", "The refund waits for a lead.", "What are the support hours on weekdays?"), "route": "support_agent"},
+    {"id": "route-policy-then-refund", "messages": ("How long may apparel and footwear be returned?", "30 days from delivery. (REF-CATEGORY)", "Please refund order NS-1001."), "route": "refund_agent"},
+)
