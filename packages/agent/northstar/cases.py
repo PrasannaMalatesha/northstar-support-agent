@@ -17,7 +17,7 @@ from northstar.escalate import handoff, manual_handoff
 from northstar.graph import TurnTools, resume_turn, run_turn
 from northstar.memory import graph_for
 from northstar.agent_model import handbook_reply
-from northstar.handbook import Draft, guard_draft
+from northstar.handbook import ABSTAIN_TEXT, Draft, guard_draft
 from northstar.online import record_judge
 from northstar.privacy import SECRET_REPLY, has_secret, screen
 
@@ -113,6 +113,8 @@ CREATE TABLE IF NOT EXISTS case_messages (
 ALTER TABLE case_messages ADD COLUMN IF NOT EXISTS strengths text[] NOT NULL DEFAULT '{}';
 ALTER TABLE case_messages ADD COLUMN IF NOT EXISTS steps text[] NOT NULL DEFAULT '{}';
 ALTER TABLE case_messages ADD COLUMN IF NOT EXISTS run_id text;
+ALTER TABLE case_messages ADD COLUMN IF NOT EXISTS retrieved_sections text[] NOT NULL DEFAULT '{}';
+ALTER TABLE case_messages ADD COLUMN IF NOT EXISTS retrieved_scores real[] NOT NULL DEFAULT '{}';
 CREATE TABLE IF NOT EXISTS usage_days (
     staff_id uuid NOT NULL REFERENCES staff_users (id),
     day date NOT NULL,
@@ -357,8 +359,9 @@ class CaseStore:
             conn.execute(
                 """
                 INSERT INTO case_messages
-                    (case_id, role, body, decision, citations, strengths, steps, run_id, created_at)
-                VALUES (%s, 'assistant', %s, %s, %s, %s, %s, %s, %s)
+                    (case_id, role, body, decision, citations, strengths, steps, run_id,
+                     retrieved_sections, retrieved_scores, created_at)
+                VALUES (%s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     case_id,
@@ -368,6 +371,8 @@ class CaseStore:
                     [draft.match[section_id] for section_id in draft.citations],
                     list(draft.steps),
                     run_id,
+                    [section_id for section_id, _ in draft.retrieved],
+                    [score for _, score in draft.retrieved],
                     now,
                 ),
             )
@@ -567,6 +572,46 @@ class CaseStore:
     def _ticket_id(self, case_id: uuid.UUID) -> str | None:
         row = self._current_ticket(case_id)
         return None if row is None else str(row["id"])
+
+    def gaps(self) -> list[dict]:
+        """Handbook questions that ended in abstain, most frequent first (R19). Read-only."""
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT asked.body AS question, answer.retrieved_sections, answer.retrieved_scores,
+                       answer.created_at
+                FROM case_messages answer
+                JOIN LATERAL (
+                    SELECT body FROM case_messages
+                    WHERE case_id = answer.case_id AND role = 'user' AND id < answer.id
+                    ORDER BY id DESC
+                    LIMIT 1
+                ) asked ON true
+                WHERE answer.role = 'assistant' AND answer.decision = 'abstain' AND answer.body = %s
+                """,
+                (screen(ABSTAIN_TEXT),),
+            ).fetchall()
+        grouped: dict[str, dict] = {}
+        for row in rows:
+            key = " ".join(row["question"].lower().split()).rstrip("?.! ")
+            gap = grouped.setdefault(key, {"question": row["question"], "count": 0, "last_seen": row["created_at"], "sections": {}})
+            gap["count"] += 1
+            gap["last_seen"] = max(gap["last_seen"], row["created_at"])
+            for section_id, score in zip(row["retrieved_sections"], row["retrieved_scores"], strict=False):
+                gap["sections"][section_id] = max(score, gap["sections"].get(section_id, 0.0))
+        ordered = sorted(grouped.values(), key=lambda gap: (-gap["count"], -gap["last_seen"].timestamp()))
+        return [
+            {
+                "question": gap["question"],
+                "count": gap["count"],
+                "last_seen": _iso(gap["last_seen"]),
+                "sections": [
+                    {"section_id": section_id, "score": round(score, 3)}
+                    for section_id, score in sorted(gap["sections"].items(), key=lambda item: -item[1])
+                ],
+            }
+            for gap in ordered
+        ]
 
     def pending(self) -> list[dict]:
         now = self._clock.now()

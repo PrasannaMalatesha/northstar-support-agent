@@ -237,6 +237,23 @@ export default async function DeskPage({
         )
       : [];
 
+  const gaps =
+    session.user.role === "lead"
+      ? await fetch(`${apiUrl}/gaps`, {
+          headers: { Authorization: `Bearer ${access}` },
+          cache: "no-store",
+        }).then(async (gapsResponse) =>
+          gapsResponse.ok
+            ? ((await gapsResponse.json()) as {
+                question: string;
+                count: number;
+                last_seen: string;
+                sections: { section_id: string; score: number }[];
+              }[])
+            : [],
+        )
+      : [];
+
   const current = (await response.json()) as {
     status: string;
     stale: boolean;
@@ -312,6 +329,26 @@ export default async function DeskPage({
               </form>
             </article>
           ))}
+        </section>
+      ) : null}
+      {session.user.role === "lead" && !viewing ? (
+        <section>
+          <h2>Handbook gaps</h2>
+          {gaps.length === 0 ? (
+            <p>No abstained handbook questions.</p>
+          ) : (
+            <ul>
+              {gaps.map((gap) => (
+                <li key={gap.question}>
+                  {gap.question} Asked {gap.count} {gap.count === 1 ? "time" : "times"}, last on{" "}
+                  {gap.last_seen.slice(0, 10)}.
+                  {gap.sections.length > 0
+                    ? ` Retrieved: ${gap.sections.map((item) => `${item.section_id} (${item.score})`).join(", ")}.`
+                    : " Nothing was retrieved."}
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       ) : null}
       {viewing ? (

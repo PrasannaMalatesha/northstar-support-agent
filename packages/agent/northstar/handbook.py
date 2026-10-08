@@ -36,6 +36,8 @@ class Draft:
     steps: tuple[str, ...] = STEPS
     # LangSmith root run of the turn, so a later edit can score that same trace.
     run_id: str | None = None
+    # On an abstain: the reranked sections that fell under the threshold, with scores (R19).
+    retrieved: tuple[tuple[str, float], ...] = ()
 
 
 ABSTAIN_TEXT = (
