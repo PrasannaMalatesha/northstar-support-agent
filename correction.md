@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-08 — Customer chat stuck after an escalation, and a silent desk tool failure
+
+Status: bug
+
+What broke: In the end-to-end check (the full demo script driven in a browser on a fresh database), a customer's second chat message while their refund waited for a lead got 409 "This chat is closed." and the chat page dropped it without a word. Worse, after an escalation the chat kept returning the escalated case, which no one resolves, so that customer could never chat again. Separately, one desk turn out of about 35 showed "The lookup failed. No facts were filled in. Try again." with nothing in the API log: `ToolErrorMiddleware` caught the error and nothing recorded it.
+
+Evidence: `POST /chat/messages` returned 409 for a customer with a waiting refund and for one with an escalated case. The lookup failure did not come back in 10 warm turns, 3 cold starts, or the 20-turn demo run.
+
+Debug steps: Called the chat API directly with a chat token for NS-1006. Re-ran the failing question in-process with the tool error printed, warm and from a cold start.
+
+Fix: After an escalation, the customer's next message starts a new chat case; the escalated case stays with the specialist, and the chat still shows "A specialist will follow up" until then. While a request waits, the API says so (409, "A person on our team is reviewing your request.") and the chat page shows "Your request is with our team. You can write again once they reply." The desk tool error is now logged with its traceback, so the next one shows its cause. The failure itself stays safe: no facts are filled in.
+
 ## 2026-10-08 — LangSmith's monthly trace limit, and the trace upload moved off the request
 
 Status: bug

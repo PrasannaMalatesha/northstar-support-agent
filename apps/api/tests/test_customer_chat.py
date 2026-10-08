@@ -98,3 +98,20 @@ def test_the_customer_text_is_the_checked_draft(client):
     chat = _chat(client)
     view = _say(client, chat, "My card is 4111 1111 1111 1111. How long may apparel be returned?")
     assert "4111 1111 1111 1111" not in str(view)
+
+
+def test_a_message_while_a_request_waits_is_refused_with_a_reason(client):
+    chat = _chat(client)
+    _say(client, chat, "Please refund order NS-1001.")
+    refused = client.post("/chat/messages", headers=chat, json={"question": "Any news?"})
+    assert refused.status_code == 409
+    assert "reviewing your request" in refused.json()["detail"]
+
+
+def test_after_an_escalation_the_customer_can_still_ask(client):
+    chat = _chat(client)
+    _say(client, chat, "I will open a chargeback with my bank.")
+    assert "specialist will follow up" in client.get("/chat", headers=chat).json()["status"]
+    view = _say(client, chat, "How long may apparel and footwear be returned?")
+    assert "REF-CATEGORY" in view["messages"][-1]["text"]
+    assert [m["text"] for m in view["messages"] if m["role"] == "user"] == ["How long may apparel and footwear be returned?"]
