@@ -36,15 +36,15 @@ Results are in `results/langsmith_test.md` and `results/langsmith_dev.md`.
 
 Slice 3 (#65) has started. Malatesha's decisions:
 - Build order: #81 (Spanish) → #80 (damaged-item photo) → #78 (SSO) → #79 (customer chat). The demo comes after slice 3.
-- #81: Spanish is the one extra language. **Parked by Malatesha** on branch `feature/spanish-replies` (pushed, no PR). Tests pass there. The last live run missed es-jailbreak and es-refund; both fixes are committed on that branch but not re-checked live. The LangSmith judge rule prompt already says a reply may be Spanish, and dataset tag `slice3-es` exists (74 cases). Both are harmless for English.
+- #81: Spanish is the one extra language. Built (`northstar/language.py`, `SPANISH_CASES`, tag `slice3-es`), live 1.0 on all checks over 3 repetitions. The parked branch `feature/spanish-replies` is superseded.
 - #78: Google single sign-on. Malatesha creates the OAuth app; the client id and secret go into `.env` only.
 - #79: a customer identifies with an order id plus the email on that order (no account, no password). Record this in `prd.md` in the #79 PR before building.
 
-#80 (damaged-item photo) is built: `northstar/photo.py`, the REF-DAMAGED rule in `actions.refund`, seed order NS-1011, labeled `PHOTO_CASES` (tag `slice3-photo`). The LangSmith judge rule was recreated from `dev` code, so its prompt no longer has the parked Spanish line; re-add it when #81 lands.
+#80 (damaged-item photo) is built: `northstar/photo.py`, the REF-DAMAGED rule in `actions.refund`, seed order NS-1011, labeled `PHOTO_CASES` (tag `slice3-photo`).
 
 #79 (customer chat) is built: `/chat` in the console; `POST /chat/start`, `GET /chat`, `POST /chat/messages` in the API; chat token audience `northstar-chat`; chat cases owned by the disabled `chat@northstar.example`. Same agent and gates; only identity, scope, and the customer view differ. `prd.md` records the order id plus email decision.
 
-Next: #78 (Google SSO, needs Malatesha's OAuth client id and secret in `.env`). #81 Spanish is parked.
+Next: #78 (Google SSO, needs Malatesha's OAuth client id and secret in `.env`).
 
 How to run the demo:
 - **Servers:** restart any API or console started before PR #98, because they run old code (`make api`, `make web`).

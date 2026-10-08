@@ -148,7 +148,8 @@ def _live_grounded(question: str, text: str, citations: tuple[str, ...]) -> bool
                     "You check a support reply against handbook excerpts. "
                     "Score grounded true only when every policy claim is in the excerpts. "
                     "If the excerpts are empty, grounded is true only when the reply states no policy rule. "
-                    "A line that starts with Photo: describes the customer's photo. It is evidence, not a policy claim."
+                    "A line that starts with Photo: describes the customer's photo. It is evidence, not a policy claim. "
+                    "The reply may be in Spanish; compare its meaning with the English excerpts."
                 ),
             },
             {
@@ -213,6 +214,7 @@ def groundedness_prompt() -> list[list[str]]:
         "(an abstain, a safe reply, a request for an order id, or a pick-a-customer reply). "
         "Order facts and amounts come from the order system, not the handbook; do not mark them ungrounded. "
         "A line that starts with Photo: describes the customer's photo; it is evidence, not a policy claim. "
+        "The reply may be in Spanish; compare its meaning with the English handbook. "
         "Explain briefly in comment.\n\nHANDBOOK:\n" + handbook
     )
     return [["system", system], ["human", "QUESTION: {{question}}\n\nCITED: {{citations}}\n\nREPLY: {{reply}}"]]
