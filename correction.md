@@ -13,6 +13,23 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — Propose an exchange instead of a refund (issue #70)
+
+Status: decision
+
+What changed: An exchange or swap request is a gated action with no amount. It is proposed only when every check passes:
+- the line is apparel and footwear or bags and accessories, delivered, inside the return window, and not worn;
+- it has not been exchanged before;
+- the wanted size is on the catalog row, and the row says in stock.
+
+The proposal cites EXC-ELIGIBILITY and EXC-PROCESS and carries "item: size X to size Y" for the lead. Each failed check gets a cited answer: EXC-ELIGIBILITY, EXC-DIFFERENT-ITEM, EXC-LIMIT, EXC-STOCK, or REF-CATEGORY. A request with no size asks for one. The catalog row has one in-stock flag per item, not one per size, so stock is read at item level. A rain jacket that is not in stock was added to the seed catalog, with an order for it.
+
+Evidence: `data/policy/exchanges.md`.
+
+Debug steps: `apps/api/tests/test_exchange.py` (an approved exchange, then EXC-LIMIT on the same line), plus five rows in `SLICE2_CASES`.
+
+Fix: `packages/agent/northstar/actions.py`, `cases.py`, `evals/labeled.py`.
+
 ## 2026-10-07 — Change the ship-to address before shipment (issue #69)
 
 Status: decision

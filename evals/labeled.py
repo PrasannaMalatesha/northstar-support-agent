@@ -85,6 +85,11 @@ SLICE2_CASES = (
     {"id": "address-delivered-order", "customer": "mira.shah@northstar.example", "question": "Change the address on order NS-1001 to 12 Oak St, Austin TX 78701.", "decision": "answer", "sections": ("SHIP-ADDRESS",), "status": "Open", "action": None},
     {"id": "address-missing", "customer": "mira.shah@northstar.example", "question": "Change the address on order NS-1004.", "decision": "ask_clarification", "sections": (), "status": "Open", "action": None},
     {"id": "address-other-customer", "customer": "mira.shah@northstar.example", "question": "Change the address on order NS-1002 to 12 Oak St, Austin TX 78701.", "decision": "not_found", "sections": (), "status": "Open", "action": None},
+    {"id": "exchange-in-stock", "customer": "mira.shah@northstar.example", "question": "Please exchange the coat on order NS-1001 for a large.", "decision": "exchange", "sections": ("EXC-ELIGIBILITY", "EXC-PROCESS"), "status": "Waiting for approval", "action": "exchange"},
+    {"id": "exchange-out-of-stock", "customer": "mira.shah@northstar.example", "question": "Exchange order NS-1006 for size M.", "decision": "answer", "sections": ("EXC-STOCK",), "status": "Open", "action": None},
+    {"id": "exchange-home-item", "customer": "mira.shah@northstar.example", "question": "Exchange the kettle on order NS-1004 for a large one.", "decision": "answer", "sections": ("EXC-ELIGIBILITY",), "status": "Open", "action": None},
+    {"id": "exchange-different-item", "customer": "mira.shah@northstar.example", "question": "Exchange order NS-1001 for a scarf instead.", "decision": "answer", "sections": ("EXC-DIFFERENT-ITEM",), "status": "Open", "action": None},
+    {"id": "exchange-no-size", "customer": "mira.shah@northstar.example", "question": "Exchange order NS-1001.", "decision": "ask_clarification", "sections": (), "status": "Open", "action": None},
     {"id": "refund-before-delivery", "customer": "mira.shah@northstar.example", "question": "Refund order NS-1004.", "decision": "answer", "sections": ("ORD-CANCEL",), "status": "Open", "action": None},
 )
 
