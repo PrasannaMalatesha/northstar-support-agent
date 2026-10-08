@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import math
 
+from northstar.actions import PROPOSALS
 from northstar.online import should_judge
 
 ACTION_FLOOR = 0.8
 LATENCY_P95_SECONDS = 10
 CHUNK_CAP = 4
-_CITED = frozenset({"answer", "approve_refund", "partial_credit", "deny", "escalate"})
+_CITED = frozenset({"answer", "escalate"}) | PROPOSALS
 
 
 def bad_citation(citations, registry) -> bool:

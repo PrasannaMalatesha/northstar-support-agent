@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from northstar.actions import PROPOSALS
+
 _HEADING = re.compile(r"^[A-Z][A-Z0-9]+(?:-[A-Z0-9]+)+$")
 _STOP = frozenset(
     """
@@ -98,7 +100,7 @@ def _abstain() -> Draft:
     return Draft("abstain", ABSTAIN_TEXT, (), {})
 
 
-_CITED = frozenset({"answer", "approve_refund", "partial_credit", "deny", "escalate"})
+_CITED = frozenset({"answer", "escalate"}) | PROPOSALS
 
 
 def registry_ids() -> set[str]:

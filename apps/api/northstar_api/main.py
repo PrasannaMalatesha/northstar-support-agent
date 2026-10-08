@@ -4,6 +4,7 @@ import uuid
 from contextlib import asynccontextmanager
 
 from northstar.cases import (
+    AmountNotEditable,
     AmountOutOfBounds,
     CaseClosed,
     CaseStore,
@@ -239,6 +240,8 @@ def create_app(
             raise HTTPException(status_code=404, detail="This case is not waiting.") from exc
         except AmountOutOfBounds as exc:
             raise HTTPException(status_code=422, detail="That amount is above the order.") from exc
+        except AmountNotEditable as exc:
+            raise HTTPException(status_code=422, detail="This action has no amount to edit.") from exc
         except ValueError as exc:
             raise HTTPException(status_code=404, detail="This case is not waiting.") from exc
         identity.audit(staff.id, "edit", clock.now())
