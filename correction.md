@@ -13,6 +13,22 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-08 — A customer chat in front of the same agent and gates (issue #79)
+
+Status: decision
+
+What changed: Malatesha decided a customer identifies with an order id and the email on that order; `prd.md` (P2, Customer-facing entry) records it. The agent is the same: a chat message runs `CaseStore.ask`, so escalation triggers, the safe reply, the handbook rules, proposals that wait for a lead, the citation and output checks, and PII masking all hold unchanged. What differs is identity, scope, and view:
+- Identity: `POST /chat/start` checks the order and its email and returns a chat token with its own audience (`northstar-chat`, 30 minutes). It never passes as a staff token, and a staff token never opens the chat. Every miss gets one message (no order or email enumeration). Misses count toward the login lockout, keyed `chat:<email>`.
+- Scope: chat cases are owned by a seeded, disabled staff user `chat@northstar.example` (it can never sign in), bound to the customer, one open case per customer. The existing ownership check returns "Not found for this customer" for anyone else's order. Request limits are per customer. A customer cannot approve, edit, or close.
+- View: `GET /chat` returns only the status and the messages. A proposal shows as "A person on our team will review this request. Nothing is approved yet."; an escalation as "A specialist will follow up with you about this." The draft, amount, rationale, handoff packet, customer details, and history never reach the customer. After a lead approves, the status gives the ticket reference.
+- Console: a public `/chat` page; the token sits in an httpOnly, SameSite=Strict cookie scoped to `/chat`. `sameSite()` and `apiUrl` moved to `app/same-site.ts` for both pages.
+
+Evidence: `test_customer_chat.py` (10 tests): start and the single miss message, lockout, token separation both ways, the chat account cannot sign in, other customers' orders, a refund waiting for a lead and then approved, an escalation without the packet, the jailbreak safe reply, no personal data in the view, a card number never shown. A browser test in `screens.spec.ts` runs the chat end to end and passes axe.
+
+Debug steps: The browser test first proposed a refund on NS-1001, which the desk test had already refunded, so the duplicate block (correctly) answered "already with our team"; it now uses NS-1006. Next.js's route announcer also has role="alert", so the test finds the error by its text.
+
+Fix: As above. Photos are refused in the chat (the desk takes them).
+
 ## 2026-10-08 — A damaged-item photo, and the REF-DAMAGED rule it needs (issue #80)
 
 Status: decision

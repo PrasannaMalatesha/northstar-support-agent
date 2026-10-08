@@ -102,3 +102,27 @@ test("a damaged-item photo is attached and described for the lead", async ({ pag
   await expect(page.getByText("REF-DAMAGED").first()).toBeVisible();
   await noViolations(page);
 });
+
+test("a customer chat starts from an order and email, and a refund waits for a person", async ({ page }) => {
+  await page.goto("/chat");
+  await noViolations(page);
+  await page.getByLabel("Order id").fill("NS-1006");
+  await page.getByLabel("Email").fill("someone.else@example.com");
+  await page.getByRole("button", { name: "Start chat" }).click();
+  await expect(page.getByText("That order and email do not match.")).toBeVisible();
+
+  await page.getByLabel("Order id").fill("NS-1006");
+  await page.getByLabel("Email").fill("mira.shah@northstar.example");
+  await page.getByRole("button", { name: "Start chat" }).click();
+  await expect(page.getByLabel("Your message")).toBeVisible();
+  await noViolations(page);
+
+  await page.getByLabel("Your message").fill("Please refund order NS-1006.");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText(/Nothing is approved yet/).first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/Amount/)).toHaveCount(0);
+  await noViolations(page);
+
+  await page.getByRole("button", { name: "End chat" }).click();
+  await expect(page.getByRole("button", { name: "Start chat" })).toBeVisible();
+});

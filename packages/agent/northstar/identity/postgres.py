@@ -117,18 +117,20 @@ class PostgresIdentityStore:
         name: str,
         password_hash: str,
         role: str,
+        disabled: bool = False,
     ) -> None:
         with self._pool.connection() as conn:
             conn.execute(
                 """
-                INSERT INTO staff_users (id, email, name, password_hash, role)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO staff_users (id, email, name, password_hash, role, disabled_at)
+                VALUES (%s, %s, %s, %s, %s, CASE WHEN %s THEN now() END)
                 ON CONFLICT (email) DO UPDATE
                 SET name = EXCLUDED.name,
                     password_hash = EXCLUDED.password_hash,
-                    role = EXCLUDED.role
+                    role = EXCLUDED.role,
+                    disabled_at = EXCLUDED.disabled_at
                 """,
-                (staff_id, email, name, password_hash, role),
+                (staff_id, email, name, password_hash, role, disabled),
             )
             conn.commit()
 

@@ -41,6 +41,11 @@ class RefreshBody(BaseModel):
     refresh_token: str = Field(min_length=10, max_length=500)
 
 
+class ChatStartBody(BaseModel):
+    order_id: str = Field(min_length=3, max_length=20)
+    email: str = Field(min_length=3, max_length=320)
+
+
 class QuestionBody(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     # Optional damaged-item photo as a data URL (issue #80). Checked again in northstar.photo.
@@ -183,6 +188,39 @@ def create_app(
             return identity.current_staff(credentials.credentials)
         except TokenInvalid as exc:
             raise HTTPException(status_code=401, detail="Sign in required.") from exc
+
+    # Customer chat (issue #79). A chat token only reaches the customer's own chat, never staff routes.
+
+    @app.post("/chat/start")
+    def start_chat(body: ChatStartBody) -> dict:
+        try:
+            return {"chat_token": identity.start_chat(body.email, body.order_id, cases.chat_customer)}
+        except LoginLocked as exc:
+            raise HTTPException(status_code=423, detail="Too many tries. Try again later.") from exc
+        except LoginInvalid as exc:
+            # One message for every miss, so the chat does not reveal which orders or emails exist.
+            raise HTTPException(status_code=401, detail="That order and email do not match.") from exc
+
+    def customer_from_token(credentials: HTTPAuthorizationCredentials | None = Depends(_bearer)):
+        if credentials is None:
+            raise HTTPException(status_code=401, detail="Start the chat first.")
+        try:
+            return identity.chat_customer(credentials.credentials)
+        except TokenInvalid as exc:
+            raise HTTPException(status_code=401, detail="Start the chat first.") from exc
+
+    @app.get("/chat")
+    def chat(customer_id=Depends(customer_from_token)) -> dict:
+        return cases.chat(customer_id)
+
+    @app.post("/chat/messages")
+    def chat_message(body: QuestionBody, customer_id=Depends(customer_from_token)) -> dict:
+        if body.photo:
+            raise HTTPException(status_code=422, detail="Photos are not taken in the chat.")
+        try:
+            return cases.chat_ask(customer_id, body.question)
+        except CaseClosed as exc:
+            raise HTTPException(status_code=409, detail="This chat is closed.") from exc
 
     @app.post("/cases/current/new")
     def new_case(staff=Depends(staff_from_token)) -> dict:

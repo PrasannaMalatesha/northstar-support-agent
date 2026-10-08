@@ -44,7 +44,7 @@ The end customer does not use this product directly in the first release. The sp
 - Replacing the specialist. The agent drafts and proposes.
 - Searching the public web for policy.
 - Acting as legal counsel on chargebacks. It escalates those.
-- A customer login or a storefront.
+- A customer login or a storefront. (The slice 3 chat identifies a customer by order id and order email, with no account; see P2.)
 
 ## Sources of truth
 
@@ -145,6 +145,8 @@ Slice 1 labeled set: about 40 cases. Roughly 60% normal, 25% edge, 15% failure o
 ### P2 — later, still specified
 
 **Customer-facing entry.** The same agent behind a customer chat, with the same gates. Not in the first build, because the user of record today is staff.
+
+How a customer is identified (decided for slice 3): the customer enters an order id and the email on that order, as on an order-lookup form. There is no account and no password, so this is not the customer login the non-goals rule out. A match opens a short chat session for that one customer. A miss gets one message that does not say whether the order or the email was wrong, and repeated misses lock out for a while. The customer reads only orders they own. Every gated action is a proposal for a lead, and the customer is told it is waiting, not approved. The customer sees only the checked reply, never the draft, the amount, the internal rationale, or a handoff packet.
 
 **Damaged-item photos.** Accept an image, describe it, and attach it to a claim. Not in the first build. Text descriptions of damage are in P0, judged against the damage section of the handbook.
 

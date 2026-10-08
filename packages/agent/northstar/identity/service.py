@@ -21,6 +21,9 @@ LOCKOUT_FAILURES = 5
 LOCKOUT_MINUTES = 15
 ISSUER = "northstar-api"
 AUDIENCE = "northstar-console"
+# A customer chat token is a different audience, so it can never pass as a staff token (issue #79).
+CHAT_AUDIENCE = "northstar-chat"
+CHAT_MINUTES = 30
 
 _hasher = PasswordHasher()
 
@@ -147,6 +150,50 @@ class Identity:
         if int(payload.get("sv", -1)) != staff.session_version:
             raise TokenInvalid()
         return staff
+
+    def start_chat(self, email: str, order_id: str, find_customer) -> str:
+        """A chat token for the customer who owns this order and email, or LoginInvalid.
+
+        Failures count toward the same lockout as staff logins, keyed by the email.
+        """
+        key = f"chat:{email.strip().lower()}"
+        now = self._clock.now()
+        if self._is_locked(key, now):
+            self._store.audit(None, "chat_locked", now)
+            raise LoginLocked()
+        customer_id = find_customer(order_id, email)
+        self._store.record_attempt(key, customer_id is not None, now)
+        if customer_id is None:
+            self._store.audit(None, "chat_failure", now)
+            raise LoginInvalid()
+        self._store.audit(None, "chat_start", now)
+        return jwt.encode(
+            {
+                "sub": str(customer_id),
+                "iss": ISSUER,
+                "aud": CHAT_AUDIENCE,
+                "iat": int(now.timestamp()),
+                "exp": int((now + timedelta(minutes=CHAT_MINUTES)).timestamp()),
+            },
+            self._secret,
+            algorithm="HS256",
+        )
+
+    def chat_customer(self, token: str) -> uuid.UUID:
+        try:
+            payload = jwt.decode(
+                token,
+                self._secret,
+                algorithms=["HS256"],
+                issuer=ISSUER,
+                audience=CHAT_AUDIENCE,
+                options={"verify_exp": False, "verify_iat": False},
+            )
+        except jwt.PyJWTError as exc:
+            raise TokenInvalid() from exc
+        if self._clock.now() >= datetime.fromtimestamp(payload["exp"], tz=timezone.utc):
+            raise TokenInvalid()
+        return uuid.UUID(payload["sub"])
 
     def _is_locked(self, email: str, now: datetime) -> bool:
         since = now - timedelta(minutes=LOCKOUT_MINUTES)
