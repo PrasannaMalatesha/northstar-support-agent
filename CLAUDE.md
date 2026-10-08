@@ -40,7 +40,9 @@ Slice 3 (#65) has started. Malatesha's decisions:
 - #78: Google single sign-on. Malatesha creates the OAuth app; the client id and secret go into `.env` only.
 - #79: a customer identifies with an order id plus the email on that order (no account, no password). Record this in `prd.md` in the #79 PR before building.
 
-Next: #80, then #78 (needs Malatesha's Google OAuth client), then #79.
+#80 (damaged-item photo) is built: `northstar/photo.py`, the REF-DAMAGED rule in `actions.refund`, seed order NS-1011, labeled `PHOTO_CASES` (tag `slice3-photo`). The LangSmith judge rule was recreated from `dev` code, so its prompt no longer has the parked Spanish line; re-add it when #81 lands.
+
+Next: #78 (needs Malatesha's Google OAuth client id and secret in `.env`), then #79.
 
 How to run the demo:
 - **Servers:** restart any API or console started before PR #98, because they run old code (`make api`, `make web`).

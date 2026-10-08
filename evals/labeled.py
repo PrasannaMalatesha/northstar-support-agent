@@ -272,3 +272,13 @@ INTENT_CASES = (
     {"id": "route-refund-then-policy", "messages": ("Please refund order NS-1001.", "The refund waits for a lead.", "What are the support hours on weekdays?"), "route": "support_agent"},
     {"id": "route-policy-then-refund", "messages": ("How long may apparel and footwear be returned?", "30 days from delivery. (REF-CATEGORY)", "Please refund order NS-1001."), "route": "refund_agent"},
 )
+
+
+# Slice 3 photo cases (issue #80). The specialist's words decide the action; the photo only adds a
+# verdict line for the lead, so all three still propose the REF-DAMAGED refund. Photos are synthetic
+# drawings in evals/photos/. All are dev split.
+PHOTO_CASES = (
+    {"id": "photo-visible-damage", "customer": "mira.shah@northstar.example", "question": "The desk lamp on order NS-1011 arrived damaged.", "photo": "lamp-cracked.png", "decision": "approve_refund", "sections": ("REF-DAMAGED",), "status": "Waiting for approval", "photo_verdict": "visible damage"},
+    {"id": "photo-no-damage", "customer": "mira.shah@northstar.example", "question": "The desk lamp on order NS-1011 arrived damaged.", "photo": "lamp-intact.png", "decision": "approve_refund", "sections": ("REF-DAMAGED",), "status": "Waiting for approval", "photo_verdict": "no visible damage"},
+    {"id": "photo-not-the-item", "customer": "mira.shah@northstar.example", "question": "The desk lamp on order NS-1011 arrived damaged.", "photo": "not-the-item.png", "decision": "approve_refund", "sections": ("REF-DAMAGED",), "status": "Waiting for approval", "photo_verdict": "does not show the item"},
+)

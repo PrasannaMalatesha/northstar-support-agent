@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from evals.labeled import CASES, INTENT_CASES, SLICE2_CASES, judges_may_score_test, matches
+from evals.labeled import CASES, INTENT_CASES, PHOTO_CASES, SLICE2_CASES, judges_may_score_test, matches
 
 E2E = "Northstar Support: E2E"
 INTENT = "Northstar Support: Intent Classifier"
@@ -41,6 +41,13 @@ def reference(case: dict) -> str:
     return "\n".join(f"{_rule(bodies[section])} ({section})" for section in case["sections"])
 
 
+def photo_url(name: str) -> str:
+    import base64
+
+    raw = (Path(__file__).parent / "photos" / name).read_bytes()
+    return "data:image/png;base64," + base64.b64encode(raw).decode()
+
+
 def e2e_example(case: dict, version: str) -> dict:
     channel = case.get("channel", "desk")
     return {
@@ -49,6 +56,7 @@ def e2e_example(case: dict, version: str) -> dict:
             "question": case["question"],
             "customer": case.get("customer"),
             "advance_days": case.get("advance_days", 0),
+            **({"photo": photo_url(case["photo"])} if case.get("photo") else {}),
         },
         "outputs": {
             "decision": case["decision"],
@@ -57,6 +65,7 @@ def e2e_example(case: dict, version: str) -> dict:
             "response": reference(case) if channel == "handbook" else "",
             "text_includes": list(case.get("text_includes", ())),
             "text_excludes": list(case.get("text_excludes", ())),
+            **({"photo_verdict": case["photo_verdict"]} if case.get("photo_verdict") else {}),
         },
         "metadata": {"case_id": case["id"], "channel": channel, "version": version},
         "split": case.get("split", "dev"),
@@ -94,6 +103,7 @@ def sync(client) -> None:
     about = "Northstar golden cases. Splits train_judge, dev, test are frozen at first use."
     added = _add(client, E2E, about, [e2e_example(case, "slice1") for case in CASES], "slice1")
     added += _add(client, E2E, about, [e2e_example(case, "slice2") for case in SLICE2_CASES], "slice2")
+    added += _add(client, E2E, about, [e2e_example(case, "slice3-photo") for case in PHOTO_CASES], "slice3-photo")
     routes = _add(client, INTENT, "Hand-labeled routes. The latest user message decides.", [intent_example(case) for case in INTENT_CASES])
     print(f"{E2E}: {added} added. {INTENT}: {routes} added.")
 
@@ -159,7 +169,8 @@ class Desk:
         _fresh(self.client, specialist, lead, self.clock)
         if inputs.get("customer"):
             self.client.post("/cases/current/customer", headers=specialist, json={"query": inputs["customer"]})
-        body = self.client.post("/cases/current/messages", headers=specialist, json={"question": inputs["question"]}).json()
+        message = {"question": inputs["question"], **({"photo": inputs["photo"]} if inputs.get("photo") else {})}
+        body = self.client.post("/cases/current/messages", headers=specialist, json=message).json()
         draft = body["messages"][-1]
         return {"decision": draft["decision"], "citations": draft["citations"], "response": draft["body"], "status": body["status"]}
 
@@ -216,11 +227,19 @@ def answer_correct(inputs: dict, outputs: dict, reference_outputs: dict) -> dict
     return {"key": "answer_correct", "score": None if ok is None else int(ok)}
 
 
+def photo_verdict(inputs: dict, outputs: dict, reference_outputs: dict) -> dict:
+    """The photo line says what the labeled photo shows (issue #80). Rows without a photo are skipped."""
+    wanted = reference_outputs.get("photo_verdict")
+    if not wanted:
+        return {"key": "photo_verdict", "score": None, "comment": "no photo"}
+    return {"key": "photo_verdict", "score": int(f"Photo: {wanted}." in outputs["response"]), "comment": f"wanted {wanted}"}
+
+
 def correct(inputs: dict, outputs: dict, reference_outputs: dict) -> bool:
     return outputs["route"] == reference_outputs["route"]
 
 
-E2E_EVALUATORS = [label_match, citation_valid, status_correct, answer_correct]
+E2E_EVALUATORS = [label_match, citation_valid, status_correct, photo_verdict, answer_correct]
 
 
 # Commands -----------------------------------------------------------------
@@ -244,10 +263,12 @@ def _misses(results) -> list[str]:
     return sorted(set(missed))
 
 
-def run(client, split: str, repetitions: int, tag: str, judge: bool = True) -> str:
+def run(client, split: str, repetitions: int, tag: str, judge: bool = True, version: str | None = None) -> str:
     if judge and split == "test" and not judges_may_score_test(Path("results/judge_calibration.md").read_text()):
         raise SystemExit("the judge is not calibrated for the test split")
     data = list(client.list_examples(dataset_name=E2E, splits=[split], as_of=tag))
+    if version:
+        data = [example for example in data if example.metadata.get("version") == version]
     evaluators = E2E_EVALUATORS if judge else [e for e in E2E_EVALUATORS if e is not answer_correct]
     judged = "with the quiz judge" if judge else "code checks only, no judge"
     lines = [f"## {split} split, dataset tag {tag}, {len(data)} cases, {repetitions} repetition(s), {judged}", ""]
@@ -323,6 +344,7 @@ def main(argv: list[str] | None = None) -> None:
     ran.add_argument("--repetitions", type=int, default=1)
     ran.add_argument("--tag", default="slice1")
     ran.add_argument("--no-judge", action="store_true", help="code checks only, when the judge model is unavailable")
+    ran.add_argument("--version", help="only the examples added under this version, for example slice3-photo")
     promoted = commands.add_parser("promote")
     promoted.add_argument("run_id")
     promoted.add_argument("--decision", required=True)
@@ -334,9 +356,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "sync":
         sync(client)
     elif args.command == "run":
-        report = run(client, args.split, args.repetitions, args.tag, judge=not args.no_judge)
+        report = run(client, args.split, args.repetitions, args.tag, judge=not args.no_judge, version=args.version)
         print(report)
-        Path(f"results/langsmith_{args.split}.md").write_text("# LangSmith experiments\n\n" + report)
+        Path(f"results/langsmith_{args.split}{'_' + args.version if args.version else ''}.md").write_text("# LangSmith experiments\n\n" + report)
     else:
         sections = [section for section in args.sections.split(",") if section]
         print(promote(client, args.run_id, args.decision, sections, args.split, args.status))
