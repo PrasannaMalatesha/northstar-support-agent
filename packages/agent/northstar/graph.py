@@ -275,6 +275,16 @@ def _turn_input(question: str) -> dict:
     return {"question": question, "followup": ""}
 
 
+def _upload_then_judge(run_id: str, question: str, decision: str, followup: str, citations: list[str]) -> None:
+    from langchain_core.tracers.langchain import wait_for_all_tracers
+
+    from northstar import online
+
+    wait_for_all_tracers()
+    _scrubbed_client().flush()
+    online.record_judge(run_id, question, decision, followup, citations, random.random())
+
+
 def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None = None) -> Draft:
     from northstar.agent_model import _load_local_env
 
@@ -296,24 +306,12 @@ def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None 
         result = graph.invoke(_turn_input(question), config or None, context=tools)
     # A turn that pauses for approval stops before compile_followup writes followup.
     followup = result.get("followup") or result["text"]
-    if traced:
-        from langchain_core.tracers.langchain import wait_for_all_tracers
+    if traced and run_id is not None:
+        from northstar import online
 
-        wait_for_all_tracers()
-        _scrubbed_client().flush()
-        if run_id is not None:
-            from northstar import online
-
-            # After the turn: the judge model can take a minute. A failure is logged by background().
-            online.background(
-                online.record_judge,
-                run_id,
-                question,
-                result["decision"],
-                followup,
-                list(result["citations"]),
-                random.random(),
-            )
+        # After the turn, off the request: the trace upload (slow when LangSmith rate-limits) and then
+        # the judge, which scores the uploaded root run. A failure is logged by background().
+        online.background(_upload_then_judge, run_id, question, result["decision"], followup, list(result["citations"]))
     return Draft(
         result["decision"],
         followup,
