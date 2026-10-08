@@ -192,6 +192,99 @@ def attach_safety_rule() -> str:
     return SAFETY_RULE
 
 
+GROUNDED_RULE = "Northstar groundedness (LangSmith judge)"
+GROUNDED_KEY = "langsmith_groundedness"
+SECRET_NAME = "OPENROUTER_API_KEY"
+
+
+def groundedness_prompt() -> list[list[str]]:
+    """The LangSmith judge prompt, rebuilt from data/policy so the repo stays the one source.
+
+    The rule sees only the trace (question, reply, cited ids), so it gets the whole handbook.
+    """
+    from northstar.handbook import _sections, policy_dir
+
+    handbook = "\n\n".join(f"[{section_id}]\n{body.strip()}" for section_id, body in _sections(policy_dir()))
+    system = (
+        "You check a Northstar support reply against the Northstar handbook below. "
+        f"Set {GROUNDED_KEY} true only when every policy claim in the reply is stated in the cited sections. "
+        "If no section is cited, it is true only when the reply states no policy rule "
+        "(an abstain, a safe reply, a request for an order id, or a pick-a-customer reply). "
+        "Order facts and amounts come from the order system, not the handbook; do not mark them ungrounded. "
+        "Explain briefly in comment.\n\nHANDBOOK:\n" + handbook
+    )
+    return [["system", system], ["human", "QUESTION: {{question}}\n\nCITED: {{citations}}\n\nREPLY: {{reply}}"]]
+
+
+def attach_groundedness_rule(sampling_rate: float = 1.0) -> str:
+    """A LangSmith online LLM judge on every LangGraph root run, beside the in-app judge.
+
+    It writes `langsmith_groundedness`; the in-app judge keeps `policy_groundedness`.
+    The OpenRouter key goes into a LangSmith workspace secret and is never printed.
+    https://docs.langchain.com/langsmith/online-evaluations
+    """
+    from northstar.agent_model import _load_local_env
+
+    _load_local_env()
+    from langchain_core.load import dumpd
+    from langchain_openai import ChatOpenAI
+    from langsmith import Client
+
+    client = Client()
+    session_id = str(client.read_project(project_name=os.environ["LANGSMITH_PROJECT"]).id)
+    existing = client.request_with_retries("GET", "/runs/rules", params={"session_id": session_id}).json()
+    if any(rule.get("display_name") == GROUNDED_RULE for rule in existing):
+        return GROUNDED_RULE
+    client.request_with_retries(
+        "POST",
+        "/workspaces/current/secrets",
+        json=[{"key": SECRET_NAME, "value": os.environ["OPENROUTER_API_KEY"]}],
+    ).raise_for_status()
+    model = dumpd(
+        ChatOpenAI(
+            model=os.environ.get("JUDGE_MODEL") or "deepseek/deepseek-v4.1-flash",
+            base_url="https://openrouter.ai/api/v1",
+            api_key="from-workspace-secret",
+            temperature=0,
+        )
+    )
+    model["kwargs"]["openai_api_key"] = {"lc": 1, "type": "secret", "id": [SECRET_NAME]}
+    schema = {
+        "title": "groundedness",
+        "description": "Whether the reply is grounded in the cited handbook sections.",
+        "type": "object",
+        "properties": {
+            GROUNDED_KEY: {"type": "boolean", "description": "True when every policy claim is in the cited sections."},
+            "comment": {"type": "string", "description": "One or two sentences of reasoning."},
+        },
+        "required": [GROUNDED_KEY, "comment"],
+    }
+    response = client.request_with_retries(
+        "POST",
+        "/runs/rules",
+        json={
+            "display_name": GROUNDED_RULE,
+            "session_id": session_id,
+            "is_enabled": True,
+            "sampling_rate": sampling_rate,
+            "filter": 'and(eq(name, "LangGraph"), eq(is_root, true))',
+            "evaluators": [
+                {
+                    "structured": {
+                        "prompt": groundedness_prompt(),
+                        "template_format": "mustache",
+                        "schema": schema,
+                        "variable_mapping": {"question": "input.question", "reply": "output.text", "citations": "output.citations"},
+                        "model": model,
+                    }
+                }
+            ],
+        },
+    )
+    response.raise_for_status()
+    return GROUNDED_RULE
+
+
 def _evaluator_id(client, code: str) -> str:
     # client.evaluators.list is async in this SDK. The sync client already speaks HTTP.
     found = client.request_with_retries(
@@ -216,5 +309,6 @@ def _evaluator_id(client, code: str) -> str:
 
 if __name__ == "__main__":
     print(attach_safety_rule())
+    print(attach_groundedness_rule())
     sample = random.random()
     print("sample_drawn", sample < 0.1)
