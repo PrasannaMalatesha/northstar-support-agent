@@ -51,6 +51,11 @@ def _phrase(question: str, handbook_lines: str) -> str:
         )
     except Exception:
         return ""
+    return reply_text(reply)
+
+
+def reply_text(reply) -> str:
+    """The plain text of a chat model reply. Gemini can return a list of parts."""
     content = getattr(reply, "content", "")
     if isinstance(content, list):
         pieces = []

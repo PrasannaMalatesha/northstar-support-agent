@@ -30,6 +30,8 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   outputFileTracingRoot: path.join(process.cwd()),
+  // A desk message may carry a damaged-item photo of up to 4 MB (issue #80).
+  experimental: { serverActions: { bodySizeLimit: "6mb" } },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

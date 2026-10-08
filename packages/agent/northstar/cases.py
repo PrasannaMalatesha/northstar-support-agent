@@ -8,13 +8,18 @@ from __future__ import annotations
 
 import re
 import uuid
+from dataclasses import replace
 from datetime import datetime
 
-from northstar.actions import FAMILIES, Order, Proposal, Reply, family_decisions, gated, order_id as _order_id
+from northstar.actions import FAMILIES, PROPOSALS, Order, Proposal, Reply, family_decisions, gated, order_id as _order_id
 from northstar.clock import Clock
 from northstar.escalate import handoff, manual_handoff
 from northstar.graph import TurnTools, resume_turn, run_turn
+from northstar.identity.seed import CHAT_STAFF_EMAIL
+from northstar.identity.service import staff_id_for
+from northstar.language import is_spanish, to_english, to_spanish
 from northstar.memory import graph_for
+from northstar.photo import describe
 from northstar.agent_model import handbook_reply
 from northstar.handbook import ABSTAIN_TEXT, Draft, guard_draft
 from northstar import online
@@ -37,9 +42,16 @@ SAFE_REPLY = (
 )
 _BLOCKED = (
     "ignore the handbook",
+    "ignore the manual",
+    "ignore the instructions",
+    "ignore your instructions",
     "ignore previous",
     "ignore these rules",
     "retard",
+    # Spanish, checked on the customer's own words before translation (issue #81).
+    "ignora el manual",
+    "ignora las reglas",
+    "ignora las instrucciones",
 )
 
 SCHEMA_SQL = """
@@ -328,34 +340,50 @@ class CaseStore:
         question = "" if asked is None else asked["body"]
         return manual_handoff(question, sections, self._tried(case_id), note).text
 
-    def ask(self, staff_id: uuid.UUID, question: str) -> dict:
-        case_id = self._open(staff_id)
+    def ask(
+        self,
+        staff_id: uuid.UUID,
+        question: str,
+        photo: str | None = None,
+        *,
+        case_id: uuid.UUID | None = None,
+        limit_key: object = None,
+    ) -> dict:
+        case_id = case_id or self._open(staff_id)
         if self._status(case_id) != "Open":
             raise CaseClosed()
         now = self._clock.now()
         day = now.date()
-        key = (staff_id, day)
+        key = (limit_key or staff_id, day)
         if self._requests.get(key, 0) >= self._request_limit:
             return self._save(case_id, question, _plain("limit", REQUEST_LIMIT_TEXT), now)
         self._requests[key] = self._requests.get(key, 0) + 1
         if has_secret(question):
             return self._save(case_id, question, _plain("blocked", SECRET_REPLY), now)
-        self._remember_preferences(case_id, question, now)
-        escalated = handoff(question, self._tried(case_id))
+        # A Spanish question is decided in English and answered in Spanish (issue #81).
+        spanish = is_spanish(question)
+        asked = to_english(screen(question)) if spanish else question
+        reply = (lambda draft: to_spanish(draft)) if spanish else (lambda draft: draft)
+        # A photo is described for the lead. It never chooses the action (issue #80).
+        seen = describe(photo, asked) if photo else None
+        note = seen.line if seen else ("Photo: attached, but it could not be described." if photo else "")
+        asked_with = f"{question}\n[Photo attached]" if photo else question
+        self._remember_preferences(case_id, asked, now)
+        escalated = handoff(asked, self._tried(case_id))
         if escalated is not None:
             section, text = escalated.section, escalated.text
             self._mark_escalated(case_id, text)
             # Through the graph, so the escalation has a LangGraph trace for the safety rule and the judge.
             fixed = Draft("escalate", text, (section,), {section: "strong"}, ())
             tools = TurnTools(refund=lambda _text: fixed, support=lambda _text: fixed)
-            return self._save(case_id, question, self._turn(case_id, question, tools), now)
-        if _blocked(question):
-            return self._save(case_id, question, _plain("safe", SAFE_REPLY), now)
+            return self._save(case_id, asked_with, reply(_noted(self._turn(case_id, asked, tools), note)), now)
+        if _blocked(question) or _blocked(asked):
+            return self._save(case_id, asked_with, reply(_plain("safe", SAFE_REPLY)), now)
         tools = TurnTools(
-            refund=lambda text: self._gated_draft(case_id, staff_id, text, now),
+            refund=lambda text: self._gated_draft(case_id, staff_id, text, now, note),
             support=lambda text: self._support_draft(case_id, staff_id, text, now),
         )
-        return self._save(case_id, question, self._turn(case_id, question, tools), now)
+        return self._save(case_id, asked_with, reply(_noted(self._turn(case_id, asked, tools), note)), now)
 
     def _turn(self, case_id: uuid.UUID, question: str, tools: TurnTools) -> Draft:
         return run_turn(question, tools, graph=graph_for(self._pool.conninfo), thread_id=str(case_id))
@@ -781,6 +809,75 @@ class CaseStore:
         online.background(record_judge, draft["run_id"], question, draft["decision"] or "", text, citations, 1.0, edited=True)
         online.background(record_edit, draft["run_id"], question, citations, before, after)
 
+    # Customer chat (issue #79): the same turn and the same gates, a different identity and view.
+
+    def chat_customer(self, order_id: str, email: str) -> uuid.UUID | None:
+        """The customer who owns this order, when the email is theirs. The chat sign-in check."""
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT customers.id FROM orders JOIN customers ON customers.id = orders.customer_id
+                WHERE upper(orders.id) = upper(%s) AND lower(customers.email) = lower(%s)
+                """,
+                (order_id.strip(), email.strip()),
+            ).fetchone()
+        return None if row is None else row["id"]
+
+    def chat(self, customer_id: uuid.UUID) -> dict:
+        return self._chat_view(self._chat_case(customer_id))
+
+    def chat_ask(self, customer_id: uuid.UUID, question: str) -> dict:
+        case_id = self._chat_case(customer_id)
+        if self._status(case_id) != "Open":
+            raise CaseClosed()
+        # Limits are per customer, so one customer cannot use up the chat for everyone.
+        self.ask(staff_id_for(CHAT_STAFF_EMAIL), question, case_id=case_id, limit_key=("chat", customer_id))
+        return self._chat_view(case_id)
+
+    def _chat_case(self, customer_id: uuid.UUID) -> uuid.UUID:
+        """The customer's latest chat case, bound to them, or a new one once the last is resolved."""
+        chat_staff = staff_id_for(CHAT_STAFF_EMAIL)
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT id, status FROM cases WHERE staff_id = %s AND customer_id = %s
+                ORDER BY created_at DESC, id DESC LIMIT 1
+                """,
+                (chat_staff, customer_id),
+            ).fetchone()
+            if row is not None and row["status"] != "Resolved":
+                return row["id"]
+            case_id = uuid.uuid4()
+            conn.execute(
+                "INSERT INTO cases (id, staff_id, customer_id, created_at) VALUES (%s, %s, %s, %s)",
+                (case_id, chat_staff, customer_id, self._clock.now()),
+            )
+            conn.commit()
+        return case_id
+
+    def _chat_view(self, case_id: uuid.UUID) -> dict:
+        """What a customer may see: their own words and checked replies. No draft, amount, packet, or history."""
+        row = self._case_row(case_id)
+        ticket = self._ticket_id(case_id)
+        if row["status"] == "Waiting for approval":
+            status = "A person on our team is reviewing your request. Nothing is approved yet."
+        elif row["status"] == "Escalated":
+            status = "A specialist will follow up with you."
+        elif ticket:
+            status = f"Our team approved your request. Reference {ticket}."
+        elif row["rejection_reason"]:
+            status = "Our team could not approve that request."
+        else:
+            status = ""
+        messages, spanish = [], False
+        for m in self._messages(case_id):
+            if m["role"] == "user":
+                spanish = is_spanish(m["body"])
+                messages.append({"role": "user", "text": m["body"]})
+            else:
+                messages.append({"role": m["role"], "text": _for_customer(m["decision"], m["body"], spanish)})
+        return {"status": status, "messages": messages}
+
     def _resume(self, case_id: uuid.UUID, decision: str) -> None:
         resume_turn(graph_for(self._pool.conninfo), str(case_id), decision)
 
@@ -800,7 +897,7 @@ class CaseStore:
         self._charge(staff_id, day, TOKENS_PER_TURN)
         return handbook_reply(question)
 
-    def _gated_draft(self, case_id: uuid.UUID, staff_id: uuid.UUID, question: str, now: datetime) -> Draft:
+    def _gated_draft(self, case_id: uuid.UUID, staff_id: uuid.UUID, question: str, now: datetime, note: str = "") -> Draft:
         """Any request that waits for a lead. The handbook rule for each action lives in northstar.actions."""
         action = gated(question)
         if action is None:
@@ -851,6 +948,8 @@ class CaseStore:
         existing = self._existing(case_id, order_id, planned.action)
         if existing is not None:
             return _plain("duplicate", existing)
+        if note:
+            planned = replace(planned, details=" ".join(part for part in (planned.details, note) if part))
         return self._propose(case_id, staff_id, order_id, planned, now)
 
     def _existing(self, case_id: uuid.UUID, order_id: str, decision: str) -> str | None:
@@ -1021,6 +1120,30 @@ def _plain(decision: str, text: str) -> Draft:
     return Draft(decision, text, (), {}, ())
 
 
+_CHAT_TEXT = {
+    "proposal": "Thanks. A person on our team will review this request. Nothing is approved yet.",
+    "escalate": "A specialist will follow up with you about this.",
+    "duplicate": "This request is already with our team.",
+}
+# The same fixed texts for a customer who wrote in Spanish (issue #81).
+_CHAT_TEXT_ES = {
+    "proposal": "Gracias. Una persona de nuestro equipo revisará esta solicitud. Todavía no hay nada aprobado.",
+    "escalate": "Un especialista se pondrá en contacto con usted sobre esto.",
+    "duplicate": "Esta solicitud ya está con nuestro equipo.",
+}
+
+
+def _for_customer(decision: str | None, body: str, spanish: bool = False) -> str:
+    """The checked reply a customer sees. A proposal or a handoff packet is never shown as is."""
+    key = "proposal" if decision in PROPOSALS else (decision or "")
+    return (_CHAT_TEXT_ES if spanish else _CHAT_TEXT).get(key, body)
+
+
+def _noted(draft: Draft, note: str) -> Draft:
+    """The photo line under the draft, for the specialist and the lead."""
+    return replace(draft, text=f"{draft.text}\n{note}") if note else draft
+
+
 _CUSTOMERS = (
     ("Mira Shah", "mira.shah@northstar.example", "5125550142"),
     ("Jon Hale", "jon.hale@northstar.example", "5125550198"),
@@ -1040,6 +1163,8 @@ _ORDERS = (
     ("NS-1008", "mira.shah@northstar.example", "delivered", "2026-02-25", "Linen shirt, size M", "none", 5400, "2026-03-01", "apparel and footwear", "2026-02-26"),
     ("NS-1009", "mira.shah@northstar.example", "shipped", "2026-09-15", "Canvas tote", "none", 4800, None, "bags and accessories", "2026-09-16"),
     ("NS-1010", "mira.shah@northstar.example", "shipped", "2026-10-04", "Linen shirt, size L", "none", 5400, None, "apparel and footwear", "2026-10-05"),
+    # Delivered six days before the tests' clock: inside the REF-DAMAGED 14-day window (issue #80).
+    ("NS-1011", "mira.shah@northstar.example", "delivered", "2026-09-26", "Desk lamp", "none", 4200, "2026-09-30", "home and kitchen", "2026-09-27"),
 )
 
 

@@ -13,6 +13,77 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-08 — LangSmith's monthly trace limit, and the trace upload moved off the request
+
+Status: bug
+
+What broke: Every turn waited for its trace upload (`wait_for_all_tracers()` and `flush()` in `run_turn`) before replying. When LangSmith throttles, that wait lands on the specialist: a turn took about 9 s with tracing on and about 6 s with it off. The browser suite timed out on it.
+
+Evidence: LangSmith returned 429 "Too many requests: tenant exceeded usage limits: Monthly unique traces usage limit exceeded". New runs are not stored (reading two fresh run ids returned 404), so no new traces, rule scores, judge feedback, or experiments reach LangSmith until the monthly limit resets (2026-11-01) or the limit is raised in LangSmith's settings. The product itself is unaffected.
+
+Debug steps: Timed the same turn twice with tracing on and twice with it off. Confirmed the in-app judge still ran and posted, and that the runs it scored were missing on the LangSmith side.
+
+Fix: `run_turn` hands the upload to the existing background job, which waits for the tracers, flushes, and then runs the judge on the uploaded root run. The turn no longer waits: about 6.3 s with tracing on. Account action for Malatesha: raise the LangSmith usage limit or wait for the monthly reset before running more experiments.
+
+## 2026-10-08 — Staff sign in with Google (issue #78)
+
+Status: decision
+
+What changed: Google single sign-on, on when `AUTH_GOOGLE_ID` is set (the console and the API read the same variable). Then the login page offers only "Sign in with Google", and the password action refuses. With it unset, nothing changes.
+- The console never decides who someone is. Auth.js sends Google's ID token to `POST /auth/sso`. The API checks the signature against Google's published keys (PyJWT `PyJWKClient`), the audience (our client id), the issuer, the expiry, and `email_verified`, then looks up the staff record by email. The role comes from `staff_users`, never from a claim. An unknown or disabled account is refused. The API then issues the same staff tokens as a password login.
+- Auth.js has no database adapter, so the same `user` object goes from the `signIn` callback to `jwt()`; the exchange happens once in `signIn`, and a refusal sends the person back to `/login?error=sso` with no session. Read in `@auth/core` `lib/actions/callback/index.js`.
+- Tokens stay in the server-side session cookie, as before. Audit: `sso_login_success`, `sso_login_failure`; logout is audited as before. A disabled account's existing sessions stop working (the token check already reads `disabled_at`).
+
+Evidence: `test_sso.py` (11 tests, a local RSA key stands in for Google's): a verified account gets its staff role even when the token claims another; unknown email, unverified email, wrong audience, wrong issuer, expired, wrong signature, and a disabled account are each refused and audited; SSO is off without a client id; a disabled member loses the session; logout is audited. In a real browser with a placeholder client id, `/login` showed one Google button and no password field, and the button went to accounts.google.com with our client id. With SSO off, the browser suite passes unchanged.
+
+Debug steps: None needed for SSO. While checking it, the browser suite was slow because LangSmith returned 429 "Monthly unique traces usage limit exceeded"; see the next entry.
+
+Fix: As above. Malatesha creates the Google OAuth client and puts `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` in `.env`.
+
+## 2026-10-08 — Spanish replies (issue #81)
+
+Status: decision
+
+What changed: A Spanish question gets a Spanish draft that cites the English section ids. `northstar/language.py`: a marker check spots Spanish with no model call, so English turns pay nothing. The question (after the secret check, and screened) is translated to English once; preferences, escalation triggers, the safe-reply block, gated-action rules, retrieval, and citations all run on that English text unchanged. The draft is translated back with section ids, order ids, and amounts kept; a dropped section id is appended in English, and a model failure leaves the English draft. The customer's own words are saved. The staff handoff packet stays English. Both groundedness judges are told the reply may be Spanish and compare it with the English section text. Experiments add a `reply_language` check on Spanish rows.
+
+Evidence: `SPANISH_CASES` (handbook answer, abstain, unknown catalog item, refund proposal, chargeback escalation, jailbreak), dataset tag `slice3-es` (74 cases). Tests in `test_spanish.py` use a stand-in translator: each case keeps its English decision, citations, and status; an English question makes no translation call; a secret stops before translation; a dropped section id is put back.
+
+Debug steps: The first live dev experiment on `slice3-es` missed two rows. es-jailbreak: Gemini translated "Ignora el manual" as "Ignore the manual", which the block list did not know, so the turn fell through to "Pick a customer first" (safe, but not the safe reply). es-refund: the reply was Spanish ("Aprobado. Monto: 12800 centavos."), but the marker check had none of those words.
+
+Fix: The block list adds "ignore the manual", "ignore the instructions", "ignore your instructions", and the Spanish "ignora el manual", "ignora las reglas", "ignora las instrucciones" (checked on the original and the translation). The marker list adds common reply words. No English question in the labeled sets reads as Spanish. The test's stand-in translation now says "manual", as Gemini did.
+
+Parked and resumed: Malatesha parked #81, then asked for it back. It was re-applied on top of the photo (#80) and chat (#79) work rather than rebased: translate first, run every gate on the English text, describe a photo against the English note, then translate the finished draft. A Spanish customer in the chat gets the fixed proposal, escalation, and duplicate texts in Spanish. Live after the fixes (tag `slice3-es`, 6 cases, 3 repetitions, `results/langsmith_dev_slice3-es.md`): v1 `label_match`, `reply_language`, `answer_correct`, citations, and status all 1.0.
+
+## 2026-10-08 — A customer chat in front of the same agent and gates (issue #79)
+
+Status: decision
+
+What changed: Malatesha decided a customer identifies with an order id and the email on that order; `prd.md` (P2, Customer-facing entry) records it. The agent is the same: a chat message runs `CaseStore.ask`, so escalation triggers, the safe reply, the handbook rules, proposals that wait for a lead, the citation and output checks, and PII masking all hold unchanged. What differs is identity, scope, and view:
+- Identity: `POST /chat/start` checks the order and its email and returns a chat token with its own audience (`northstar-chat`, 30 minutes). It never passes as a staff token, and a staff token never opens the chat. Every miss gets one message (no order or email enumeration). Misses count toward the login lockout, keyed `chat:<email>`.
+- Scope: chat cases are owned by a seeded, disabled staff user `chat@northstar.example` (it can never sign in), bound to the customer, one open case per customer. The existing ownership check returns "Not found for this customer" for anyone else's order. Request limits are per customer. A customer cannot approve, edit, or close.
+- View: `GET /chat` returns only the status and the messages. A proposal shows as "A person on our team will review this request. Nothing is approved yet."; an escalation as "A specialist will follow up with you about this." The draft, amount, rationale, handoff packet, customer details, and history never reach the customer. After a lead approves, the status gives the ticket reference.
+- Console: a public `/chat` page; the token sits in an httpOnly, SameSite=Strict cookie scoped to `/chat`. `sameSite()` and `apiUrl` moved to `app/same-site.ts` for both pages.
+
+Evidence: `test_customer_chat.py` (10 tests): start and the single miss message, lockout, token separation both ways, the chat account cannot sign in, other customers' orders, a refund waiting for a lead and then approved, an escalation without the packet, the jailbreak safe reply, no personal data in the view, a card number never shown. A browser test in `screens.spec.ts` runs the chat end to end and passes axe.
+
+Debug steps: The browser test first proposed a refund on NS-1001, which the desk test had already refunded, so the duplicate block (correctly) answered "already with our team"; it now uses NS-1006. Next.js's route announcer also has role="alert", so the test finds the error by its text.
+
+Fix: As above. Photos are refused in the chat (the desk takes them).
+
+## 2026-10-08 — A damaged-item photo, and the REF-DAMAGED rule it needs (issue #80)
+
+Status: decision
+
+What changed: A specialist can attach a photo (PNG, JPEG, or WebP, under 4 MB) to a desk message. Gemini returns a structured verdict (does it show the item, is damage visible) and a two-sentence description; the draft and the proposal details get one line, "Photo: visible damage." / "Photo: no visible damage." / "Photo: does not show the item.", which the lead sees in the queue. The action still comes only from the specialist's words and the handbook rules, and the lead still decides: a photo alone proposes nothing. The image is checked, described, and dropped: not saved, not in `PostgresStore`, not in the handbook index, and the vision call runs with LangSmith tracing off. The description passes the PII screen. Both groundedness judges are told a "Photo:" line is evidence, not a policy claim.
+
+REF-DAMAGED did not exist as a rule: "arrived damaged" matched no action, and "arrived cracked" became an ordinary return citing REF-ELIGIBILITY. Now a damage report on a delivered order within 14 days is a full refund of the line and its outbound shipping citing REF-DAMAGED; after 14 days the ordinary return window applies, as the handbook says. Seed order NS-1011 (desk lamp, delivered 2026-09-30) mirrors the handbook's own example.
+
+Evidence: `test_damage_photo.py` (stand-in describer): REF-DAMAGED inside and after 14 days; the three labeled photos reach the draft and the lead while the decision stays REF-DAMAGED; a photo alone proposes nothing; with no vision model the photo is noted and nothing breaks; a wrong type or an oversized image is refused with 422 before the desk runs; no image bytes are stored. A browser test in `screens.spec.ts` uploads the photo and passes axe. Live experiment on `PHOTO_CASES` (tag `slice3-photo`, 3 repetitions, `results/langsmith_dev_slice3-photo.md`): v1 `photo_verdict` 1.0, `label_match` 1.0, status 1.0.
+
+Debug steps: The first live check called the intact-lamp drawing damaged because the drawn shade sat off its stem; the drawings were redrawn with the shade centered. The API refused any body over 16 KB, so a real phone photo would have failed with 413; tiny test drawings hid it. The browser test first gave up after 5 seconds while the live vision turn was still running.
+
+Fix: The message route allows 6 MB (a 4 MB photo as base64); every other route keeps 16 KB. The console's server actions allow 6 MB. The browser test waits up to 30 seconds for the photo line. The photos in `evals/photos/` are synthetic drawings, not real customer photos. Experiment results are now written per version, so runs do not overwrite each other.
+
 ## 2026-10-08 — "Do you sell X?" now asks the catalog (the promoted surfboard case)
 
 Status: bug

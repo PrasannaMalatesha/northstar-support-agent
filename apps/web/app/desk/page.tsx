@@ -1,9 +1,9 @@
 import { auth, signOut } from "@/auth";
 import { getToken } from "next-auth/jwt";
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-const apiUrl = process.env.FASTAPI_URL ?? "http://127.0.0.1:8000";
+import { apiUrl, sameSite } from "../same-site";
 
 async function accessToken(): Promise<string | null> {
   const cookieHeader = (await cookies()).toString();
@@ -12,24 +12,6 @@ async function accessToken(): Promise<string | null> {
     secret: process.env.AUTH_SECRET,
   });
   return typeof token?.accessToken === "string" ? token.accessToken : null;
-}
-
-async function sameSite(): Promise<boolean> {
-  const headerList = await headers();
-  const host = headerList.get("host");
-  const origin = headerList.get("origin");
-  const site = headerList.get("sec-fetch-site");
-  if (!host || site === "cross-site") {
-    return false;
-  }
-  if (!origin || origin === "null") {
-    return site === "same-origin" || site === "none";
-  }
-  try {
-    return new URL(origin).host === host;
-  } catch {
-    return false;
-  }
 }
 
 async function bindAction(formData: FormData) {
@@ -142,13 +124,19 @@ async function askAction(formData: FormData) {
   if (!access) {
     redirect("/login");
   }
+  // An optional damaged-item photo goes to the API as a data URL. The API checks type and size.
+  const file = formData.get("photo");
+  const photo =
+    file instanceof File && file.size > 0
+      ? `data:${file.type};base64,${Buffer.from(await file.arrayBuffer()).toString("base64")}`
+      : undefined;
   await fetch(`${apiUrl}/cases/current/messages`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${access}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ question: String(formData.get("question") ?? "") }),
+    body: JSON.stringify({ question: String(formData.get("question") ?? ""), photo }),
   });
   redirect("/desk");
 }
@@ -458,6 +446,10 @@ export default async function DeskPage({
             <label>
               Handbook question
               <textarea name="question" required maxLength={2000} />
+            </label>
+            <label>
+              Photo of the item (optional)
+              <input name="photo" type="file" accept="image/png,image/jpeg,image/webp" />
             </label>
             <button type="submit">Ask</button>
           </form>
