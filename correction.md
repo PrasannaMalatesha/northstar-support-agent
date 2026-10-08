@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — The card screen masked digits inside a ticket id
+
+Status: bug
+
+What broke: A duplicate draft that named a ticket id sometimes showed it mangled, for example `b4ae3b*********0888e-...`. The card pattern in `privacy.screen` matched a run of 13 or more digits and dashes inside a UUID (`77-5903-4050-888`), because it only refused a neighbouring digit, not a neighbouring letter. The failure came and went with the random digits in the id.
+
+Evidence: `test_a_completed_cancel_blocks_a_second_cancel_but_not_another_action` failed once locally with that masked id.
+
+Debug steps: Read the saved draft. Matched the card pattern by hand against the id.
+
+Fix: The card pattern refuses a neighbouring letter or digit on both sides. Spaced and dashed card numbers are still masked. `test_an_id_with_digit_runs_is_not_mistaken_for_a_card` uses the id that failed.
+
 ## 2026-10-07 — A lead decides from the approval queue (issue #72)
 
 Status: decision
