@@ -94,7 +94,8 @@ def refund(question: str, order: Order, today: date) -> Proposal | Reply:
             "A placed order can be cancelled instead. (ORD-CANCEL)",
             ("ORD-CANCEL",),
         )
-    if order.refunds != "none" or order.ticketed:
+    # A refund or cancel ticket already paid this order back. A denied refund paid nothing.
+    if order.refunds != "none" or order.ticket_actions & {"approve_refund", "partial_credit", "cancel"}:
         return Proposal("deny", 0, ("REF-DENY",), "Deny. Amount: 0 cents. The line was already refunded. (REF-DENY)")
     age = (today - order.delivered_on).days
     if age > RETURN_DAYS[order.category]:
@@ -366,10 +367,23 @@ ACTIONS: tuple[GatedAction, ...] = (
     GatedAction("refund", re.compile(r"\brefunds?\b|\bcredit\b"), refund, "Which order id? No amount is proposed."),
 )
 
-# Every decision that is a proposal. These pause for a lead and must cite a section.
-PROPOSALS = frozenset(
-    {"approve_refund", "partial_credit", "deny", "cancel", "address_change", "exchange", "warranty_claim"}
-)
+# Every decision that is a proposal, and the action family it belongs to. A proposal
+# pauses for a lead and must cite a section. One open or completed ticket per order and family.
+FAMILIES = {
+    "approve_refund": "refund",
+    "partial_credit": "refund",
+    "deny": "refund",
+    "cancel": "cancel",
+    "address_change": "address change",
+    "exchange": "exchange",
+    "warranty_claim": "warranty claim",
+}
+PROPOSALS = frozenset(FAMILIES)
+
+
+def family_decisions(decision: str) -> list[str]:
+    """Every proposal decision in the same family as this one."""
+    return sorted(other for other, family in FAMILIES.items() if family == FAMILIES[decision])
 
 _ORDER_ID = re.compile(r"\bNS-\d+\b", re.IGNORECASE)
 # A policy question with no order id is a handbook question, not a request to act.

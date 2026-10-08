@@ -10,7 +10,8 @@ import re
 
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _PHONE = re.compile(r"(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}")
-_CARD = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
+# Not glued to a letter or digit, so the digit runs inside an id such as a UUID stay intact.
+_CARD = re.compile(r"(?<![0-9A-Za-z])(?:\d[ -]?){12,18}\d(?![0-9A-Za-z])")
 _SECRET = re.compile(r"sk-[A-Za-z0-9-]{8,}|api[_-]?key\s*[:=]\s*\S+", re.IGNORECASE)
 
 SECRET_REPLY = "This message contains a secret and was stopped."

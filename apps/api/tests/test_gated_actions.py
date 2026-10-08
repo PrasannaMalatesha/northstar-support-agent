@@ -26,9 +26,9 @@ def test_a_second_proposal_on_the_same_case_gets_its_own_ticket(client):
     again = client.post(f"/approvals/{first['id']}/approve", headers=lead).json()["ticket_id"]
     assert again == ticket_one
 
-    second = client.post("/cases/current/messages", headers=specialist, json={"question": "Refund order NS-1001 again."}).json()
+    second = client.post("/cases/current/messages", headers=specialist, json={"question": "Exchange order NS-1001 for size L."}).json()
     assert second["status"] == "Waiting for approval"
-    assert second["action"] == "deny"
+    assert second["action"] == "exchange"
     assert second["ticket_id"] is None
     ticket_two = client.post(f"/approvals/{second['id']}/approve", headers=lead).json()["ticket_id"]
     assert ticket_two != ticket_one
