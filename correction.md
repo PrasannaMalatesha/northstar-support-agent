@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — A specialist's edit is kept beside the original (issue #67)
+
+Status: decision
+
+What changed: A proposal keeps its proposed amount in its own column, so a lead's amount edit no longer overwrites it. The case shows both amounts. The agent's draft and the specialist's final text were already saved together (R31). Each edit pair (draft and final text, or proposed and edited amount) is sent to LangSmith on the turn's root run. It goes as `specialist_edit` feedback with a `correction` (`{"followup": after}`) and a before/after comment, and the run is added to the `Northstar specialist edits` annotation queue. A pair becomes a labeled case only when a person adds it under a new dataset version. It never changes the handbook. The edited run still gets the groundedness judge. A LangSmith outage logs a warning and does not undo the close or the ticket.
+
+Evidence: R18 in `prd.md`. [Annotation queues](https://docs.langchain.com/langsmith/annotation-queues). The installed client has `create_annotation_queue`, `list_annotation_queues`, `add_runs_to_annotation_queue`, and `create_feedback(correction=...)`.
+
+Debug steps: `apps/api/tests/test_edit_judge.py` checks the pair sent for a draft edit and an amount edit, and that an unchanged draft sends nothing. Checked live: the queue was created, the run is in it, and the feedback carries the correction. A process that loads the ONNX reranker on macOS can print a `libc++abi ... recursive_mutex` abort at interpreter exit, after all work is done. pytest's exit code stays 0.
+
+Fix: `packages/agent/northstar/online.py`, `cases.py`, the desk page.
+
 ## 2026-10-07 — A lead sees the handbook gaps list (issue #76)
 
 Status: decision

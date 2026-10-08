@@ -59,6 +59,41 @@ def record_judge(
     return score
 
 
+EDIT_QUEUE = "Northstar specialist edits"
+
+
+def record_edit(run_id: str, question: str, citations, before: str, after: str, send=None) -> dict:
+    """One edit pair onto the turn's trace and into the edit annotation queue (R18).
+
+    A pair is a candidate for the labeled set. It becomes a labeled case only when a person adds it.
+    """
+    pair = {"question": question, "citations": list(citations), "before": before, "after": after}
+    (send or _send_edit)(run_id, pair)
+    return pair
+
+
+def _send_edit(run_id: str, pair: dict) -> None:
+    # https://docs.langchain.com/langsmith/annotation-queues
+    from langsmith import Client
+
+    client = Client()
+    project = client.read_project(project_name=os.environ["LANGSMITH_PROJECT"])
+    client.create_feedback(
+        run_id,
+        key="specialist_edit",
+        value="edited",
+        comment=f"Before:\n{pair['before']}\n\nAfter:\n{pair['after']}",
+        correction={"followup": pair["after"]},
+        session_id=project.id,
+    )
+    queues = list(client.list_annotation_queues(name=EDIT_QUEUE))
+    queue = queues[0] if queues else client.create_annotation_queue(
+        name=EDIT_QUEUE,
+        description="Specialist and lead edits. Candidates for the labeled set, never policy.",
+    )
+    client.add_runs_to_annotation_queue(queue.id, run_ids=[run_id])
+
+
 def _post_feedback(run_id: str, score: int) -> None:
     from langsmith import Client
 

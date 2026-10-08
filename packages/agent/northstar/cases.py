@@ -18,7 +18,7 @@ from northstar.graph import TurnTools, resume_turn, run_turn
 from northstar.memory import graph_for
 from northstar.agent_model import handbook_reply
 from northstar.handbook import ABSTAIN_TEXT, Draft, guard_draft
-from northstar.online import record_judge
+from northstar.online import record_edit, record_judge
 from northstar.privacy import SECRET_REPLY, has_secret, screen
 
 # ponytail: 1_000 tokens stands in for one handbook draft. Replace with the
@@ -84,6 +84,7 @@ ALTER TABLE tickets ADD COLUMN IF NOT EXISTS amount_cents integer;
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS proposal_id uuid;
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS proposal_details text NOT NULL DEFAULT '';
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS handoff_text text NOT NULL DEFAULT '';
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS proposed_amount_cents integer;
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS proposal_id uuid;
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS action text;
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS order_id text;
@@ -391,6 +392,7 @@ class CaseStore:
             "messages": self._messages(case_id),
             "action": row["proposal_action"],
             "refund_amount_cents": row["proposal_amount_cents"],
+            "proposed_amount_cents": row["proposed_amount_cents"],
             "proposal_details": row["proposal_details"],
             "handoff": row["handoff_text"],
             "policy_citations": list(row["proposal_citations"] or []),
@@ -450,7 +452,7 @@ class CaseStore:
                 SELECT cases.status, cases.draft_text, cases.final_text,
                        cases.proposal_action, cases.proposal_amount_cents,
                        cases.proposal_citations, cases.proposal_details, cases.proposed_at,
-                       cases.rejection_reason, cases.handoff_text,
+                       cases.rejection_reason, cases.handoff_text, cases.proposed_amount_cents,
                        customers.name, customers.email
                 FROM cases
                 LEFT JOIN customers ON customers.id = cases.customer_id
@@ -705,7 +707,7 @@ class CaseStore:
             conn.commit()
         self._resume(case_id, "edit")
         if amount_cents != proposal["proposal_amount_cents"]:
-            self._judge_edit(case_id, amount_cents=amount_cents)
+            self._judge_edit(case_id, amount_cents=amount_cents, proposed_cents=proposal["proposal_amount_cents"])
         return str(ticket_id), amount_cents
 
     def reject(self, lead_id: uuid.UUID, case_id: uuid.UUID, reason: str) -> None:
@@ -722,8 +724,14 @@ class CaseStore:
             conn.commit()
         self._resume(case_id, "reject")
 
-    def _judge_edit(self, case_id: uuid.UUID, final_text: str | None = None, amount_cents: int | None = None) -> None:
-        """Score the turn a person edited. AGENTS.md: judges cover every specialist edit."""
+    def _judge_edit(
+        self,
+        case_id: uuid.UUID,
+        final_text: str | None = None,
+        amount_cents: int | None = None,
+        proposed_cents: int | None = None,
+    ) -> None:
+        """Score the turn a person edited, and send the edit pair for review (AGENTS.md, R18)."""
         with self._pool.connection() as conn:
             draft = conn.execute(
                 """
@@ -746,19 +754,18 @@ class CaseStore:
                 (case_id, draft["id"]),
             ).fetchone()
         text = final_text or f"{draft['body']}\nThe lead changed the amount to {amount_cents} cents."
+        question = "" if asked is None else asked["body"]
+        before = draft["body"] if final_text else f"{proposed_cents} cents"
+        after = final_text if final_text else f"{amount_cents} cents"
         try:
-            record_judge(
-                draft["run_id"],
-                "" if asked is None else asked["body"],
-                draft["decision"] or "",
-                text,
-                draft["citations"],
-                1.0,
-                edited=True,
-            )
+            record_judge(draft["run_id"], question, draft["decision"] or "", text, draft["citations"], 1.0, edited=True)
         except Exception:
             # A LangSmith or judge outage must not undo a close or a ticket.
             logging.getLogger(__name__).warning("edit judge failed for run %s", draft["run_id"], exc_info=True)
+        try:
+            record_edit(draft["run_id"], question, draft["citations"], before, after)
+        except Exception:
+            logging.getLogger(__name__).warning("edit pair was not sent for run %s", draft["run_id"], exc_info=True)
 
     def _resume(self, case_id: uuid.UUID, decision: str) -> None:
         resume_turn(graph_for(self._pool.conninfo), str(case_id), decision)
@@ -875,6 +882,7 @@ class CaseStore:
                     proposal_id = %s,
                     proposal_action = %s,
                     proposal_amount_cents = %s,
+                    proposed_amount_cents = %s,
                     proposal_citations = %s,
                     proposal_details = %s,
                     proposed_by = %s,
@@ -886,6 +894,7 @@ class CaseStore:
                 (
                     uuid.uuid4(),
                     proposal.action,
+                    proposal.amount_cents,
                     proposal.amount_cents,
                     list(proposal.citations),
                     proposal.details,
