@@ -278,12 +278,91 @@ def warranty(question: str, order: Order, today: date) -> Proposal | Reply:
     )
 
 
+def add_business_days(start: date, days: int) -> date:
+    """Monday through Friday only (SHIP-SLA)."""
+    current = start
+    while days > 0:
+        current += timedelta(days=1)
+        if current.weekday() < 5:
+            days -= 1
+    return current
+
+
+_NOT_ARRIVED = (
+    r"\bnever (arrived|came)\b|\bhas(n't| not) (arrived|come)\b|\bdid(n't| not) (arrive|get|receive)\b"
+    r"|\bnot (received|arrived)\b|\blost\b|\blate\b|\bdelayed?\b|\bwhere is my package\b"
+)
+
+
+def shipment(question: str, order: Order, today: date) -> Proposal | Reply:
+    """Next step for a late or missing package. No carrier scan is ever stated."""
+    if order.delivered_on is not None:
+        # SHIP-DNR: delivered on the record, missing at the door.
+        if (today - order.delivered_on).days < 2:
+            return Reply(
+                "answer",
+                f"Order {order.id} shows delivered on {order.delivered_on.isoformat()}. Ask the customer to wait 48 hours "
+                "and check the delivery location. No refund in that wait. (SHIP-DNR)",
+                ("SHIP-DNR",),
+            )
+        return Reply(
+            "answer",
+            f"Order {order.id} shows delivered on {order.delivered_on.isoformat()}, and the 48-hour wait has passed. "
+            "Escalate to a person. No refund is offered here. (SHIP-DNR, ESC-WHEN)",
+            ("SHIP-DNR", "ESC-WHEN"),
+        )
+    if order.status in ("placed", "packed"):
+        return Reply(
+            "answer",
+            f"Order {order.id} is {order.status} and has not shipped. Northstar takes 1 business day to ship. (SHIP-SLA)",
+            ("SHIP-SLA",),
+        )
+    if order.shipped_on is None:
+        return Reply(
+            "answer",
+            f"Order {order.id} is {order.status}, and the ship date is not on the order. (ORD-TRACK)",
+            ("ORD-TRACK",),
+        )
+    lost_on = order.shipped_on + timedelta(days=14)
+    if today >= lost_on:
+        return Proposal(
+            "approve_refund",
+            order.total_cents,
+            ("SHIP-LOST",),
+            f"Approve. Amount: {order.total_cents} cents for the unreceived lines and outbound shipping. "
+            f"The package shipped on {order.shipped_on.isoformat()} and has no delivery date. No return is needed. (SHIP-LOST)",
+        )
+    window_end = add_business_days(order.shipped_on, 7)
+    if today <= window_end:
+        return Reply(
+            "answer",
+            f"Order {order.id} shipped on {order.shipped_on.isoformat()}. Standard delivery is 5 to 7 business days, "
+            f"so it is not late until after {window_end.isoformat()}. (SHIP-SLA)",
+            ("SHIP-SLA",),
+        )
+    delayed_after = add_business_days(window_end, 2)
+    if today <= delayed_after:
+        return Reply(
+            "answer",
+            f"Order {order.id} is past its delivery window. It counts as delayed after {delayed_after.isoformat()}. "
+            "No refund yet. (SHIP-SLA, SHIP-DELAY)",
+            ("SHIP-SLA", "SHIP-DELAY"),
+        )
+    return Reply(
+        "answer",
+        f"Order {order.id} is delayed. Ask the customer to wait 2 more business days. It is not lost until "
+        f"{lost_on.isoformat()}, so no refund yet. (SHIP-DELAY, SHIP-LOST)",
+        ("SHIP-DELAY", "SHIP-LOST"),
+    )
+
+
 # First match wins, so a narrower request sits above a broader one.
 ACTIONS: tuple[GatedAction, ...] = (
     GatedAction("cancel", re.compile(r"\bcancel"), cancel, "Which order id? Nothing is cancelled."),
     GatedAction("address_change", re.compile(r"\baddress\b"), address_change, "Which order id? No address is changed."),
     GatedAction("exchange", re.compile(r"\bexchange\b|\bswap\b"), exchange, "Which order id? Nothing is exchanged."),
     GatedAction("warranty_claim", re.compile(r"\bwarranty\b|" + _DEFECT.pattern), warranty, "Which order id? No claim is drafted."),
+    GatedAction("shipment", re.compile(_NOT_ARRIVED), shipment, "Which order id? Nothing is proposed."),
     GatedAction("refund", re.compile(r"\brefunds?\b|\bcredit\b"), refund, "Which order id? No amount is proposed."),
 )
 

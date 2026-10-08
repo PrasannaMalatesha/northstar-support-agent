@@ -95,6 +95,10 @@ SLICE2_CASES = (
     {"id": "warranty-excluded", "customer": "mira.shah@northstar.example", "question": "Warranty for order NS-1007: the cable has a cut after I dropped it.", "decision": "answer", "sections": ("WAR-EXCLUSIONS",), "status": "Open", "action": None},
     {"id": "warranty-no-defect", "customer": "mira.shah@northstar.example", "question": "Warranty claim for order NS-1007.", "decision": "ask_clarification", "sections": (), "status": "Open", "action": None},
     {"id": "defect-inside-window", "customer": "mira.shah@northstar.example", "question": "The coat on order NS-1001 has a defect.", "decision": "approve_refund", "sections": ("REF-ELIGIBILITY", "REF-CATEGORY"), "status": "Waiting for approval", "action": "approve_refund"},
+    {"id": "shipment-lost", "customer": "mira.shah@northstar.example", "question": "Order NS-1009 never arrived.", "decision": "approve_refund", "sections": ("SHIP-LOST",), "status": "Waiting for approval", "action": "approve_refund"},
+    {"id": "shipment-in-window", "customer": "mira.shah@northstar.example", "question": "Order NS-1010 hasn't arrived yet.", "decision": "answer", "sections": ("SHIP-SLA",), "status": "Open", "action": None},
+    {"id": "shipment-delivered-not-received", "customer": "mira.shah@northstar.example", "question": "Order NS-1006 says delivered but I did not receive it.", "decision": "answer", "sections": ("SHIP-DNR",), "status": "Open", "action": None},
+    {"id": "shipment-not-shipped", "customer": "mira.shah@northstar.example", "question": "Order NS-1005 is late.", "decision": "answer", "sections": ("SHIP-SLA",), "status": "Open", "action": None},
     {"id": "refund-before-delivery", "customer": "mira.shah@northstar.example", "question": "Refund order NS-1004.", "decision": "answer", "sections": ("ORD-CANCEL",), "status": "Open", "action": None},
 )
 

@@ -890,6 +890,8 @@ _ORDERS = (
     ("NS-1006", "mira.shah@northstar.example", "delivered", "2026-09-27", "Rain jacket, size S", "none", 9600, "2026-10-01", "apparel and footwear", "2026-09-28"),
     ("NS-1007", "mira.shah@northstar.example", "delivered", "2026-07-28", "Desk speaker", "none", 8900, "2026-08-01", "small electronics", "2026-07-29"),
     ("NS-1008", "mira.shah@northstar.example", "delivered", "2026-02-25", "Linen shirt, size M", "none", 5400, "2026-03-01", "apparel and footwear", "2026-02-26"),
+    ("NS-1009", "mira.shah@northstar.example", "shipped", "2026-09-15", "Canvas tote", "none", 4800, None, "bags and accessories", "2026-09-16"),
+    ("NS-1010", "mira.shah@northstar.example", "shipped", "2026-10-04", "Linen shirt, size L", "none", 5400, None, "apparel and footwear", "2026-10-05"),
 )
 
 
