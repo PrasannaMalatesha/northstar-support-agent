@@ -18,7 +18,7 @@ git pull origin dev
 
 ## Stop point (2026-10-08, before the demo)
 
-Tip of `origin/dev`: `52ea39c` (PR #98). `uv run pytest`: 130 passed. CI green. Nothing promoted to `uat` or `prod`.
+Tip of `origin/dev`: `99c2a04` (PR #99, docs; last code change PR #98). `uv run pytest`: 130 passed. CI green. Nothing promoted to `uat` or `prod`.
 
 Last session, in order:
 1. Slice 2 #66 to #77 built, merged (PRs #85 to #97), closed with parent #64.
@@ -26,7 +26,7 @@ Last session, in order:
    - a paused turn showed the previous turn's reply (stale `followup` in the checkpoint);
    - the live judge ran inside the request, so a sampled turn waited about a minute;
    - an amount edit did not confirm with the ticket id.
-3. The console walkthrough is scripted (`apps/web/playwright.walkthrough.config.ts`). The video recorded before PR #98 shows the stale-reply bug, so re-record it from current `dev`.
+3. The console walkthrough is scripted (`apps/web/playwright.walkthrough.config.ts`). It was re-recorded from `dev` at `99c2a04` after PR #98 (passed, live Gemini). The video is in `apps/web/walkthrough-results/` (gitignored, local only).
 
 Next, only when Malatesha asks: slice 3 (#65), the hand-recorded LangSmith part of the walkthrough, or promoting `dev` → `uat`.
 
@@ -166,6 +166,6 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 ## Continue checklist
 
 1. `git checkout dev && git pull origin dev`. Confirm the tip is `52ea39c` or later and `uv run pytest` passes.
-2. Read the Stop point section above. Ask Malatesha what is next: the demo prep, slice 3 (#65), re-recording the walkthrough, or promoting `dev` → `uat`.
+2. Read the Stop point section above. Ask Malatesha what is next: the demo prep, slice 3 (#65), the LangSmith part of the walkthrough, or promoting `dev` → `uat`.
 3. Every change: a `feature/*` branch from `origin/dev`, a PR into `dev`, merged only when CI is green.
 4. Rewrite the Stop point section before you stop.
