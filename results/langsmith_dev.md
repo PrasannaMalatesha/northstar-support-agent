@@ -2,7 +2,7 @@
 
 ## dev split, dataset tag edit-20261008-054354, 43 cases, 1 repetition(s), with the quiz judge
 
-### v0: `northstar-v0-dev-d7a075cd`
+### v0: `northstar-v0-dev-eca2bcef`
 
 Mean scores: {'answer_correct': 0.9, 'citation_valid': 1.0, 'label_match': 0.349}
 
@@ -37,14 +37,14 @@ Misses:
 - warranty-no-defect: label_match (got answer, wanted ask_clarification)
 - wool-coat-price: label_match (got answer, wanted catalog)
 
-### v1: `northstar-v1-dev-643ca97d`
+### v1: `northstar-v1-dev-eab3d0b7`
 
-Mean scores: {'answer_correct': 0.9, 'citation_valid': 1.0, 'label_match': 1.0, 'status_correct': 1.0}
+Mean scores: {'answer_correct': 1.0, 'citation_valid': 1.0, 'label_match': 1.0, 'status_correct': 1.0}
 
 Misses:
-- edit-01a11a09: answer_correct (no comment)
+- none
 
-### router: `northstar-router-57f6a4ed`
+### router: `northstar-router-de43ccb4`
 
 Mean scores: {'correct': 1.0}
 
