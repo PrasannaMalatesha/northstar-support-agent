@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — A lead decides from the approval queue (issue #72)
+
+Status: decision
+
+What changed: Each waiting-list row now carries the customer's ask, the draft, the action, the amount when there is one, the details, the citations, and an order summary (lines, status, total). The row also has approve, edit, and reject. A row links to a read-only case desk for that case (`GET /cases/{case_id}`, lead only), which hides the specialist's bind, ask, and close controls. The slice 1 list never linked to the case. The accessibility walkthrough now opens a case from the queue and returns, with an axe scan on that view.
+
+Evidence: R16 in `prd.md`.
+
+Debug steps: `apps/api/tests/test_approval_queue.py`. A local run of `apps/web/tests/screens.spec.ts` passes.
+
+Fix: `packages/agent/northstar/cases.py`, `apps/api/northstar_api/main.py`, the desk page, the screens spec.
+
 ## 2026-10-07 — A second proposal for the same order and action is blocked (issue #71)
 
 Status: decision

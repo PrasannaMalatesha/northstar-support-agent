@@ -217,6 +217,16 @@ def create_app(
     def waiting_approvals(staff=Depends(require_lead)) -> list:
         return cases.pending()
 
+    @app.get("/cases/{case_id}")
+    def read_case(case_id: str, staff=Depends(require_lead)) -> dict:
+        try:
+            found = cases.read(uuid.UUID(case_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="No such case.") from exc
+        if found is None:
+            raise HTTPException(status_code=404, detail="No such case.")
+        return found
+
     @app.post("/approvals/{case_id}/approve")
     def approve_proposal(case_id: str, staff=Depends(require_lead)) -> dict:
         try:

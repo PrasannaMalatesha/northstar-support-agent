@@ -62,6 +62,13 @@ test("login, the case desk, and the waiting list pass axe and the keyboard", asy
   await signIn(page, "lead@northstar.example", "northstar-lead");
   await expect(page.getByRole("heading", { name: "Waiting for approval" })).toBeVisible();
   await noViolations(page);
+  await tabTo(page, "Open case NS-1001");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText(/Reading case/)).toBeVisible();
+  await noViolations(page);
+  await tabTo(page, "Back to my desk");
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { name: "Waiting for approval" })).toBeVisible();
   await tabTo(page, "Approve");
   await page.keyboard.press("Enter");
   await expect(page.getByText("No proposal is waiting.")).toBeVisible();
