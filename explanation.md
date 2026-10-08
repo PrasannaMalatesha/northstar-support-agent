@@ -107,4 +107,4 @@ Every later ticket cites a section id. The handbook was written and frozen as `n
 
 ## What is not built yet
 
-Slice 1 is built, and issues #1 to #22 are closed. The submission screen recording is not done. Slice 2 and slice 3 are tickets under #64 and #65. `correction.md` is where later bugs and approach changes go.
+Slice 1 (#1 to #22) and slice 2 (#64, #66 to #77) are built and closed. Slice 3 is tickets under #65, waiting until slice 2 is in use. The console part of the walkthrough recording is scripted. The LangSmith part is recorded by hand. `correction.md` is where later bugs and approach changes go.
