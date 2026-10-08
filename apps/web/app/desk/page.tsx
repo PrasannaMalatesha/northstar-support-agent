@@ -83,7 +83,7 @@ async function editAction(formData: FormData) {
   if (!access) {
     redirect("/login");
   }
-  await fetch(`${apiUrl}/approvals/${String(formData.get("case_id") ?? "")}/edit`, {
+  const edited = await fetch(`${apiUrl}/approvals/${String(formData.get("case_id") ?? "")}/edit`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${access}`,
@@ -91,7 +91,9 @@ async function editAction(formData: FormData) {
     },
     body: JSON.stringify({ amount_cents: Number(formData.get("amount_cents")) }),
   });
-  redirect("/desk");
+  // Like approve: an edit records a ticket, so confirm it with the ticket id.
+  const body = edited.ok ? ((await edited.json()) as { ticket_id?: string }) : {};
+  redirect(body.ticket_id ? `/desk?ticket=${body.ticket_id}` : "/desk");
 }
 
 async function rejectAction(formData: FormData) {

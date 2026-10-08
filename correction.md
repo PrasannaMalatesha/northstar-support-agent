@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — An amount edit now confirms with the ticket id
+
+Status: bug
+
+What broke: Approve sent the lead back to the desk with "Ticket <id>". Edit amount also records a ticket, but went back to the plain desk with no confirmation (the PRD's Peak-End rule asks for one).
+
+Evidence: Browser dry run: the lead edited 4800 to 4000 cents and saw only "No proposal is waiting."
+
+Debug steps: Read the edit server action. It ignored the API's `ticket_id`.
+
+Fix: The edit action redirects to `/desk?ticket=<id>`, the same as approve. Checked in the browser (12800 edited to 6400, "Ticket ..." shown). The desk page.
+
 ## 2026-10-07 — The live judge made a sampled turn wait a minute
 
 Status: bug
