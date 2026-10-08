@@ -16,17 +16,20 @@ git checkout dev
 git pull origin dev
 ```
 
-## Stop point (2026-10-07 night, before the demo)
+## Stop point (2026-10-08, before the demo)
 
-Tip of `origin/dev`: the merge of the desk policy-question fix (after PR #102). `uv run pytest`: 136 passed. CI green. Nothing promoted to `uat` or `prod`.
+Tip of `origin/dev`: the merge of the published-email fix (after PR #104). CI green. Nothing promoted to `uat` or `prod`.
 
-This session, in order:
+Last session, in order:
 1. Slices 1 and 2 were already done and closed. The console walkthrough was re-recorded after PR #98 (local, gitignored, in `apps/web/walkthrough-results/`).
-2. Issue #101 (PR #102): the golden dataset and experiments now run in LangSmith. `make evals-sync` writes `Northstar Support: E2E` (tags `slice1`, `slice2`) and `Northstar Support: Intent Classifier`. `uv run python -m evals.experiments run --split test --repetitions 3` runs v0, v1 (the live desk), and the router. `promote <run_id>` adds a reviewed specialist edit under a new tag.
-3. The first v1 experiment found desk bugs on policy questions that mention an order, start with "If", end in ", right?", or say "how much"/"price". Fixed. Live: test split v1 1.0 (v0 0.733), dev split with slice 2 v1 1.0 (v0 0.333), router 1.0.
-4. The OpenRouter judge key hit its free daily cap (50 requests, resets 2026-10-08 19:00 CDT). Until then the quiz judge and the live groundedness judge fail (the live one only logs). The experiments above ran with `--no-judge`. #101 stays open for the judge scores: after the reset, or after Malatesha adds OpenRouter credits, run `uv run python -m evals.experiments run --split test --repetitions 3` and close #101.
+2. Issue #101, closed (PRs #102, #104): the golden dataset and experiments run in LangSmith. `make evals-sync` writes `Northstar Support: E2E` (tags `slice1`, `slice2`) and `Northstar Support: Intent Classifier`. `make evals` (or `uv run python -m evals.experiments run --split test --repetitions 3`) runs v0, v1 (the live desk), and the router with the code checks and the quiz judge. `promote <run_id>` adds a reviewed specialist edit under a new tag.
+3. PR #103: desk bugs on policy questions that mention an order, start with "If", end in ", right?", or say "how much"/"price", found by the first v1 experiment. Fixed.
+4. PR #104: the judge is `deepseek/deepseek-v4.1-flash` on OpenRouter (key only in `.env`). The offline quiz judge is a majority of three and was recalibrated 5 of 5.
+5. The judge found the contact answer showing "[email]": `screen()` masked the handbook's own support address. Fixed with `PUBLISHED_EMAILS`. Live after the fix: test split v1 answer_correct 1.0, label_match 1.0, status 1.0 (v0 label_match 0.733). Router 1.0.
 
-Next, only when Malatesha asks: slice 3 (#65), the hand-recorded LangSmith part of the walkthrough, or promoting `dev` → `uat`.
+Results are in `results/langsmith_test.md` and `results/langsmith_dev.md`.
+
+Next, only when Malatesha asks: slice 3 (#65), moving the live judge to a LangSmith online rule, promoting a queued specialist edit, the hand-recorded LangSmith part of the walkthrough, or promoting `dev` → `uat`.
 
 How to run the demo:
 - **Servers:** restart any API or console started before PR #98, because they run old code (`make api`, `make web`).
@@ -164,6 +167,6 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 ## Continue checklist
 
 1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (136 or more).
-2. Read the Stop point section above. Ask Malatesha what is next: the judge scores for #101, the demo prep, slice 3 (#65), the LangSmith part of the walkthrough, or promoting `dev` → `uat`.
+2. Read the Stop point section above. Ask Malatesha what is next: the demo prep, slice 3 (#65), the LangSmith part of the walkthrough, or promoting `dev` → `uat`.
 3. Every change: a `feature/*` branch from `origin/dev`, a PR into `dev`, merged only when CI is green.
 4. Rewrite the Stop point section before you stop.
