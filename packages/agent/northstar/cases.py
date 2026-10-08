@@ -828,7 +828,11 @@ class CaseStore:
 
     def chat_ask(self, customer_id: uuid.UUID, question: str) -> dict:
         case_id = self._chat_case(customer_id)
-        if self._status(case_id) != "Open":
+        status = self._status(case_id)
+        if status == "Escalated":
+            # The escalated case is a specialist's now. A new message starts a new case.
+            case_id = self._new_chat_case(customer_id)
+        elif status != "Open":
             raise CaseClosed()
         # Limits are per customer, so one customer cannot use up the chat for everyone.
         self.ask(staff_id_for(CHAT_STAFF_EMAIL), question, case_id=case_id, limit_key=("chat", customer_id))
@@ -847,10 +851,14 @@ class CaseStore:
             ).fetchone()
             if row is not None and row["status"] != "Resolved":
                 return row["id"]
-            case_id = uuid.uuid4()
+        return self._new_chat_case(customer_id)
+
+    def _new_chat_case(self, customer_id: uuid.UUID) -> uuid.UUID:
+        case_id = uuid.uuid4()
+        with self._pool.connection() as conn:
             conn.execute(
                 "INSERT INTO cases (id, staff_id, customer_id, created_at) VALUES (%s, %s, %s, %s)",
-                (case_id, chat_staff, customer_id, self._clock.now()),
+                (case_id, staff_id_for(CHAT_STAFF_EMAIL), customer_id, self._clock.now()),
             )
             conn.commit()
         return case_id

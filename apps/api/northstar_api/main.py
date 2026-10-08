@@ -240,7 +240,7 @@ def create_app(
         try:
             return cases.chat_ask(customer_id, body.question)
         except CaseClosed as exc:
-            raise HTTPException(status_code=409, detail="This chat is closed.") from exc
+            raise HTTPException(status_code=409, detail="A person on our team is reviewing your request.") from exc
 
     @app.post("/cases/current/new")
     def new_case(staff=Depends(staff_from_token)) -> dict:
