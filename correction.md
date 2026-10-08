@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — Cancel an unshipped order (issue #68)
+
+Status: decision
+
+What changed: A cancel request is a gated action. Only a placed order becomes a cancel proposal, for the full order total including shipping, citing ORD-CANCEL. A packed, shipped, or delivered order gets a cited answer and no proposal. Seed orders now carry handbook statuses (placed, packed) and a ship date. A refund request on an order that has not been delivered is answered with ORD-CANCEL instead of a refund proposal, because the return window counts from delivery. Before this, the refund rule failed on an empty delivery date. A policy question with no order id ("Can an order be cancelled after it ships?") goes to the handbook, not to the gated path. Slice 2 labeled desk cases live in `SLICE2_CASES`, a new dataset version beside the frozen 40.
+
+Evidence: ORD-CANCEL in `data/policy/order-changes.md`.
+
+Debug steps: `apps/api/tests/test_cancel.py` and `apps/api/tests/test_slice2_cases.py`.
+
+Fix: `packages/agent/northstar/actions.py`, `cases.py`, `evals/labeled.py`.
+
 ## 2026-10-07 — A gated proposal carries any action (issue #66)
 
 Status: decision

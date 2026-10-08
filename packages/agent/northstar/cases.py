@@ -11,7 +11,7 @@ import re
 import uuid
 from datetime import datetime
 
-from northstar.actions import Order, Proposal, Reply, gated
+from northstar.actions import Order, Proposal, Reply, gated, order_id as _order_id
 from northstar.clock import Clock
 from northstar.escalate import handoff
 from northstar.graph import TurnTools, resume_turn, run_turn
@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS orders (
 );
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_cents integer;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered_on date;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipped_on date;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS category text;
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS proposal_action text;
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS proposal_amount_cents integer;
@@ -160,24 +161,26 @@ class CaseStore:
                     """,
                     (uuid.uuid5(uuid.NAMESPACE_URL, f"northstar-customer:{email}"), name, email, phone),
                 )
-            for order_id, email, status, purchased_on, lines, refunds, total_cents, delivered_on, category in _ORDERS:
+            for order_id, email, status, purchased_on, lines, refunds, total_cents, delivered_on, category, shipped_on in _ORDERS:
                 conn.execute(
                     """
                     INSERT INTO orders (
                         id, customer_id, status, purchased_on, lines, refunds,
-                        total_cents, delivered_on, category
+                        total_cents, delivered_on, category, shipped_on
                     )
                     VALUES (
                         %s, (SELECT id FROM customers WHERE email = %s), %s, %s, %s, %s,
-                        %s, %s, %s
+                        %s, %s, %s, %s
                     )
                     ON CONFLICT (id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        shipped_on = EXCLUDED.shipped_on,
                         total_cents = EXCLUDED.total_cents,
                         delivered_on = EXCLUDED.delivered_on,
                         category = EXCLUDED.category,
                         refunds = EXCLUDED.refunds
                     """,
-                    (order_id, email, status, purchased_on, lines, refunds, total_cents, delivered_on, category),
+                    (order_id, email, status, purchased_on, lines, refunds, total_cents, delivered_on, category, shipped_on),
                 )
             for name, category, price_cents, sizes, in_stock, final_sale in _CATALOG:
                 conn.execute(
@@ -688,7 +691,8 @@ class CaseStore:
             row = conn.execute(
                 """
                 SELECT orders.id, orders.status, orders.purchased_on, orders.delivered_on,
-                       orders.category, orders.lines, orders.refunds, orders.total_cents,
+                       orders.shipped_on, orders.category, orders.lines, orders.refunds,
+                       orders.total_cents,
                        orders.customer_id = cases.customer_id AS owned
                 FROM cases
                 LEFT JOIN orders ON orders.id = %s
@@ -709,6 +713,7 @@ class CaseStore:
             lines=row["lines"],
             refunds=row["refunds"],
             total_cents=row["total_cents"],
+            shipped_on=row["shipped_on"],
             ticketed=self._ticket_for_order(order_id),
         )
         planned = action.rule(question, order, now.date())
@@ -862,10 +867,14 @@ _CUSTOMERS = (
 )
 
 
+# id, customer, status, purchased, lines, refunds, total cents, delivered, category, shipped.
+# Statuses follow the handbook: placed, packed, shipped, delivered.
 _ORDERS = (
-    ("NS-1001", "mira.shah@northstar.example", "delivered", "2026-09-01", "Wool coat, size M", "none", 12800, "2026-09-20", "apparel and footwear"),
-    ("NS-1002", "jon.hale@northstar.example", "shipped", "2026-09-12", "Canvas tote", "none", 4800, "2026-09-12", "bags and accessories"),
-    ("NS-1003", "mira.shah@northstar.example", "delivered", "2026-09-01", "Wool scarf", "refunded", 2000, "2026-09-20", "apparel and footwear"),
+    ("NS-1001", "mira.shah@northstar.example", "delivered", "2026-09-01", "Wool coat, size M", "none", 12800, "2026-09-20", "apparel and footwear", "2026-09-02"),
+    ("NS-1002", "jon.hale@northstar.example", "shipped", "2026-09-12", "Canvas tote", "none", 4800, "2026-09-12", "bags and accessories", "2026-09-12"),
+    ("NS-1003", "mira.shah@northstar.example", "delivered", "2026-09-01", "Wool scarf", "refunded", 2000, "2026-09-20", "apparel and footwear", "2026-09-02"),
+    ("NS-1004", "mira.shah@northstar.example", "placed", "2026-10-06", "Enamel kettle", "none", 6400, None, "home and kitchen", None),
+    ("NS-1005", "mira.shah@northstar.example", "packed", "2026-10-05", "Canvas tote", "none", 4800, None, "bags and accessories", None),
 )
 
 
@@ -886,11 +895,6 @@ def _catalog_line(row) -> str:
         f"Price: ${row['price_cents'] / 100:.2f}. Sizes: {row['sizes']}. "
         f"In stock: {stock}. Final sale: {final_sale}."
     )
-
-
-def _order_id(question: str) -> str | None:
-    match = re.search(r"\bNS-\d+\b", question.upper())
-    return match.group(0) if match else None
 
 
 def _is_stale(proposed_at: datetime | None, now: datetime) -> bool:

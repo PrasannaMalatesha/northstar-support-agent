@@ -72,6 +72,31 @@ CASES = (
 )
 
 
+# Slice 2 desk cases: a new dataset version beside the frozen 40 above. All are dev split.
+# action is the proposal waiting for a lead, or None when nothing is proposed.
+SLICE2_CASES = (
+    {"id": "cancel-placed-order", "customer": "mira.shah@northstar.example", "question": "Please cancel order NS-1004.", "decision": "cancel", "sections": ("ORD-CANCEL",), "status": "Waiting for approval", "action": "cancel"},
+    {"id": "cancel-packed-order", "customer": "mira.shah@northstar.example", "question": "Please cancel order NS-1005.", "decision": "answer", "sections": ("ORD-CANCEL",), "status": "Open", "action": None},
+    {"id": "cancel-delivered-order", "customer": "mira.shah@northstar.example", "question": "Cancel order NS-1001.", "decision": "answer", "sections": ("ORD-CANCEL",), "status": "Open", "action": None},
+    {"id": "cancel-other-customer", "customer": "mira.shah@northstar.example", "question": "Cancel order NS-1002.", "decision": "not_found", "sections": (), "status": "Open", "action": None},
+    {"id": "cancel-unbound", "customer": None, "question": "Cancel order NS-1004.", "decision": "unbound", "sections": (), "status": "Open", "action": None},
+    {"id": "refund-before-delivery", "customer": "mira.shah@northstar.example", "question": "Refund order NS-1004.", "decision": "answer", "sections": ("ORD-CANCEL",), "status": "Open", "action": None},
+)
+
+
+def slice2_problems() -> list[str]:
+    found = []
+    ids = [case["id"] for case in SLICE2_CASES]
+    if len(ids) != len(set(ids)) or set(ids) & {case["id"] for case in CASES}:
+        found.append("duplicate id")
+    legal = registry_ids()
+    for case in SLICE2_CASES:
+        missing = [section for section in case["sections"] if section not in legal]
+        if missing:
+            found.append(f"{case['id']} bad sections {missing}")
+    return found
+
+
 def registry_ids() -> set[str]:
     from northstar.handbook import registry_ids as ids
 

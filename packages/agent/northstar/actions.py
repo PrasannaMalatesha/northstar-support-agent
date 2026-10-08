@@ -24,6 +24,7 @@ class Order:
     lines: str
     refunds: str
     total_cents: int
+    shipped_on: date | None = None
     # A ticket already exists for this order.
     ticketed: bool = False
 
@@ -67,7 +68,15 @@ RETURN_DAYS = {
 }
 
 
-def refund(question: str, order: Order, today: date) -> Proposal:
+def refund(question: str, order: Order, today: date) -> Proposal | Reply:
+    if order.delivered_on is None:
+        # The return window counts from delivery. An order that has not arrived is not a return.
+        return Reply(
+            "answer",
+            f"Order {order.id} is {order.status} and has not been delivered, so it is not a return yet. "
+            "A placed order can be cancelled instead. (ORD-CANCEL)",
+            ("ORD-CANCEL",),
+        )
     if order.refunds != "none" or order.ticketed:
         return Proposal("deny", 0, ("REF-DENY",), "Deny. Amount: 0 cents. The line was already refunded. (REF-DENY)")
     age = (today - order.delivered_on).days
@@ -90,16 +99,49 @@ def refund(question: str, order: Order, today: date) -> Proposal:
     )
 
 
+def cancel(question: str, order: Order, today: date) -> Proposal | Reply:
+    # ORD-CANCEL: only a placed order, refunded in full including outbound shipping.
+    if order.status != "placed":
+        return Reply(
+            "answer",
+            f"Order {order.id} is {order.status}, so it cannot be cancelled. "
+            "Only a placed order can be cancelled. (ORD-CANCEL)",
+            ("ORD-CANCEL",),
+        )
+    return Proposal(
+        "cancel",
+        order.total_cents,
+        ("ORD-CANCEL",),
+        f"Cancel order {order.id}. Refund {order.total_cents} cents in full, including shipping. "
+        "A person records the cancel. (ORD-CANCEL)",
+    )
+
+
 # First match wins, so a narrower request sits above a broader one.
 ACTIONS: tuple[GatedAction, ...] = (
+    GatedAction("cancel", re.compile(r"\bcancel"), cancel, "Which order id? Nothing is cancelled."),
     GatedAction("refund", re.compile(r"\brefunds?\b|\bcredit\b"), refund, "Which order id? No amount is proposed."),
 )
 
 # Every decision that is a proposal. These pause for a lead and must cite a section.
-PROPOSALS = frozenset({"approve_refund", "partial_credit", "deny"})
+PROPOSALS = frozenset({"approve_refund", "partial_credit", "deny", "cancel"})
+
+_ORDER_ID = re.compile(r"\bNS-\d+\b", re.IGNORECASE)
+# A policy question with no order id is a handbook question, not a request to act.
+_POLICY_QUESTION = re.compile(
+    r"^\s*(can|could|how|what|when|why|is|are|does|do|will)\b.*\?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def order_id(question: str) -> str | None:
+    match = _ORDER_ID.search(question)
+    return match.group(0).upper() if match else None
 
 
 def gated(question: str) -> GatedAction | None:
+    if order_id(question) is None and _POLICY_QUESTION.match(question):
+        return None
     lowered = question.lower()
     for action in ACTIONS:
         if action.pattern.search(lowered):
