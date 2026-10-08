@@ -42,7 +42,9 @@ Slice 3 (#65) has started. Malatesha's decisions:
 
 #80 (damaged-item photo) is built: `northstar/photo.py`, the REF-DAMAGED rule in `actions.refund`, seed order NS-1011, labeled `PHOTO_CASES` (tag `slice3-photo`). The LangSmith judge rule was recreated from `dev` code, so its prompt no longer has the parked Spanish line; re-add it when #81 lands.
 
-Next: #78 (needs Malatesha's Google OAuth client id and secret in `.env`), then #79.
+#79 (customer chat) is built: `/chat` in the console; `POST /chat/start`, `GET /chat`, `POST /chat/messages` in the API; chat token audience `northstar-chat`; chat cases owned by the disabled `chat@northstar.example`. Same agent and gates; only identity, scope, and the customer view differ. `prd.md` records the order id plus email decision.
+
+Next: #78 (Google SSO, needs Malatesha's OAuth client id and secret in `.env`). #81 Spanish is parked.
 
 How to run the demo:
 - **Servers:** restart any API or console started before PR #98, because they run old code (`make api`, `make web`).

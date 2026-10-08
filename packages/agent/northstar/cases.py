@@ -11,10 +11,12 @@ import uuid
 from dataclasses import replace
 from datetime import datetime
 
-from northstar.actions import FAMILIES, Order, Proposal, Reply, family_decisions, gated, order_id as _order_id
+from northstar.actions import FAMILIES, PROPOSALS, Order, Proposal, Reply, family_decisions, gated, order_id as _order_id
 from northstar.clock import Clock
 from northstar.escalate import handoff, manual_handoff
 from northstar.graph import TurnTools, resume_turn, run_turn
+from northstar.identity.seed import CHAT_STAFF_EMAIL
+from northstar.identity.service import staff_id_for
 from northstar.memory import graph_for
 from northstar.photo import describe
 from northstar.agent_model import handbook_reply
@@ -330,13 +332,21 @@ class CaseStore:
         question = "" if asked is None else asked["body"]
         return manual_handoff(question, sections, self._tried(case_id), note).text
 
-    def ask(self, staff_id: uuid.UUID, question: str, photo: str | None = None) -> dict:
-        case_id = self._open(staff_id)
+    def ask(
+        self,
+        staff_id: uuid.UUID,
+        question: str,
+        photo: str | None = None,
+        *,
+        case_id: uuid.UUID | None = None,
+        limit_key: object = None,
+    ) -> dict:
+        case_id = case_id or self._open(staff_id)
         if self._status(case_id) != "Open":
             raise CaseClosed()
         now = self._clock.now()
         day = now.date()
-        key = (staff_id, day)
+        key = (limit_key or staff_id, day)
         if self._requests.get(key, 0) >= self._request_limit:
             return self._save(case_id, question, _plain("limit", REQUEST_LIMIT_TEXT), now)
         self._requests[key] = self._requests.get(key, 0) + 1
@@ -787,6 +797,72 @@ class CaseStore:
         online.background(record_judge, draft["run_id"], question, draft["decision"] or "", text, citations, 1.0, edited=True)
         online.background(record_edit, draft["run_id"], question, citations, before, after)
 
+    # Customer chat (issue #79): the same turn and the same gates, a different identity and view.
+
+    def chat_customer(self, order_id: str, email: str) -> uuid.UUID | None:
+        """The customer who owns this order, when the email is theirs. The chat sign-in check."""
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT customers.id FROM orders JOIN customers ON customers.id = orders.customer_id
+                WHERE upper(orders.id) = upper(%s) AND lower(customers.email) = lower(%s)
+                """,
+                (order_id.strip(), email.strip()),
+            ).fetchone()
+        return None if row is None else row["id"]
+
+    def chat(self, customer_id: uuid.UUID) -> dict:
+        return self._chat_view(self._chat_case(customer_id))
+
+    def chat_ask(self, customer_id: uuid.UUID, question: str) -> dict:
+        case_id = self._chat_case(customer_id)
+        if self._status(case_id) != "Open":
+            raise CaseClosed()
+        # Limits are per customer, so one customer cannot use up the chat for everyone.
+        self.ask(staff_id_for(CHAT_STAFF_EMAIL), question, case_id=case_id, limit_key=("chat", customer_id))
+        return self._chat_view(case_id)
+
+    def _chat_case(self, customer_id: uuid.UUID) -> uuid.UUID:
+        """The customer's latest chat case, bound to them, or a new one once the last is resolved."""
+        chat_staff = staff_id_for(CHAT_STAFF_EMAIL)
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT id, status FROM cases WHERE staff_id = %s AND customer_id = %s
+                ORDER BY created_at DESC, id DESC LIMIT 1
+                """,
+                (chat_staff, customer_id),
+            ).fetchone()
+            if row is not None and row["status"] != "Resolved":
+                return row["id"]
+            case_id = uuid.uuid4()
+            conn.execute(
+                "INSERT INTO cases (id, staff_id, customer_id, created_at) VALUES (%s, %s, %s, %s)",
+                (case_id, chat_staff, customer_id, self._clock.now()),
+            )
+            conn.commit()
+        return case_id
+
+    def _chat_view(self, case_id: uuid.UUID) -> dict:
+        """What a customer may see: their own words and checked replies. No draft, amount, packet, or history."""
+        row = self._case_row(case_id)
+        ticket = self._ticket_id(case_id)
+        if row["status"] == "Waiting for approval":
+            status = "A person on our team is reviewing your request. Nothing is approved yet."
+        elif row["status"] == "Escalated":
+            status = "A specialist will follow up with you."
+        elif ticket:
+            status = f"Our team approved your request. Reference {ticket}."
+        elif row["rejection_reason"]:
+            status = "Our team could not approve that request."
+        else:
+            status = ""
+        messages = [
+            {"role": m["role"], "text": m["body"] if m["role"] == "user" else _for_customer(m["decision"], m["body"])}
+            for m in self._messages(case_id)
+        ]
+        return {"status": status, "messages": messages}
+
     def _resume(self, case_id: uuid.UUID, decision: str) -> None:
         resume_turn(graph_for(self._pool.conninfo), str(case_id), decision)
 
@@ -1027,6 +1103,19 @@ def _iso(moment: datetime) -> str:
 
 def _plain(decision: str, text: str) -> Draft:
     return Draft(decision, text, (), {}, ())
+
+
+_CHAT_TEXT = {
+    "escalate": "A specialist will follow up with you about this.",
+    "duplicate": "This request is already with our team.",
+}
+
+
+def _for_customer(decision: str | None, body: str) -> str:
+    """The checked reply a customer sees. A proposal or a handoff packet is never shown as is."""
+    if decision in PROPOSALS:
+        return "Thanks. A person on our team will review this request. Nothing is approved yet."
+    return _CHAT_TEXT.get(decision or "", body)
 
 
 def _noted(draft: Draft, note: str) -> Draft:
