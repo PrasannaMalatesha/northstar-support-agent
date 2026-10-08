@@ -13,6 +13,20 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — The judge model is now deepseek/deepseek-v4.1-flash, with a majority vote
+
+Status: decision
+
+What changed: Malatesha replaced the OpenRouter key and the judge model. `nvidia/nemotron-3-ultra-550b-a55b:free` had hit its free daily cap and hung on some calls. Both judges (the offline quiz judge and the live groundedness judge) now default to `deepseek/deepseek-v4.1-flash`. The key stays in the gitignored `.env` only.
+
+Evidence: Live checks on the new model: the quiz judge passed a right answer and failed a wrong one. The groundedness judge passed a grounded reply and failed a made-up 90-day rule. About 3 s a call.
+
+Debug steps: Recalibrated before letting the new judge score the test split (issue #20). The first pass agreed on 4 of 5 rows. On apparel-window, the student text matched the reference word for word. Asked three times, the judge said correct twice and once called the handbook's own cross-reference ("the 30 days in REF-WINDOW" beside "the length in REF-CATEGORY") a conflict. The provider samples even at temperature 0.
+
+Fix: The offline quiz judge takes the majority of three calls. Two calibration runs then agreed 5 of 5, and `results/judge_calibration.md` records that. The judge rate limiter is 2 requests a second for the paid model. The live groundedness judge stays at one call, because it is sampled and only writes feedback.
+
+Judged result (test split, 3 repetitions, `results/langsmith_test.md`): v0 `answer_correct` 1.0, `label_match` 0.733. v1 `answer_correct` 0.909, `label_match` 1.0, status 1.0. Router 1.0. The v1 judge miss is real: on contact, the PII screen masks Northstar's own support address, so the reply says "Customers reach Northstar at [email]". Open, not fixed here.
+
 ## 2026-10-07 — Policy questions that mention an order were refused or sent to the wrong path
 
 Status: bug

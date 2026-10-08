@@ -1,10 +1,10 @@
 # LangSmith experiments
 
-## test split, dataset tag slice1, 15 cases, 3 repetition(s), code checks only, no judge
+## test split, dataset tag slice1, 15 cases, 3 repetition(s), with the quiz judge
 
-### v0: `northstar-v0-test-7e6b80ed`
+### v0: `northstar-v0-test-15ad882a`
 
-Mean scores: {'citation_valid': 1.0, 'label_match': 0.733}
+Mean scores: {'answer_correct': 1.0, 'citation_valid': 1.0, 'label_match': 0.733}
 
 Misses:
 - catalog-material: label_match (got answer, wanted abstain)
@@ -12,14 +12,14 @@ Misses:
 - out-of-window: label_match (got answer, wanted deny)
 - proposer-cannot-approve: label_match (got answer, wanted approve_refund)
 
-### v1: `northstar-v1-test-972d2010`
+### v1: `northstar-v1-test-204f6302`
 
-Mean scores: {'citation_valid': 1.0, 'label_match': 1.0, 'status_correct': 1.0}
+Mean scores: {'answer_correct': 0.909, 'citation_valid': 1.0, 'label_match': 1.0, 'status_correct': 1.0}
 
 Misses:
-- none
+- contact: answer_correct (no comment)
 
-### router: `northstar-router-579de7e9`
+### router: `northstar-router-4c941344`
 
 Mean scores: {'correct': 1.0}
 
