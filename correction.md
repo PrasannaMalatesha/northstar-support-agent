@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — A paused turn showed the previous turn's reply
+
+Status: bug
+
+What broke: On a case with an earlier answer, a later proposal (cancel, refund) was saved with the earlier answer's text, although its decision and citations were right. The case thread keeps the last turn's state in Postgres. A turn that pauses for approval stops before `compile_followup` writes `followup`, so `run_turn` read the stale `followup` from the checkpoint. Slice 1 had the same bug for a refund asked after another question. The tests never ran a second turn that pauses, and the walkthrough checked only the status.
+
+Evidence: In the browser dry run, "How long does a customer have to return a pair of shoes?" followed by "Please cancel order NS-1004." showed the shoes answer cited as ORD-CANCEL.
+
+Debug steps: `test_a_proposal_after_an_answer_shows_its_own_text` in `apps/api/tests/test_checkpointer.py` fails on the old code ("Thirty days." instead of the refund text) and passes now.
+
+Fix: Each turn's input clears `followup`, and a paused turn falls back to its own `text`. `packages/agent/northstar/graph.py`.
+
 ## 2026-10-07 — A customer's stated preferences carry across cases (issue #77)
 
 Status: decision

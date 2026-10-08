@@ -270,6 +270,12 @@ def _scrubbed_client():
     return Client(anonymizer=create_anonymizer(lambda text, _path: screen(text)))
 
 
+def _turn_input(question: str) -> dict:
+    # The case thread keeps the last turn's state. Clear followup so a paused turn
+    # never shows the previous turn's reply.
+    return {"question": question, "followup": ""}
+
+
 def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None = None) -> Draft:
     from northstar.agent_model import _load_local_env
 
@@ -286,10 +292,11 @@ def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None 
         config["run_id"] = root
         run_id = str(root)
         with langsmith.tracing_context(client=_scrubbed_client()):
-            result = graph.invoke({"question": question}, config, context=tools)
+            result = graph.invoke(_turn_input(question), config, context=tools)
     else:
-        result = graph.invoke({"question": question}, config or None, context=tools)
-    followup = result["followup"] if "followup" in result else result["text"]
+        result = graph.invoke(_turn_input(question), config or None, context=tools)
+    # A turn that pauses for approval stops before compile_followup writes followup.
+    followup = result.get("followup") or result["text"]
     if traced:
         from langchain_core.tracers.langchain import wait_for_all_tracers
 
