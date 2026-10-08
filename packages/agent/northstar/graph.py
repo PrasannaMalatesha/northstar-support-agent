@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 import os
 import random
-import re
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Callable, Literal
@@ -23,6 +22,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command, interrupt
 from typing_extensions import TypedDict
 
+from northstar.actions import PROPOSALS, gated
 from northstar.handbook import Draft
 from northstar.privacy import SECRET_REPLY
 
@@ -43,15 +43,16 @@ class TurnTools:
     support: Callable[[str], Draft]
 
 
-def asks_for_refund(question: str) -> bool:
-    return re.search(r"\brefunds?\b|\bcredit\b", question.lower()) is not None
+def asks_for_gated_action(question: str) -> bool:
+    """A refund or any other action that waits for a lead. The table lives in northstar.actions."""
+    return gated(question) is not None
 
 
 def intent_classifier(
     state: TurnState,
 ) -> Command[Literal["refund_agent", "support_agent"]]:
     goto: Literal["refund_agent", "support_agent"] = (
-        "refund_agent" if asks_for_refund(state["question"]) else "support_agent"
+        "refund_agent" if asks_for_gated_action(state["question"]) else "support_agent"
     )
     return Command(goto=goto)
 
@@ -168,12 +169,9 @@ def _middleware(held: dict) -> list:
     ]
 
 
-_PAUSE = frozenset({"approve_refund", "partial_credit", "deny"})
-
-
 def compile_followup(state: TurnState) -> dict:
     # https://docs.langchain.com/oss/python/langgraph/interrupts
-    if state.get("decision") in _PAUSE and _checkpointer_present():
+    if state.get("decision") in PROPOSALS and _checkpointer_present():
         interrupt(state["decision"])
     return {"followup": state["text"]}
 

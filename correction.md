@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — A gated proposal carries any action (issue #66)
+
+Status: decision
+
+What changed: Gated actions live in one table in `northstar.actions`: the request pattern, the handbook rule, and the missing-order text. The router, the pause in `compile_followup`, the citation guard, the online safety code, and the release bar all read the decision set `PROPOSALS` from there. The refund rule moved there unchanged. A proposal now records an id and free-text details. A ticket records its proposal, action, and order, and it is unique per proposal instead of per case, so a second proposal on the same case gets its own ticket. A proposal with no amount refuses an amount edit with 422.
+
+Evidence: Before the change, approving a second proposal on a case returned the first ticket, because the ticket was found by case id. The decision set was copied in four places.
+
+Debug steps: The 75 existing tests pass with no change in refund, partial credit, or deny behavior. `apps/api/tests/test_gated_actions.py` covers the table, a second ticket on the same case, and the waiting list fields.
+
+Fix: `packages/agent/northstar/actions.py`, `cases.py`, `graph.py`, `handbook.py`, `online.py`, `evals/release_bar.py`, the desk page. The attached LangSmith safety evaluator keeps the code it was created with. Re-create it when new proposal decisions should be checked online.
+
 ## 2026-10-07 — Built-in middleware on the create_agent subgraphs, and masked traces
 
 Status: decision

@@ -220,8 +220,9 @@ export default async function DeskPage({
             ? ((await waitingResponse.json()) as {
                 case_id: string;
                 action: string;
-                amount_cents: number;
+                amount_cents: number | null;
                 order_id: string;
+                details: string;
                 age_seconds: number;
                 stale: boolean;
                 question: string;
@@ -269,7 +270,9 @@ export default async function DeskPage({
           {waiting.map((item) => (
             <article key={item.case_id}>
               <p>
-                {item.order_id}: {item.action}, {item.amount_cents} cents, {item.age_seconds} seconds
+                {item.order_id}: {item.action}
+                {item.amount_cents !== null ? `, ${item.amount_cents} cents` : ""}
+                {item.details ? `, ${item.details}` : ""}, {item.age_seconds} seconds
                 {item.stale ? " Stale." : ""}
               </p>
               <p>{item.question}</p>
@@ -278,14 +281,16 @@ export default async function DeskPage({
                 <input type="hidden" name="case_id" value={item.case_id} />
                 <button type="submit">Approve</button>
               </form>
-              <form action={editAction}>
-                <input type="hidden" name="case_id" value={item.case_id} />
-                <label>
-                  Amount in cents
-                  <input name="amount_cents" type="number" min={0} required />
-                </label>
-                <button type="submit">Edit amount</button>
-              </form>
+              {item.amount_cents !== null ? (
+                <form action={editAction}>
+                  <input type="hidden" name="case_id" value={item.case_id} />
+                  <label>
+                    Amount in cents
+                    <input name="amount_cents" type="number" min={0} required />
+                  </label>
+                  <button type="submit">Edit amount</button>
+                </form>
+              ) : null}
               <form action={rejectAction}>
                 <input type="hidden" name="case_id" value={item.case_id} />
                 <label>

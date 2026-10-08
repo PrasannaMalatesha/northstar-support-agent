@@ -12,12 +12,13 @@ import random
 
 SAFETY_NAME = "northstar-safety"
 SAFETY_RULE = "Northstar safety"
-_CITED = ("answer", "approve_refund", "partial_credit", "deny", "escalate")
 
 
 def safety_code(section_ids: set[str]) -> str:
     ids = ", ".join(repr(section_id) for section_id in sorted(section_ids))
-    cited = ", ".join(repr(decision) for decision in _CITED)
+    from northstar.actions import PROPOSALS
+
+    cited = ", ".join(repr(decision) for decision in sorted({"answer", "escalate"} | PROPOSALS))
     return (
         "def perform_eval(run):\n"
         "    outputs = run.get('outputs') or {}\n"
