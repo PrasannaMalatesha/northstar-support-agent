@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — An escalation hands off a packet that stands alone (issue #73)
+
+Status: decision
+
+What changed: Every escalated case carries a handoff packet with these lines: Asked, Handbook, Missing, Order, Sections read, Tried (the agent's earlier decisions on the case, with their citations), and Owner. The owner is legal for chargebacks, lawyers, and regulators (ESC-LEGAL), policy for a source that conflicts with the handbook (ESC-WHEN), and support lead for an exception, suspected fraud (ESC-FRAUD), or an escalation a specialist makes by hand. A hand escalation's packet carries the specialist's note as what is missing. The question and the note are run through the same personal-data screen as the draft. The packet is stored on the case and shown on the Escalated case desk.
+
+Evidence: ESC-WHEN asks the handoff to name the question, the order id, the sections read, and what is missing. ESC-FRAUD and ESC-LEGAL in `data/policy/support-escalation.md`. R17 in `prd.md`.
+
+Debug steps: `apps/api/tests/test_handoff.py`, plus policy-conflict and fraud rows in `SLICE2_CASES`. The slice 1 escalation tests still pass, because the Asked, Handbook, and Missing lines are unchanged.
+
+Fix: `packages/agent/northstar/escalate.py`, `cases.py`, the desk page.
+
 ## 2026-10-07 — The card screen masked digits inside a ticket id
 
 Status: bug
