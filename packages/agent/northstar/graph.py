@@ -8,6 +8,7 @@ a checkpointer is attached. The case row still writes the ticket.
 
 from __future__ import annotations
 
+import logging
 import os
 import random
 from dataclasses import dataclass
@@ -150,8 +151,9 @@ def _middleware(held: dict) -> list:
             apply_to_tool_results=True,
         )
 
-    def failed(_exc: Exception, _request) -> str:
+    def failed(exc: Exception, _request) -> str:
         held["failed"] = True
+        logging.getLogger(__name__).warning("desk tool failed: %s", type(exc).__name__, exc_info=exc)
         return "Lookup failed. Do not fill in facts."
 
     fallback = _fallback_model()

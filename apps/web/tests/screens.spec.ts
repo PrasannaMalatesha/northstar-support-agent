@@ -123,6 +123,11 @@ test("a customer chat starts from an order and email, and a refund waits for a p
   await expect(page.getByText(/Amount/)).toHaveCount(0);
   await noViolations(page);
 
+  // While the request waits for a person, another message is refused with a reason, not dropped.
+  await page.getByLabel("Your message").fill("Any news on my refund?");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Your request is with our team. You can write again once they reply.")).toBeVisible();
+
   await page.getByRole("button", { name: "End chat" }).click();
   await expect(page.getByRole("button", { name: "Start chat" })).toBeVisible();
 });
