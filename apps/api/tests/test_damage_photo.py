@@ -4,6 +4,7 @@ A stand-in describer replaces the vision model, so no key or network is used.
 """
 
 import base64
+import os
 
 import psycopg
 import pytest
@@ -13,7 +14,7 @@ from evals.experiments import photo_url
 from evals.labeled import PHOTO_CASES
 from northstar.photo import Photo
 
-_URL = "postgresql://northstar:northstar@localhost:5433/northstar_test"
+_URL = os.environ.get("TEST_DATABASE_URL", "postgresql://northstar:northstar@localhost:5433/northstar_test")
 _VERDICTS = {
     "lamp-cracked.png": Photo(True, True, "The shade is cracked."),
     "lamp-intact.png": Photo(True, False, "The lamp looks whole."),
