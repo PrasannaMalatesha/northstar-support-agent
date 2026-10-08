@@ -24,6 +24,8 @@ def judged(monkeypatch):
         return True
 
     monkeypatch.setattr(online, "_live_grounded", grade)
+    # Run the background checks inline so the test can read their results.
+    monkeypatch.setattr(online, "background", lambda fn, *args, **kwargs: fn(*args, **kwargs))
     monkeypatch.setattr(online, "_post_feedback", lambda run_id, score: seen["posted"].append((run_id, score)))
     seen["edits"] = []
     monkeypatch.setattr(online, "_send_edit", lambda run_id, pair: seen["edits"].append((run_id, pair)))
@@ -121,3 +123,23 @@ def test_a_handoff_escalation_runs_through_the_graph(client):
     state = graph_for(_URL).get_state({"configurable": {"thread_id": case["id"]}})
     assert state.values["decision"] == "escalate"
     assert state.values["citations"] == ["ESC-LEGAL"]
+
+
+def test_an_online_check_runs_off_the_turn_and_a_failure_is_only_logged(caplog):
+    import threading
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_check():
+        started.set()
+        release.wait(5)
+        raise RuntimeError("judge down")
+
+    online.background(slow_check)
+    assert started.wait(5)  # it runs, and this line is reached before it finishes
+    release.set()
+    for thread in threading.enumerate():
+        if thread is not threading.current_thread() and thread.daemon:
+            thread.join(2)
+    assert "online check slow_check failed" in caplog.text

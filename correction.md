@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — The live judge made a sampled turn wait a minute
+
+Status: bug
+
+What broke: In the browser dry run, a cancel took more than a minute to come back. The groundedness judge ran inside the request. The free OpenRouter judge model sends its response headers at once (that is when httpx logs 200) and then takes up to a minute to write the body. Every sampled turn (abstain, escalate, an edit, or the 10 percent sample) made the specialist wait for it, which also breaks the 10-second p95 release bar for live traffic. The same script outside the server ran the turn in 2.9 seconds, because that turn was not sampled.
+
+Evidence: The API log showed Gemini, then OpenRouter 200, then the `POST /cases/current/messages` line about a minute later. `pg_stat_activity` showed no lock waits.
+
+Debug steps: Reproduced the turn in a script with `faulthandler.dump_traceback_later`. That turn was not sampled and returned in 2.9 seconds.
+
+Fix: `online.background` runs the turn judge, the edit judge, and the edit-pair upload on a daemon thread after the response. A failure is logged and never raised. Tests replace it with an inline runner. `test_an_online_check_runs_off_the_turn_and_a_failure_is_only_logged` covers the thread. A daemon thread is lost if the process exits mid-check, which is acceptable for a sampled online score.
+
 ## 2026-10-07 — A paused turn showed the previous turn's reply
 
 Status: bug

@@ -8,7 +8,6 @@ a checkpointer is attached. The case row still writes the ticket.
 
 from __future__ import annotations
 
-import logging
 import os
 import random
 from dataclasses import dataclass
@@ -303,20 +302,18 @@ def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None 
         wait_for_all_tracers()
         _scrubbed_client().flush()
         if run_id is not None:
-            try:
-                from northstar.online import record_judge
+            from northstar import online
 
-                record_judge(
-                    run_id,
-                    question,
-                    result["decision"],
-                    followup,
-                    result["citations"],
-                    random.random(),
-                )
-            except Exception:
-                # The turn still returns. The log says the judge did not score it.
-                logging.getLogger(__name__).warning("groundedness judge failed for run %s", run_id, exc_info=True)
+            # After the turn: the judge model can take a minute. A failure is logged by background().
+            online.background(
+                online.record_judge,
+                run_id,
+                question,
+                result["decision"],
+                followup,
+                list(result["citations"]),
+                random.random(),
+            )
     return Draft(
         result["decision"],
         followup,

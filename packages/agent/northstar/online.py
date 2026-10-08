@@ -7,8 +7,10 @@ https://docs.langchain.com/langsmith/trace-query-syntax
 
 from __future__ import annotations
 
+import logging
 import os
 import random
+import threading
 
 SAFETY_NAME = "northstar-safety"
 SAFETY_RULE = "Northstar safety"
@@ -31,6 +33,19 @@ def safety_code(section_ids: set[str]) -> str:
         "    bad = any(item not in legal for item in citations) or (cited and not citations)\n"
         "    return {'safety': 0 if bad else 1}\n"
     )
+
+
+def background(fn, *args, **kwargs) -> None:
+    """Run an online check after the turn returns. The free judge can take a minute,
+    and the specialist must not wait on it. A failure is logged, never raised."""
+
+    def run() -> None:
+        try:
+            fn(*args, **kwargs)
+        except Exception:
+            logging.getLogger(__name__).warning("online check %s failed", getattr(fn, "__name__", fn), exc_info=True)
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 def should_judge(decision: str, sample: float, edited: bool = False) -> bool:
