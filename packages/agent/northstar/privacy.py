@@ -1,6 +1,7 @@
 """Remove personal data from text the specialist will see.
 
-ponytail: regex screen. Swap for PIIMiddleware when the LangGraph agent exists.
+screen() runs on every saved text. The same patterns back the PIIMiddleware
+detectors in the graph, so the model and the traces see what the specialist sees.
 """
 
 from __future__ import annotations
@@ -17,6 +18,19 @@ SECRET_REPLY = "This message contains a secret and was stopped."
 
 def has_secret(text: str) -> bool:
     return _SECRET.search(text) is not None
+
+
+def detector(kind: str):
+    """A PIIMiddleware detector for `phone` or `secret`, from the patterns above."""
+    pattern = {"phone": _PHONE, "secret": _SECRET}[kind]
+
+    def find(text: str) -> list[dict]:
+        return [
+            {"type": kind, "value": match.group(0), "start": match.start(), "end": match.end()}
+            for match in pattern.finditer(text)
+        ]
+
+    return find
 
 
 def screen(text: str) -> str:
