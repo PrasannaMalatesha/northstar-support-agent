@@ -30,7 +30,7 @@ Last session, in order:
 
 Results are in `results/langsmith_test.md` and `results/langsmith_dev.md`.
 
-7. The first specialist edit was promoted (`edit-01a11a09`, "Do you sell surfboard wax?", tag `edit-20261008-054354`, 68 cases). The dev experiment on that version shows the gap: v1 abstains where the specialist said the product is not carried.
+7. The first specialist edit was promoted (`edit-01a11a09`, "Do you sell surfboard wax?", tag `edit-20261008-054354`, 68 cases). The dev experiment on that version showed the gap (v1 abstained where the specialist said the product is not carried). Fixed: "Do you sell / carry / stock / have" now asks the catalog (R21). Dev split v1 1.0 on all 43 cases.
 
 Next, only when Malatesha asks: slice 3 (#65), the hand-recorded LangSmith part of the walkthrough, or promoting `dev` → `uat`.
 

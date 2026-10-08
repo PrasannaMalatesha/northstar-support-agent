@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-08 — "Do you sell X?" now asks the catalog (the promoted surfboard case)
+
+Status: bug
+
+What broke: "Do you sell surfboard wax?" got the handbook abstain ("No handbook section covers that.") instead of the catalog answer. PRD R21 says questions about what Northstar sells are answered only from catalog rows, and an unknown item abstains with the catalog line.
+
+Evidence: The promoted specialist edit `edit-01a11a09` failed the judge on the dev experiment (v1 `answer_correct` 0.9, the only miss).
+
+Debug steps: `_catalog_draft` only fired on "in stock", "how much", "price", "final sale", and "what size". "Do you sell / carry / stock / have" never reached it.
+
+Fix: Those four phrases join `_CATALOG_PHRASES`. A named item gets its catalog row; an unknown item gets "I don't have that item in the catalog."; a question a handbook section answers ("Do you have gift cards that expire?") still goes to the handbook. Test in `test_catalog.py`. Live: dev split (tag `edit-20261008-054354`, 43 cases) v1 `answer_correct` 1.0, `label_match` 1.0, status 1.0, no misses. Router 1.0.
+
 ## 2026-10-08 — The first specialist edit promoted into the golden dataset
 
 Status: decision
@@ -25,7 +37,7 @@ Debug steps: The first tag returned 67 rows, not 68: `_add` tagged `datetime.now
 
 Fix: `_add` now tags the server's newest dataset version (`list_dataset_versions`), not the local time. The edit tag was moved to that version and returns 68.
 
-First experiment on the new version (dev split, 43 cases, with the judge, `results/langsmith_dev.md`): v1 `label_match` 1.0, status 1.0, `answer_correct` 0.9; the one judge miss is the promoted case, because the desk still abstains where the specialist named the product as not carried. v0 `label_match` 0.349. Router 1.0. The gap is recorded, not fixed.
+First experiment on the new version (dev split, 43 cases, with the judge, `results/langsmith_dev.md`): v1 `label_match` 1.0, status 1.0, `answer_correct` 0.9; the one judge miss is the promoted case, because the desk still abstains where the specialist named the product as not carried. v0 `label_match` 0.349. Router 1.0. Fixed: see "\"Do you sell X?\" now asks the catalog".
 
 ## 2026-10-08 — A LangSmith online LLM judge runs beside the in-app judge
 

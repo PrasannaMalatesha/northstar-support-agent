@@ -29,3 +29,10 @@ def test_an_unknown_item_and_a_missing_field_abstain(client):
     earbuds = _ask(client, "Are the trail earbuds in stock?")
     assert "In stock: no." in earbuds
     assert "0" not in earbuds.split("In stock: ")[1]
+
+
+def test_do_you_sell_asks_the_catalog_and_a_policy_question_still_reaches_the_handbook(client):
+    # R21: what Northstar sells comes from catalog rows; an unknown item abstains.
+    assert _ask(client, "Do you sell surfboard wax?") == "I don't have that item in the catalog."
+    assert _ask(client, "Do you carry the wool coat?").startswith("Wool coat. Category: apparel and footwear.")
+    assert "(GC-TERMS)" in _ask(client, "Do you have gift cards that expire?")

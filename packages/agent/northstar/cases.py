@@ -1052,7 +1052,7 @@ _CATALOG = (
     ("Linen shirt", "apparel and footwear", 5400, "S, M, L", True, False),
 )
 _MISSING_FIELDS = ("material", "review", "rating", "weight", "fabric", "color")
-_CATALOG_PHRASES = ("in stock", "how much", "price", "final sale", "what size")
+_CATALOG_PHRASES = ("in stock", "how much", "price", "final sale", "what size", "do you sell", "do you carry", "do you stock", "do you have")
 
 
 def _catalog_line(row) -> str:
