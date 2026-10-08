@@ -17,6 +17,7 @@ from northstar.escalate import handoff, manual_handoff
 from northstar.graph import TurnTools, resume_turn, run_turn
 from northstar.identity.seed import CHAT_STAFF_EMAIL
 from northstar.identity.service import staff_id_for
+from northstar.language import is_spanish, to_english, to_spanish
 from northstar.memory import graph_for
 from northstar.photo import describe
 from northstar.agent_model import handbook_reply
@@ -41,9 +42,16 @@ SAFE_REPLY = (
 )
 _BLOCKED = (
     "ignore the handbook",
+    "ignore the manual",
+    "ignore the instructions",
+    "ignore your instructions",
     "ignore previous",
     "ignore these rules",
     "retard",
+    # Spanish, checked on the customer's own words before translation (issue #81).
+    "ignora el manual",
+    "ignora las reglas",
+    "ignora las instrucciones",
 )
 
 SCHEMA_SQL = """
@@ -352,26 +360,30 @@ class CaseStore:
         self._requests[key] = self._requests.get(key, 0) + 1
         if has_secret(question):
             return self._save(case_id, question, _plain("blocked", SECRET_REPLY), now)
+        # A Spanish question is decided in English and answered in Spanish (issue #81).
+        spanish = is_spanish(question)
+        asked = to_english(screen(question)) if spanish else question
+        reply = (lambda draft: to_spanish(draft)) if spanish else (lambda draft: draft)
         # A photo is described for the lead. It never chooses the action (issue #80).
-        seen = describe(photo, question) if photo else None
+        seen = describe(photo, asked) if photo else None
         note = seen.line if seen else ("Photo: attached, but it could not be described." if photo else "")
         asked_with = f"{question}\n[Photo attached]" if photo else question
-        self._remember_preferences(case_id, question, now)
-        escalated = handoff(question, self._tried(case_id))
+        self._remember_preferences(case_id, asked, now)
+        escalated = handoff(asked, self._tried(case_id))
         if escalated is not None:
             section, text = escalated.section, escalated.text
             self._mark_escalated(case_id, text)
             # Through the graph, so the escalation has a LangGraph trace for the safety rule and the judge.
             fixed = Draft("escalate", text, (section,), {section: "strong"}, ())
             tools = TurnTools(refund=lambda _text: fixed, support=lambda _text: fixed)
-            return self._save(case_id, asked_with, _noted(self._turn(case_id, question, tools), note), now)
-        if _blocked(question):
-            return self._save(case_id, asked_with, _plain("safe", SAFE_REPLY), now)
+            return self._save(case_id, asked_with, reply(_noted(self._turn(case_id, asked, tools), note)), now)
+        if _blocked(question) or _blocked(asked):
+            return self._save(case_id, asked_with, reply(_plain("safe", SAFE_REPLY)), now)
         tools = TurnTools(
             refund=lambda text: self._gated_draft(case_id, staff_id, text, now, note),
             support=lambda text: self._support_draft(case_id, staff_id, text, now),
         )
-        return self._save(case_id, asked_with, _noted(self._turn(case_id, question, tools), note), now)
+        return self._save(case_id, asked_with, reply(_noted(self._turn(case_id, asked, tools), note)), now)
 
     def _turn(self, case_id: uuid.UUID, question: str, tools: TurnTools) -> Draft:
         return run_turn(question, tools, graph=graph_for(self._pool.conninfo), thread_id=str(case_id))
@@ -857,10 +869,13 @@ class CaseStore:
             status = "Our team could not approve that request."
         else:
             status = ""
-        messages = [
-            {"role": m["role"], "text": m["body"] if m["role"] == "user" else _for_customer(m["decision"], m["body"])}
-            for m in self._messages(case_id)
-        ]
+        messages, spanish = [], False
+        for m in self._messages(case_id):
+            if m["role"] == "user":
+                spanish = is_spanish(m["body"])
+                messages.append({"role": "user", "text": m["body"]})
+            else:
+                messages.append({"role": m["role"], "text": _for_customer(m["decision"], m["body"], spanish)})
         return {"status": status, "messages": messages}
 
     def _resume(self, case_id: uuid.UUID, decision: str) -> None:
@@ -1106,16 +1121,22 @@ def _plain(decision: str, text: str) -> Draft:
 
 
 _CHAT_TEXT = {
+    "proposal": "Thanks. A person on our team will review this request. Nothing is approved yet.",
     "escalate": "A specialist will follow up with you about this.",
     "duplicate": "This request is already with our team.",
 }
+# The same fixed texts for a customer who wrote in Spanish (issue #81).
+_CHAT_TEXT_ES = {
+    "proposal": "Gracias. Una persona de nuestro equipo revisará esta solicitud. Todavía no hay nada aprobado.",
+    "escalate": "Un especialista se pondrá en contacto con usted sobre esto.",
+    "duplicate": "Esta solicitud ya está con nuestro equipo.",
+}
 
 
-def _for_customer(decision: str | None, body: str) -> str:
+def _for_customer(decision: str | None, body: str, spanish: bool = False) -> str:
     """The checked reply a customer sees. A proposal or a handoff packet is never shown as is."""
-    if decision in PROPOSALS:
-        return "Thanks. A person on our team will review this request. Nothing is approved yet."
-    return _CHAT_TEXT.get(decision or "", body)
+    key = "proposal" if decision in PROPOSALS else (decision or "")
+    return (_CHAT_TEXT_ES if spanish else _CHAT_TEXT).get(key, body)
 
 
 def _noted(draft: Draft, note: str) -> Draft:
