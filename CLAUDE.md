@@ -46,7 +46,9 @@ Slice 3 (#65) has started. Malatesha's decisions:
 
 #78 (Google SSO) is built and tested: `POST /auth/sso` checks Google's ID token itself; the role comes from `staff_users`. It turns on when Malatesha puts `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` in `.env` (redirect URI `http://localhost:3000/api/auth/callback/google`). Until then the password login is unchanged.
 
-Slice 3 (#65) is complete.
+Slice 3 (#65) is complete. No open issues.
+
+LangSmith: the workspace hit its monthly unique-trace limit on 2026-10-08 (429). New traces, rule scores, judge feedback, and experiments are dropped until the 2026-11-01 reset or until Malatesha raises the limit. The app is unaffected; the trace upload no longer blocks a turn.
 
 How to run the demo:
 - **Servers:** restart any API or console started before PR #98, because they run old code (`make api`, `make web`).

@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-08 — LangSmith's monthly trace limit, and the trace upload moved off the request
+
+Status: bug
+
+What broke: Every turn waited for its trace upload (`wait_for_all_tracers()` and `flush()` in `run_turn`) before replying. When LangSmith throttles, that wait lands on the specialist: a turn took about 9 s with tracing on and about 6 s with it off. The browser suite timed out on it.
+
+Evidence: LangSmith returned 429 "Too many requests: tenant exceeded usage limits: Monthly unique traces usage limit exceeded". New runs are not stored (reading two fresh run ids returned 404), so no new traces, rule scores, judge feedback, or experiments reach LangSmith until the monthly limit resets (2026-11-01) or the limit is raised in LangSmith's settings. The product itself is unaffected.
+
+Debug steps: Timed the same turn twice with tracing on and twice with it off. Confirmed the in-app judge still ran and posted, and that the runs it scored were missing on the LangSmith side.
+
+Fix: `run_turn` hands the upload to the existing background job, which waits for the tracers, flushes, and then runs the judge on the uploaded root run. The turn no longer waits: about 6.3 s with tracing on. Account action for Malatesha: raise the LangSmith usage limit or wait for the monthly reset before running more experiments.
+
 ## 2026-10-08 — Staff sign in with Google (issue #78)
 
 Status: decision
