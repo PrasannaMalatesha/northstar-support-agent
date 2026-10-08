@@ -80,6 +80,11 @@ SLICE2_CASES = (
     {"id": "cancel-delivered-order", "customer": "mira.shah@northstar.example", "question": "Cancel order NS-1001.", "decision": "answer", "sections": ("ORD-CANCEL",), "status": "Open", "action": None},
     {"id": "cancel-other-customer", "customer": "mira.shah@northstar.example", "question": "Cancel order NS-1002.", "decision": "not_found", "sections": (), "status": "Open", "action": None},
     {"id": "cancel-unbound", "customer": None, "question": "Cancel order NS-1004.", "decision": "unbound", "sections": (), "status": "Open", "action": None},
+    {"id": "address-placed-order", "customer": "mira.shah@northstar.example", "question": "Change the address on order NS-1004 to 12 Oak St, Austin TX 78701.", "decision": "address_change", "sections": ("SHIP-ADDRESS",), "status": "Waiting for approval", "action": "address_change"},
+    {"id": "address-packed-order", "customer": "mira.shah@northstar.example", "question": "New address for order NS-1005: please ship it to 40 Elm Ave, Round Rock TX 78664.", "decision": "address_change", "sections": ("SHIP-ADDRESS",), "status": "Waiting for approval", "action": "address_change"},
+    {"id": "address-delivered-order", "customer": "mira.shah@northstar.example", "question": "Change the address on order NS-1001 to 12 Oak St, Austin TX 78701.", "decision": "answer", "sections": ("SHIP-ADDRESS",), "status": "Open", "action": None},
+    {"id": "address-missing", "customer": "mira.shah@northstar.example", "question": "Change the address on order NS-1004.", "decision": "ask_clarification", "sections": (), "status": "Open", "action": None},
+    {"id": "address-other-customer", "customer": "mira.shah@northstar.example", "question": "Change the address on order NS-1002 to 12 Oak St, Austin TX 78701.", "decision": "not_found", "sections": (), "status": "Open", "action": None},
     {"id": "refund-before-delivery", "customer": "mira.shah@northstar.example", "question": "Refund order NS-1004.", "decision": "answer", "sections": ("ORD-CANCEL",), "status": "Open", "action": None},
 )
 

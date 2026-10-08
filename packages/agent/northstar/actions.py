@@ -117,14 +117,41 @@ def cancel(question: str, order: Order, today: date) -> Proposal | Reply:
     )
 
 
+# The text after the last "to", when it holds a street number.
+_NEW_ADDRESS = re.compile(r".*\bto\s+(.*\d.*?)\s*\.?\s*$", re.IGNORECASE | re.DOTALL)
+
+
+def address_change(question: str, order: Order, today: date) -> Proposal | Reply:
+    # SHIP-ADDRESS: placed or packed only. No reroute once the package has left.
+    if order.status not in ("placed", "packed"):
+        return Reply(
+            "answer",
+            f"Order {order.id} is {order.status}, so the ship-to address cannot be changed. "
+            "Northstar does not reroute a package that has left the building. (SHIP-ADDRESS)",
+            ("SHIP-ADDRESS",),
+        )
+    found = _NEW_ADDRESS.search(question)
+    if found is None:
+        return Reply("ask_clarification", "What is the new ship-to address? Nothing is proposed.")
+    # The draft leaves the address out. The lead sees it on the proposal.
+    return Proposal(
+        "address_change",
+        None,
+        ("SHIP-ADDRESS",),
+        f"Change the ship-to address on order {order.id}. A person records the change. (SHIP-ADDRESS)",
+        details=f"New address: {found.group(1).strip()}",
+    )
+
+
 # First match wins, so a narrower request sits above a broader one.
 ACTIONS: tuple[GatedAction, ...] = (
     GatedAction("cancel", re.compile(r"\bcancel"), cancel, "Which order id? Nothing is cancelled."),
+    GatedAction("address_change", re.compile(r"\baddress\b"), address_change, "Which order id? No address is changed."),
     GatedAction("refund", re.compile(r"\brefunds?\b|\bcredit\b"), refund, "Which order id? No amount is proposed."),
 )
 
 # Every decision that is a proposal. These pause for a lead and must cite a section.
-PROPOSALS = frozenset({"approve_refund", "partial_credit", "deny", "cancel"})
+PROPOSALS = frozenset({"approve_refund", "partial_credit", "deny", "cancel", "address_change"})
 
 _ORDER_ID = re.compile(r"\bNS-\d+\b", re.IGNORECASE)
 # A policy question with no order id is a handbook question, not a request to act.

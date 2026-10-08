@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — Change the ship-to address before shipment (issue #69)
+
+Status: decision
+
+What changed: An address request is a gated action with no amount. A placed or packed order becomes an `address_change` proposal citing SHIP-ADDRESS. The new address (the text after the last "to" that holds a street number) goes on the proposal details for the lead, and the customer-facing draft leaves it out. A shipped or delivered order gets a cited answer. A request with no new address asks for it. An amount edit on this proposal is refused with 422.
+
+Evidence: SHIP-ADDRESS in `data/policy/shipping-and-delivery.md` allows placed or packed. ORD-MODIFY covers quantity and size changes, not the address.
+
+Debug steps: `apps/api/tests/test_address_change.py`, plus five rows in `SLICE2_CASES`.
+
+Fix: `packages/agent/northstar/actions.py`, `evals/labeled.py`.
+
 ## 2026-10-07 — Cancel an unshipped order (issue #68)
 
 Status: decision
