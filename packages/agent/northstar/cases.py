@@ -20,6 +20,7 @@ from northstar.handbook import ABSTAIN_TEXT, Draft, guard_draft
 from northstar import online
 from northstar.online import record_edit, record_judge
 from northstar.preferences import recall, remember, stated
+from northstar.retrieve import retrieved_answer
 from northstar.privacy import SECRET_REPLY, has_secret, screen
 
 # ponytail: 1_000 tokens stands in for one handbook draft. Replace with the
@@ -933,6 +934,9 @@ class CaseStore:
         if named:
             return _plain("catalog", "\n".join(_catalog_line(row) for row in named))
         if any(phrase in lowered for phrase in _CATALOG_PHRASES):
+            # "How much is standard shipping?" names no item. A handbook section answers it.
+            if retrieved_answer(question).decision == "answer":
+                return None
             return _plain("abstain", "I don't have that item in the catalog.")
         return None
 
@@ -1068,7 +1072,11 @@ def _is_stale(proposed_at: datetime | None, now: datetime) -> bool:
 
 
 def _asks_for_an_order(question: str) -> bool:
-    return re.search(r"\borders?\b", question.lower()) is not None
+    """A particular order ("my order", "order 1001"), not a policy question that says "the order"."""
+    return _ONE_ORDER.search(question) is not None
+
+
+_ONE_ORDER = re.compile(r"\b(my|our|your|his|her|their|this|that)\s+orders?\b|\borders?\s*(#|no\.?|number)?\s*\d", re.IGNORECASE)
 
 
 def _blocked(question: str) -> bool:

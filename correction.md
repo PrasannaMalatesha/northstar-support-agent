@@ -13,6 +13,20 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — Policy questions that mention an order were refused or sent to the wrong path
+
+Status: bug
+
+What broke: Through the desk, handbook questions failed in three ways. With no customer bound, any question with the word "order" got "Pick a customer first" (R29 applied to "the same order", "each order line", "after the order is placed"). A question starting with "If" or ending in ", right?" that said "refund" or "return" was read as a refund request and got "Which order id?". "How much is standard shipping?" hit the catalog phrases and got "I don't have that item in the catalog" (the "price" quirk was the same bug).
+
+Evidence: The first LangSmith v1 experiment (issue #101) missed duplicate-hold, one-exchange, one-promo, shipping-price, and wrong-item in all three repetitions. A new test that sends every handbook row through the desk with no customer also missed gift-return.
+
+Debug steps: Traced each miss to its rule. `_asks_for_an_order` matched the bare word. `_POLICY_QUESTION` only knew questions that start with can, how, what, and similar. `_catalog_draft` abstained on "how much" or "price" even when no catalog item was named.
+
+Fix: An order question is now a particular order ("my order", "order 1001"); R29 still blocks those. `_POLICY_QUESTION` also accepts "If ...?" and "..., right?". With no item named, the catalog steps aside when a handbook section answers. Test: `test_handbook_rows_answer_the_same_through_the_desk_with_no_customer`.
+
+Live result after the fix, code checks only (`results/langsmith_test.md`, `results/langsmith_dev.md`): test split v1 `label_match` 1.0 over 3 repetitions (was 0.667), v0 0.733. Dev split with the slice 2 cases (tag `slice2`, 42 cases) v1 1.0, v0 0.333. Citations 1.0 and case status 1.0 on both.
+
 ## 2026-10-07 — The golden dataset and the v0-to-v1 experiments now run in LangSmith (issue #101)
 
 Status: bug
@@ -30,10 +44,10 @@ Fix: `evals/experiments.py`.
 - The first run hung on a judge call with no timeout, and the app's sampled online judge ran on every experiment turn and competed for the free judge model. The judge now has a 60 s timeout, retries, and an `InMemoryRateLimiter` ([rate limits](https://docs.langchain.com/langsmith/handle-model-rate-limiting)). The experiment harness turns the online judge off. The free model sometimes returns no choices, so `answer_correct` tries three times.
 - The OpenRouter key then hit its free daily cap (`free-models-per-day`, 50 requests, reset 2026-10-08 19:00 CDT). Until it resets or credits are added, the quiz judge and the live groundedness judge both fail; the live one only logs. `run --no-judge` scores with the code checks alone, and the judge scores are added by a later `run` once the key has quota.
 
-First LangSmith result (test split, tag `slice1`, 3 repetitions, code checks only; full list in `results/langsmith_experiments.md`):
+First LangSmith result (test split, tag `slice1`, 3 repetitions, code checks only; full list in `results/langsmith_test.md`):
 - v0 `label_match` 0.733, v1 0.667. Citations valid 1.0 for both. v1 case status 1.0. Router `correct` 1.0 on 14 rows. The same misses in all three repetitions.
 - v1 sends handbook questions through the real desk. The earlier local comparison (`results/v0_v1.md`) sent them to the handbook answerer, so it hid this.
-- Open, not fixed: with no customer bound, a policy question that mentions "order" gets `unbound` (duplicate-hold, one-exchange, one-promo). shipping-price hits the known "price" catalog quirk. wrong-item gets `ask_clarification`. These are desk routing bugs, recorded here as honest failures.
+- Fixed in the next entry. With no customer bound, a policy question that mentions "order" gets `unbound` (duplicate-hold, one-exchange, one-promo). shipping-price hits the known "price" catalog quirk. wrong-item gets `ask_clarification`. These are desk routing bugs, recorded here as honest failures.
 
 ## 2026-10-07 — An amount edit now confirms with the ticket id
 

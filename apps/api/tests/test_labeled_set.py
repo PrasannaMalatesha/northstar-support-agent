@@ -3,11 +3,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import psycopg
+import pytest
 
 from evals.labeled import (
     CASES,
     comparison_text,
     judges_may_score_test,
+    matches,
     problems,
     score_handbook,
     score_naive,
@@ -173,3 +175,24 @@ def test_held_out_v0_against_v1_is_recorded(client, clock):
     assert recorded.startswith(text)
     held_out = {case["id"] for case in CASES if case["split"] == "test"}
     assert set(picks_from(recorded)) == held_out
+
+
+@pytest.mark.parametrize("client", [{"daily_token_budget": 1_000_000}], indirect=True)
+def test_handbook_rows_answer_the_same_through_the_desk_with_no_customer(client, clock):
+    # A policy question that says "the order" is not an order lookup (R29 still blocks a real one).
+    headers = _login(client, "specialist@northstar.example", "northstar-specialist")
+    lead_headers = _login(client, "lead@northstar.example", "northstar-lead")
+    missed = []
+    for case in CASES:
+        if case["channel"] != "handbook":
+            continue
+        _fresh(client, headers, lead_headers, clock)
+        body = client.post("/cases/current/messages", headers=headers, json={"question": case["question"]}).json()
+        draft = body["messages"][-1]
+        if not matches(case, draft["decision"], draft["citations"], draft["body"]):
+            missed.append((case["id"], draft["decision"]))
+    assert missed == []
+    for question in ("Where is my order?", "Where is order 1001?"):
+        _fresh(client, headers, lead_headers, clock)
+        body = client.post("/cases/current/messages", headers=headers, json={"question": question}).json()
+        assert body["messages"][-1]["decision"] == "unbound", question
