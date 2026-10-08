@@ -192,9 +192,10 @@ async function logoutAction() {
 export default async function DeskPage({
   searchParams,
 }: {
-  searchParams: Promise<{ ticket?: string }>;
+  searchParams: Promise<{ ticket?: string; case?: string }>;
 }) {
-  const ticket = (await searchParams).ticket;
+  const params = await searchParams;
+  const ticket = params.ticket;
   const session = await auth();
   if (!session?.user) {
     redirect("/login");
@@ -203,7 +204,9 @@ export default async function DeskPage({
   if (!access) {
     redirect("/login");
   }
-  const response = await fetch(`${apiUrl}/cases/current`, {
+  // A lead opens a queue row as a read-only case desk.
+  const viewing = session.user.role === "lead" && typeof params.case === "string" && /^[0-9a-f-]{36}$/.test(params.case);
+  const response = await fetch(viewing ? `${apiUrl}/cases/${params.case}` : `${apiUrl}/cases/current`, {
     headers: { Authorization: `Bearer ${access}` },
     cache: "no-store",
   });
@@ -223,6 +226,8 @@ export default async function DeskPage({
                 amount_cents: number | null;
                 order_id: string;
                 details: string;
+                citations: string[];
+                order_summary: string;
                 age_seconds: number;
                 stale: boolean;
                 question: string;
@@ -277,6 +282,11 @@ export default async function DeskPage({
               </p>
               <p>{item.question}</p>
               <p>{item.draft}</p>
+              {item.order_summary ? <p className="quiet">Order: {item.order_summary}</p> : null}
+              {item.citations.length > 0 ? <p className="quiet">Cited: {item.citations.join(", ")}</p> : null}
+              <p>
+                <a href={`/desk?case=${item.case_id}`}>Open case {item.order_id}</a>
+              </p>
               <form action={approveAction}>
                 <input type="hidden" name="case_id" value={item.case_id} />
                 <button type="submit">Approve</button>
@@ -303,6 +313,11 @@ export default async function DeskPage({
           ))}
         </section>
       ) : null}
+      {viewing ? (
+        <p>
+          Reading case {params.case}. <a href="/desk">Back to my desk</a>
+        </p>
+      ) : null}
       <p className="quiet">
         {current.status}
         {current.stale ? " Stale." : ""}
@@ -325,7 +340,7 @@ export default async function DeskPage({
           </ul>
         )}
       </section>
-      {current.status === "Resolved" || current.status === "Escalated" ? (
+      {!viewing && (current.status === "Resolved" || current.status === "Escalated") ? (
         <form action={newCaseAction}>
           <button type="submit">New case</button>
         </form>
@@ -371,7 +386,7 @@ export default async function DeskPage({
           </article>
         ))
       )}
-      {current.status === "Open" ? (
+      {!viewing && current.status === "Open" ? (
         <>
           <form action={bindAction}>
             <label>

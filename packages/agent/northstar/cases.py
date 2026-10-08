@@ -197,6 +197,12 @@ class CaseStore:
     def current(self, staff_id: uuid.UUID) -> dict:
         return self._view(self._open(staff_id))
 
+    def read(self, case_id: uuid.UUID) -> dict | None:
+        """Any case, read-only, for a lead deciding from the queue."""
+        if self._case_row(case_id) is None:
+            return None
+        return self._view(case_id)
+
     def start_new(self, staff_id: uuid.UUID) -> dict:
         with self._pool.connection() as conn:
             row = conn.execute(
@@ -534,6 +540,8 @@ class CaseStore:
                 """
                 SELECT cases.id, cases.proposal_action, cases.proposal_amount_cents,
                        cases.proposal_order_id, cases.proposal_details, cases.proposed_at,
+                       cases.proposal_citations, orders.lines, orders.status AS order_status,
+                       orders.total_cents,
                        (SELECT body FROM case_messages
                         WHERE case_id = cases.id AND role = 'user'
                         ORDER BY id DESC LIMIT 1) AS question,
@@ -541,6 +549,7 @@ class CaseStore:
                         WHERE case_id = cases.id AND role = 'assistant'
                         ORDER BY id DESC LIMIT 1) AS draft
                 FROM cases
+                LEFT JOIN orders ON orders.id = cases.proposal_order_id
                 WHERE cases.status = 'Waiting for approval'
                 ORDER BY cases.proposed_at
                 """
@@ -556,6 +565,12 @@ class CaseStore:
                     "amount_cents": row["proposal_amount_cents"],
                     "order_id": row["proposal_order_id"],
                     "details": row["proposal_details"],
+                    "citations": list(row["proposal_citations"] or []),
+                    "order_summary": (
+                        ""
+                        if row["lines"] is None
+                        else f"{row['lines']}. Status: {row['order_status']}. Total: {row['total_cents']} cents."
+                    ),
                     "age_seconds": age,
                     "stale": _is_stale(proposed_at, now),
                     "question": row["question"] or "",
