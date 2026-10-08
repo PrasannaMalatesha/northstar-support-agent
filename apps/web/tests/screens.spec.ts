@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 
@@ -72,4 +74,55 @@ test("login, the case desk, and the waiting list pass axe and the keyboard", asy
   await tabTo(page, "Approve");
   await page.keyboard.press("Enter");
   await expect(page.getByText("No proposal is waiting.")).toBeVisible();
+});
+
+test("a damaged-item photo is attached and described for the lead", async ({ page }) => {
+  await signIn(page, "specialist@northstar.example", "northstar-specialist");
+  // Start from a fresh case: close whatever the specialist left open.
+  const resolve = page.getByRole("button", { name: "Resolve" });
+  if (await resolve.isVisible()) {
+    await page.getByLabel("Final text").fill("Closed.");
+    await resolve.click();
+  }
+  await page.getByRole("button", { name: "New case" }).click();
+  await page.getByLabel("Customer email or phone").fill("mira.shah@northstar.example");
+  await page.getByRole("button", { name: "Bind" }).click();
+  await expect(page.getByText("Mira Shah")).toBeVisible();
+
+  await page.getByLabel("Handbook question").fill("The desk lamp on order NS-1011 arrived damaged.");
+  await page
+    .getByLabel("Photo of the item (optional)")
+    .setInputFiles(path.resolve(process.cwd(), "../../evals/photos/lamp-cracked.png"));
+  await page.getByRole("button", { name: "Ask" }).click();
+  // With a model key the verdict is shown; without one (CI) the photo is noted as not described.
+  // A live turn plus the vision call can take several seconds.
+  await expect(page.getByText(/Photo: (visible damage|attached, but it could not be described)/).first()).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByText("REF-DAMAGED").first()).toBeVisible();
+  await noViolations(page);
+});
+
+test("a customer chat starts from an order and email, and a refund waits for a person", async ({ page }) => {
+  await page.goto("/chat");
+  await noViolations(page);
+  await page.getByLabel("Order id").fill("NS-1006");
+  await page.getByLabel("Email").fill("someone.else@example.com");
+  await page.getByRole("button", { name: "Start chat" }).click();
+  await expect(page.getByText("That order and email do not match.")).toBeVisible();
+
+  await page.getByLabel("Order id").fill("NS-1006");
+  await page.getByLabel("Email").fill("mira.shah@northstar.example");
+  await page.getByRole("button", { name: "Start chat" }).click();
+  await expect(page.getByLabel("Your message")).toBeVisible();
+  await noViolations(page);
+
+  await page.getByLabel("Your message").fill("Please refund order NS-1006.");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText(/Nothing is approved yet/).first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/Amount/)).toHaveCount(0);
+  await noViolations(page);
+
+  await page.getByRole("button", { name: "End chat" }).click();
+  await expect(page.getByRole("button", { name: "Start chat" })).toBeVisible();
 });

@@ -32,7 +32,23 @@ Results are in `results/langsmith_test.md` and `results/langsmith_dev.md`.
 
 7. The first specialist edit was promoted (`edit-01a11a09`, "Do you sell surfboard wax?", tag `edit-20261008-054354`, 68 cases). The dev experiment on that version showed the gap (v1 abstained where the specialist said the product is not carried). Fixed: "Do you sell / carry / stock / have" now asks the catalog (R21). Dev split v1 1.0 on all 43 cases.
 
-Next, only when Malatesha asks: slice 3 (#65), the hand-recorded LangSmith part of the walkthrough, or promoting `dev` → `uat`.
+8. 2026-10-08: `dev` was promoted to `uat` (PR #109) and `uat` to `prod` (PR #110). All three held the same tree (`a9eb298`), CI green on each. `main` was not touched. No deploy hooks exist, so nothing deployed outside GitHub.
+
+Slice 3 (#65) has started. Malatesha's decisions:
+- Build order: #81 (Spanish) → #80 (damaged-item photo) → #78 (SSO) → #79 (customer chat). The demo comes after slice 3.
+- #81: Spanish is the one extra language. Built (`northstar/language.py`, `SPANISH_CASES`, tag `slice3-es`), live 1.0 on all checks over 3 repetitions. The parked branch `feature/spanish-replies` is superseded.
+- #78: Google single sign-on. Built; on when the client id and secret are in `.env`.
+- #79: a customer identifies with an order id plus the email on that order (no account, no password). Record this in `prd.md` in the #79 PR before building.
+
+#80 (damaged-item photo) is built: `northstar/photo.py`, the REF-DAMAGED rule in `actions.refund`, seed order NS-1011, labeled `PHOTO_CASES` (tag `slice3-photo`).
+
+#79 (customer chat) is built: `/chat` in the console; `POST /chat/start`, `GET /chat`, `POST /chat/messages` in the API; chat token audience `northstar-chat`; chat cases owned by the disabled `chat@northstar.example`. Same agent and gates; only identity, scope, and the customer view differ. `prd.md` records the order id plus email decision.
+
+#78 (Google SSO) is built and tested: `POST /auth/sso` checks Google's ID token itself; the role comes from `staff_users`. It turns on when Malatesha puts `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` in `.env` (redirect URI `http://localhost:3000/api/auth/callback/google`). Until then the password login is unchanged.
+
+Slice 3 (#65) is complete. No open issues.
+
+LangSmith: the workspace hit its monthly unique-trace limit on 2026-10-08 (429). New traces, rule scores, judge feedback, and experiments are dropped until the 2026-11-01 reset or until Malatesha raises the limit. The app is unaffected; the trace upload no longer blocks a turn.
 
 How to run the demo:
 - **Servers:** restart any API or console started before PR #98, because they run old code (`make api`, `make web`).

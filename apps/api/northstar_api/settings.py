@@ -1,3 +1,4 @@
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,3 +10,5 @@ class Settings(BaseSettings):
     console_origin: str = "http://localhost:3000"
     request_limit: int = 60
     daily_token_budget: int = 20_000
+    # Google single sign-on is on when this is set (issue #78). The same variable the console reads.
+    google_client_id: str = Field(default="", validation_alias=AliasChoices("AUTH_GOOGLE_ID", "google_client_id"))

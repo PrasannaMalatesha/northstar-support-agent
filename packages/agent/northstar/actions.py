@@ -98,6 +98,16 @@ def refund(question: str, order: Order, today: date) -> Proposal | Reply:
     if order.refunds != "none" or order.ticket_actions & {"approve_refund", "partial_credit", "cancel"}:
         return Proposal("deny", 0, ("REF-DENY",), "Deny. Amount: 0 cents. The line was already refunded. (REF-DENY)")
     age = (today - order.delivered_on).days
+    # REF-DAMAGED: damage reported within 14 days of delivery is a full refund of the line and its
+    # outbound shipping. After 14 days the ordinary return window below applies.
+    if _DAMAGED.search(question) and age <= 14:
+        return Proposal(
+            "approve_refund",
+            order.total_cents,
+            ("REF-DAMAGED",),
+            f"Approve. Amount: {order.total_cents} cents, the line and its outbound shipping. "
+            f"The item arrived damaged, reported {age} days after delivery. (REF-DAMAGED)",
+        )
     if age > RETURN_DAYS[order.category]:
         return Proposal(
             "deny",
@@ -235,6 +245,10 @@ _EXCLUDED = re.compile(
     r"\b(stain|stained|cut|cuts|normal wear|worn out|misuse|misused|dropped|change of mind|changed my mind|don't like|dislike)\b",
     re.IGNORECASE,
 )
+_DAMAGED = re.compile(
+    r"\bdamag|\barrived (broken|cracked|torn|smashed|shattered)\b|\bnot as described\b",
+    re.IGNORECASE,
+)
 _DEFECT = re.compile(
     r"\bdefect|\bbroke|\bstopped working\b|\bfault|\bcrack|\b(does not|doesn't|won't) (work|turn on|charge)\b|\bseam\b|\bzipper\b",
     re.IGNORECASE,
@@ -364,7 +378,7 @@ ACTIONS: tuple[GatedAction, ...] = (
     GatedAction("exchange", re.compile(r"\bexchange\b|\bswap\b"), exchange, "Which order id? Nothing is exchanged."),
     GatedAction("warranty_claim", re.compile(r"\bwarranty\b|" + _DEFECT.pattern), warranty, "Which order id? No claim is drafted."),
     GatedAction("shipment", re.compile(_NOT_ARRIVED), shipment, "Which order id? Nothing is proposed."),
-    GatedAction("refund", re.compile(r"\brefunds?\b|\bcredit\b"), refund, "Which order id? No amount is proposed."),
+    GatedAction("refund", re.compile(r"\brefunds?\b|\bcredit\b|" + _DAMAGED.pattern), refund, "Which order id? No amount is proposed."),
 )
 
 # Every decision that is a proposal, and the action family it belongs to. A proposal
