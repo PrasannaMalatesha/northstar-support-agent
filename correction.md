@@ -13,6 +13,27 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — Give the next step for a lost or delayed shipment (issue #75)
+
+Status: decision
+
+What changed: A report of a late or missing package is a gated action. The next step follows the order record:
+- **Delivered, under 48 hours:** wait and check the door (SHIP-DNR).
+- **Delivered, after 48 hours:** escalate to a person, with no refund (SHIP-DNR, ESC-WHEN).
+- **Placed or packed:** not shipped yet (SHIP-SLA).
+- **Shipped, inside 7 business days of the ship date:** not late (SHIP-SLA).
+- **Shipped, inside the next 2 business days:** past the window, not yet delayed (SHIP-SLA, SHIP-DELAY).
+- **Shipped, after that and before day 14:** delayed, so wait, with no refund (SHIP-DELAY, SHIP-LOST).
+- **Shipped, on day 14 or later:** lost. A refund proposal for the order total, with no return (SHIP-LOST).
+
+No carrier, tracking number, or scan is stated. The handbook's lost-package remedy is a refund, so no replacement is proposed for a lost package. REP-REPLACEMENT covers damaged or defective items only. Business days skip Saturday and Sunday.
+
+Evidence: SHIP-SLA, SHIP-DELAY, SHIP-LOST, and SHIP-DNR in `data/policy/shipping-and-delivery.md`.
+
+Debug steps: `apps/api/tests/test_shipment.py` tests each window on the pure rule with fixed dates. With a Tuesday ship date, the delayed stretch has no days, because 9 business days already reaches day 14. The labeled rows (lost, inside the window, delivered but not received, not shipped) do not depend on the date.
+
+Fix: `packages/agent/northstar/actions.py`, `cases.py`, `evals/labeled.py`.
+
 ## 2026-10-07 — Draft a warranty claim behind the approval gate (issue #74)
 
 Status: decision
