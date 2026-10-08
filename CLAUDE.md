@@ -26,10 +26,11 @@ Last session, in order:
 3. PR #103: desk bugs on policy questions that mention an order, start with "If", end in ", right?", or say "how much"/"price", found by the first v1 experiment. Fixed.
 4. PR #104: the judge is `deepseek/deepseek-v4.1-flash` on OpenRouter (key only in `.env`). The offline quiz judge is a majority of three and was recalibrated 5 of 5.
 5. The judge found the contact answer showing "[email]": `screen()` masked the handbook's own support address. Fixed with `PUBLISHED_EMAILS`. Live after the fix: test split v1 answer_correct 1.0, label_match 1.0, status 1.0 (v0 label_match 0.733). Router 1.0.
+6. A LangSmith online LLM judge (`langsmith_groundedness`, rule "Northstar groundedness (LangSmith judge)") now scores every LangGraph root run in `northstar-local`, beside the in-app judge. The prompt is the whole handbook, rebuilt from `data/policy` by `uv run python -m northstar.online`; rerun it after a handbook change (delete the rule first, it is created once).
 
 Results are in `results/langsmith_test.md` and `results/langsmith_dev.md`.
 
-Next, only when Malatesha asks: slice 3 (#65), moving the live judge to a LangSmith online rule, promoting a queued specialist edit, the hand-recorded LangSmith part of the walkthrough, or promoting `dev` → `uat`.
+Next, only when Malatesha asks: slice 3 (#65), promoting a queued specialist edit, the hand-recorded LangSmith part of the walkthrough, or promoting `dev` → `uat`.
 
 How to run the demo:
 - **Servers:** restart any API or console started before PR #98, because they run old code (`make api`, `make web`).
@@ -117,7 +118,7 @@ No open slice 1 issues. #22 closed after branch protection made a CI miss block 
 Unfinished work, not GitHub tickets unless Malatesha opens them:
 
 - Screen recording: the console part records with `npx playwright test -c playwright.walkthrough.config.ts` (from `apps/web`, fresh database). The LangSmith part (a failed eval and its trace) is recorded by hand.
-- Only the `northstar-local` LangSmith project exists. When `northstar-dev`/`uat`/`prod` get traffic, attach the safety rule with `uv run python -m northstar.online` and that `LANGSMITH_PROJECT`.
+- Only the `northstar-local` LangSmith project exists. When `northstar-dev`/`uat`/`prod` get traffic, attach the safety rule and the LangSmith groundedness judge with `uv run python -m northstar.online` and that `LANGSMITH_PROJECT`.
 - Turns that end before the graph (request limit, secret block, slur/jailbreak block) have no LangGraph trace. That is by design: a deterministic block ends before any model call.
 - `:memory:.ses` in the repo root is a stray untracked file. Malatesha asked to keep it for now. Do not commit or delete it.
 - Do not start slice 2.

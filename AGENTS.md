@@ -326,7 +326,7 @@ Dataset splits: `train_judge` (few-shot calibration only), `dev`, `test`. Slices
 
 Calibrate LLM judges on human labels before trusting `test` or online scores. Record agreement in `results/judge_calibration.md`.
 
-Online evaluators are reference-free, filtered to root runs, sampled for cost. Low groundedness or reply quality goes to an annotation queue. Schema or safety failures are candidates for the golden dataset. A separate automation rule can alert after the feedback key exists.
+Online evaluators are reference-free, filtered to root runs, sampled for cost. Two LangSmith rules sit on the tracing project, created from code by `uv run python -m northstar.online`: the `safety` code evaluator and the `langsmith_groundedness` LLM judge (the OpenRouter key is a LangSmith workspace secret). The in-app sampled judge (`policy_groundedness`) runs beside them. Low groundedness or reply quality goes to an annotation queue. Schema or safety failures are candidates for the golden dataset. A separate automation rule can alert after the feedback key exists.
 
 Feedback loop: live trace, online score, human label, dataset version, offline experiment, ship only when `test` does not regress.
 

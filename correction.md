@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-08 — A LangSmith online LLM judge runs beside the in-app judge
+
+Status: decision
+
+What changed: Malatesha asked for the LangSmith-side judge as well. Rule "Northstar groundedness (LangSmith judge)" on `northstar-local` runs `deepseek/deepseek-v4.1-flash` on every LangGraph root run and writes `langsmith_groundedness`. The in-app sampled judge (`policy_groundedness`) and the safety rule are unchanged, so nothing in the API path changed.
+
+Evidence: Two live turns scored 1 (a cited return-window answer, and an abstain with no policy claim). A planted reply that cited REF-CATEGORY but claimed 90 days and free courier pickup scored 0, with the comment that the section says 30 days.
+
+Debug steps: A rule sees only the trace (question, reply, cited ids), not the section text the in-app judge loads. The whole handbook is about 52 KB, so the prompt carries all of it. Rule creation follows the run-rules API (`RunRulesCreateSchema`, structured evaluator: prompt, schema, variable mapping, serialized model) from the LangSmith OpenAPI spec. Rules apply in 5-minute windows, so scores arrive a few minutes after the turn.
+
+Fix: `attach_groundedness_rule()` in `online.py`, run by `uv run python -m northstar.online` beside `attach_safety_rule()`. The prompt is rebuilt from `data/policy`. The model references a LangSmith workspace secret `OPENROUTER_API_KEY`, set from `.env` and never printed or committed. The rule is created once; after a handbook change, delete it and rerun. Test: `test_langsmith_judge.py` (prompt carries every section and the trace fields, and holds no key).
+
 ## 2026-10-08 — The contact answer showed "[email]" instead of the support address
 
 Status: bug
