@@ -519,7 +519,7 @@ class CaseStore:
     def _catalog_row(self, item: str):
         with self._pool.connection() as conn:
             return conn.execute(
-                "SELECT sizes, in_stock FROM catalog_items WHERE lower(name) = lower(%s)",
+                "SELECT sizes, in_stock, final_sale FROM catalog_items WHERE lower(name) = lower(%s)",
                 (item,),
             ).fetchone()
 
@@ -726,6 +726,7 @@ class CaseStore:
             ticket_actions=self._ticket_actions(order_id),
             item_sizes=tuple(size.strip().upper() for size in catalog["sizes"].split(",")) if catalog else (),
             item_in_stock=catalog["in_stock"] if catalog else None,
+            item_final_sale=catalog["final_sale"] if catalog else None,
         )
         planned = action.rule(question, order, now.date())
         if isinstance(planned, Reply):
@@ -887,6 +888,8 @@ _ORDERS = (
     ("NS-1004", "mira.shah@northstar.example", "placed", "2026-10-06", "Enamel kettle", "none", 6400, None, "home and kitchen", None),
     ("NS-1005", "mira.shah@northstar.example", "packed", "2026-10-05", "Canvas tote", "none", 4800, None, "bags and accessories", None),
     ("NS-1006", "mira.shah@northstar.example", "delivered", "2026-09-27", "Rain jacket, size S", "none", 9600, "2026-10-01", "apparel and footwear", "2026-09-28"),
+    ("NS-1007", "mira.shah@northstar.example", "delivered", "2026-07-28", "Desk speaker", "none", 8900, "2026-08-01", "small electronics", "2026-07-29"),
+    ("NS-1008", "mira.shah@northstar.example", "delivered", "2026-02-25", "Linen shirt, size M", "none", 5400, "2026-03-01", "apparel and footwear", "2026-02-26"),
 )
 
 
@@ -895,6 +898,8 @@ _CATALOG = (
     ("Canvas tote", "bags and accessories", 4800, "one size", True, False),
     ("Trail earbuds", "small electronics", 7900, "one size", False, True),
     ("Rain jacket", "apparel and footwear", 9600, "S, M, L", False, False),
+    ("Desk speaker", "small electronics", 8900, "one size", True, False),
+    ("Linen shirt", "apparel and footwear", 5400, "S, M, L", True, False),
 )
 _MISSING_FIELDS = ("material", "review", "rating", "weight", "fabric", "color")
 _CATALOG_PHRASES = ("in stock", "how much", "price", "final sale", "what size")

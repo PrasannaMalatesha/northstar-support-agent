@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — Draft a warranty claim behind the approval gate (issue #74)
+
+Status: decision
+
+What changed: A warranty or defect report is a gated action with no amount. The return window applies first, so a defect inside the window takes the refund path. Coverage starts the day after the window ends and runs 90 days for apparel and footwear and 1 year for everything else. A covered defect becomes a `warranty_claim` proposal citing WAR-COVERAGE and WAR-CLAIM, with the coverage end date and the customer's description for the lead. The draft says a person submits the claim and never says it is approved. Wear, cuts, stains, misuse, damage after delivery, a change of mind, and final-sale lines get WAR-EXCLUSIONS. Ended coverage gets WAR-COVERAGE. A report with no defect described asks for one. The seed adds a desk speaker past its return window and a linen shirt past its coverage.
+
+Evidence: `data/policy/warranty.md`.
+
+Debug steps: `apps/api/tests/test_warranty.py`, plus five rows in `SLICE2_CASES`.
+
+Fix: `packages/agent/northstar/actions.py`, `cases.py`, `evals/labeled.py`.
+
 ## 2026-10-07 — Propose an exchange instead of a refund (issue #70)
 
 Status: decision

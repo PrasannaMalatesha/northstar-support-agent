@@ -90,6 +90,11 @@ SLICE2_CASES = (
     {"id": "exchange-home-item", "customer": "mira.shah@northstar.example", "question": "Exchange the kettle on order NS-1004 for a large one.", "decision": "answer", "sections": ("EXC-ELIGIBILITY",), "status": "Open", "action": None},
     {"id": "exchange-different-item", "customer": "mira.shah@northstar.example", "question": "Exchange order NS-1001 for a scarf instead.", "decision": "answer", "sections": ("EXC-DIFFERENT-ITEM",), "status": "Open", "action": None},
     {"id": "exchange-no-size", "customer": "mira.shah@northstar.example", "question": "Exchange order NS-1001.", "decision": "ask_clarification", "sections": (), "status": "Open", "action": None},
+    {"id": "warranty-covered", "customer": "mira.shah@northstar.example", "question": "The desk speaker on order NS-1007 stopped working.", "decision": "warranty_claim", "sections": ("WAR-COVERAGE", "WAR-CLAIM"), "status": "Waiting for approval", "action": "warranty_claim"},
+    {"id": "warranty-expired", "customer": "mira.shah@northstar.example", "question": "The seam on the linen shirt from order NS-1008 split. It is a defect.", "decision": "answer", "sections": ("WAR-COVERAGE",), "status": "Open", "action": None},
+    {"id": "warranty-excluded", "customer": "mira.shah@northstar.example", "question": "Warranty for order NS-1007: the cable has a cut after I dropped it.", "decision": "answer", "sections": ("WAR-EXCLUSIONS",), "status": "Open", "action": None},
+    {"id": "warranty-no-defect", "customer": "mira.shah@northstar.example", "question": "Warranty claim for order NS-1007.", "decision": "ask_clarification", "sections": (), "status": "Open", "action": None},
+    {"id": "defect-inside-window", "customer": "mira.shah@northstar.example", "question": "The coat on order NS-1001 has a defect.", "decision": "approve_refund", "sections": ("REF-ELIGIBILITY", "REF-CATEGORY"), "status": "Waiting for approval", "action": "approve_refund"},
     {"id": "refund-before-delivery", "customer": "mira.shah@northstar.example", "question": "Refund order NS-1004.", "decision": "answer", "sections": ("ORD-CANCEL",), "status": "Open", "action": None},
 )
 
