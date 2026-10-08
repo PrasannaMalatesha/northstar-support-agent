@@ -508,13 +508,20 @@ class CaseStore:
             return None
         return str(row["id"]), row["amount_cents"]
 
-    def _ticket_for_order(self, order_id: str) -> bool:
+    def _ticket_actions(self, order_id: str) -> frozenset[str]:
         with self._pool.connection() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM tickets WHERE order_id = %s LIMIT 1",
+            rows = conn.execute(
+                "SELECT DISTINCT action FROM tickets WHERE order_id = %s",
                 (order_id,),
+            ).fetchall()
+        return frozenset(row["action"] or "" for row in rows)
+
+    def _catalog_row(self, item: str):
+        with self._pool.connection() as conn:
+            return conn.execute(
+                "SELECT sizes, in_stock FROM catalog_items WHERE lower(name) = lower(%s)",
+                (item,),
             ).fetchone()
-        return row is not None
 
     def _ticket_id(self, case_id: uuid.UUID) -> str | None:
         row = self._current_ticket(case_id)
@@ -704,6 +711,8 @@ class CaseStore:
             return _plain("unknown", "That order id is unknown.")
         if not row["owned"]:
             return _plain("not_found", "Not found for this customer.")
+        item = row["lines"].split(",")[0].strip()
+        catalog = self._catalog_row(item)
         order = Order(
             id=row["id"],
             status=row["status"],
@@ -714,7 +723,9 @@ class CaseStore:
             refunds=row["refunds"],
             total_cents=row["total_cents"],
             shipped_on=row["shipped_on"],
-            ticketed=self._ticket_for_order(order_id),
+            ticket_actions=self._ticket_actions(order_id),
+            item_sizes=tuple(size.strip().upper() for size in catalog["sizes"].split(",")) if catalog else (),
+            item_in_stock=catalog["in_stock"] if catalog else None,
         )
         planned = action.rule(question, order, now.date())
         if isinstance(planned, Reply):
@@ -875,6 +886,7 @@ _ORDERS = (
     ("NS-1003", "mira.shah@northstar.example", "delivered", "2026-09-01", "Wool scarf", "refunded", 2000, "2026-09-20", "apparel and footwear", "2026-09-02"),
     ("NS-1004", "mira.shah@northstar.example", "placed", "2026-10-06", "Enamel kettle", "none", 6400, None, "home and kitchen", None),
     ("NS-1005", "mira.shah@northstar.example", "packed", "2026-10-05", "Canvas tote", "none", 4800, None, "bags and accessories", None),
+    ("NS-1006", "mira.shah@northstar.example", "delivered", "2026-09-27", "Rain jacket, size S", "none", 9600, "2026-10-01", "apparel and footwear", "2026-09-28"),
 )
 
 
@@ -882,6 +894,7 @@ _CATALOG = (
     ("Wool coat", "apparel and footwear", 12800, "S, M, L", True, False),
     ("Canvas tote", "bags and accessories", 4800, "one size", True, False),
     ("Trail earbuds", "small electronics", 7900, "one size", False, True),
+    ("Rain jacket", "apparel and footwear", 9600, "S, M, L", False, False),
 )
 _MISSING_FIELDS = ("material", "review", "rating", "weight", "fabric", "color")
 _CATALOG_PHRASES = ("in stock", "how much", "price", "final sale", "what size")
