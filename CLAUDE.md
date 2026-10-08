@@ -18,12 +18,28 @@ git pull origin dev
 
 Slice 1 P0 is complete. #22 and #1 are closed. `uat`, `dev`, `prod`, and `main` are protected: a PR is required, `Test API` and `Lint and build console` must pass, admins included, no force pushes. Every change goes through a PR into `dev`.
 
-Slice 2 and slice 3 tickets exist:
+Slice 2 (P1) is built and merged into `dev` (PRs #85 to #96). Every sub-issue of [#64](https://github.com/PrasannaMalatesha/northstar-support-agent/issues/64) is closed:
+- **Gated actions:** one table in `packages/agent/northstar/actions.py` holds cancel, address change, exchange, warranty claim, shipment, and refund. Each has a pure handbook rule. `FAMILIES` is the one source for proposal decisions.
+- **Duplicates:** one ticket per order and action family (R15).
+- **Lead tools:** the queue with citations and an order summary, plus a read-only case view (R16). The handbook gaps list (R19).
+- **Escalation:** the handoff packet with an owner (R17).
+- **Edit pairs:** sent to the LangSmith `Northstar specialist edits` queue (R18).
+- **Preferences:** contact channel in `PostgresStore` (R20).
 
-- [#64](https://github.com/PrasannaMalatesha/northstar-support-agent/issues/64) Spec, slice 2 (P1, R13 to R20). Sub-issues #66 to #77.
-- [#65](https://github.com/PrasannaMalatesha/northstar-support-agent/issues/65) Spec, slice 3 (P2). Sub-issues #78 to #81. Blocked by #64: slice 3 starts only after slice 2 is in use.
+Slice 2 labeled desk cases are in `SLICE2_CASES` (`evals/labeled.py`), a new dataset version beside the frozen 40.
 
-Start with any slice 2 ticket that has no open blocker. #66 (a gated proposal carries any action) unblocks #68, #69, #70, #71, #72, #74, #75. #67, #73, #76, #77 can start now. #79 (customer chat) has no `ready-for-agent` label: `prd.md` must first decide how a customer identifies themselves in the chat. Do not create more tickets unless asked.
+Slice 3 ([#65](https://github.com/PrasannaMalatesha/northstar-support-agent/issues/65), sub-issues #78 to #81) is next only when Malatesha asks. Its rule is "after slice 2 is in use". #79 (customer chat) still has no `ready-for-agent` label: `prd.md` must first decide how a customer identifies themselves in the chat. Do not create more tickets unless asked.
+
+Seed orders for demos (customer Mira Shah). Dates hold for the tests' fixed clock (2026-10-06) and a few days after:
+- **NS-1001**, wool coat, delivered: refund, exchange to L, defect inside the window.
+- **NS-1003**, scarf, already refunded: deny.
+- **NS-1004**, kettle, placed: cancel, address change.
+- **NS-1005**, tote, packed: no cancel, address change allowed.
+- **NS-1006**, rain jacket, out of stock: exchange refused (EXC-STOCK), delivered but not received.
+- **NS-1007**, desk speaker, past its return window: warranty claim.
+- **NS-1008**, linen shirt: warranty expired.
+- **NS-1009**, shipped 2026-09-16 with no delivery: lost, refund proposal.
+- **NS-1010**, shipped 2026-10-05: inside the delivery window.
 
 Do not invent deploy hooks. Do not promote `dev` → `uat` or `prod` unless Malatesha asks. Phase checkboxes in `docs/plans/slice-1-build-phases.md` stay unchecked except phase 0, unless asked. `PostgresStore` is slice 2.
 
@@ -61,7 +77,7 @@ No open slice 1 issues. #22 closed after branch protection made a CI miss block 
 
 Unfinished work, not GitHub tickets unless Malatesha opens them:
 
-- Screen recording for the submission walkthrough is not done.
+- Screen recording: the console part records with `npx playwright test -c playwright.walkthrough.config.ts` (from `apps/web`, fresh database). The LangSmith part (a failed eval and its trace) is recorded by hand.
 - Only the `northstar-local` LangSmith project exists. When `northstar-dev`/`uat`/`prod` get traffic, attach the safety rule with `uv run python -m northstar.online` and that `LANGSMITH_PROJECT`.
 - Turns that end before the graph (request limit, secret block, slur/jailbreak block) have no LangGraph trace. That is by design: a deterministic block ends before any model call.
 - `:memory:.ses` in the repo root is a stray untracked file. Malatesha asked to keep it for now. Do not commit or delete it.
@@ -111,5 +127,5 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 ## Continue checklist
 
 1. Sync `dev`.
-2. Pick a slice 2 ticket from the frontier above (start with #66), or ask Malatesha about the screen recording or promoting `dev` → `uat`.
+2. Ask Malatesha what is next: slice 3 (#65), the LangSmith part of the recording, or promoting `dev` → `uat`.
 3. Rewrite the Where to start / Still open sections of this file for the next stop.
