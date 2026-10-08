@@ -41,6 +41,10 @@ class RefreshBody(BaseModel):
     refresh_token: str = Field(min_length=10, max_length=500)
 
 
+class SsoBody(BaseModel):
+    id_token: str = Field(min_length=20, max_length=8000)
+
+
 class ChatStartBody(BaseModel):
     order_id: str = Field(min_length=3, max_length=20)
     email: str = Field(min_length=3, max_length=320)
@@ -154,6 +158,22 @@ def create_app(
             "access_token": pair.access_token,
             "refresh_token": pair.refresh_token,
             "token_type": "bearer",
+            "expires_in": pair.expires_in,
+            "name": pair.name,
+            "role": pair.role,
+        }
+
+    @app.post("/auth/sso")
+    def sso_login(body: SsoBody) -> dict:
+        if not settings.google_client_id:
+            raise HTTPException(status_code=404, detail="Single sign-on is off.")
+        try:
+            pair = identity.sso_login(body.id_token, settings.google_client_id)
+        except LoginInvalid as exc:
+            raise HTTPException(status_code=401, detail="This Google account cannot sign in here.") from exc
+        return {
+            "access_token": pair.access_token,
+            "refresh_token": pair.refresh_token,
             "expires_in": pair.expires_in,
             "name": pair.name,
             "role": pair.role,

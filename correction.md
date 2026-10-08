@@ -13,6 +13,21 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-08 — Staff sign in with Google (issue #78)
+
+Status: decision
+
+What changed: Google single sign-on, on when `AUTH_GOOGLE_ID` is set (the console and the API read the same variable). Then the login page offers only "Sign in with Google", and the password action refuses. With it unset, nothing changes.
+- The console never decides who someone is. Auth.js sends Google's ID token to `POST /auth/sso`. The API checks the signature against Google's published keys (PyJWT `PyJWKClient`), the audience (our client id), the issuer, the expiry, and `email_verified`, then looks up the staff record by email. The role comes from `staff_users`, never from a claim. An unknown or disabled account is refused. The API then issues the same staff tokens as a password login.
+- Auth.js has no database adapter, so the same `user` object goes from the `signIn` callback to `jwt()`; the exchange happens once in `signIn`, and a refusal sends the person back to `/login?error=sso` with no session. Read in `@auth/core` `lib/actions/callback/index.js`.
+- Tokens stay in the server-side session cookie, as before. Audit: `sso_login_success`, `sso_login_failure`; logout is audited as before. A disabled account's existing sessions stop working (the token check already reads `disabled_at`).
+
+Evidence: `test_sso.py` (11 tests, a local RSA key stands in for Google's): a verified account gets its staff role even when the token claims another; unknown email, unverified email, wrong audience, wrong issuer, expired, wrong signature, and a disabled account are each refused and audited; SSO is off without a client id; a disabled member loses the session; logout is audited. In a real browser with a placeholder client id, `/login` showed one Google button and no password field, and the button went to accounts.google.com with our client id. With SSO off, the browser suite passes unchanged.
+
+Debug steps: None needed for SSO. While checking it, the browser suite was slow because LangSmith returned 429 "Monthly unique traces usage limit exceeded"; see the next entry.
+
+Fix: As above. Malatesha creates the Google OAuth client and puts `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` in `.env`.
+
 ## 2026-10-08 — Spanish replies (issue #81)
 
 Status: decision
