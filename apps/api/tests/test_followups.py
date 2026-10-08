@@ -65,8 +65,10 @@ def test_approval_is_audited_and_a_second_refund_is_denied(client, clock):
         headers=headers,
         json={"question": "Please refund order NS-1001 again."},
     ).json()
-    assert duplicate["action"] == "deny"
-    assert "REF-DENY" in duplicate["policy_citations"]
+    # R15: the refund ticket already exists, so no new proposal is made and the ticket is named (R6 holds).
+    assert duplicate["messages"][-1]["decision"] == "duplicate"
+    assert ticket_id in duplicate["messages"][-1]["body"]
+    assert duplicate["action"] is None
     assert duplicate["ticket_id"] is None
 
     with psycopg.connect(_TEST_URL) as conn:

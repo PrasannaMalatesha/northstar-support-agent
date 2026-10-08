@@ -11,7 +11,7 @@ import re
 import uuid
 from datetime import datetime
 
-from northstar.actions import Order, Proposal, Reply, gated, order_id as _order_id
+from northstar.actions import FAMILIES, Order, Proposal, Reply, family_decisions, gated, order_id as _order_id
 from northstar.clock import Clock
 from northstar.escalate import handoff
 from northstar.graph import TurnTools, resume_turn, run_turn
@@ -732,7 +732,34 @@ class CaseStore:
         if isinstance(planned, Reply):
             match = {section_id: "strong" for section_id in planned.citations}
             return Draft(planned.decision, planned.text, planned.citations, match, ())
+        existing = self._existing(case_id, order_id, planned.action)
+        if existing is not None:
+            return _plain("duplicate", existing)
         return self._propose(case_id, staff_id, order_id, planned, now)
+
+    def _existing(self, case_id: uuid.UUID, order_id: str, decision: str) -> str | None:
+        """An open or completed ticket, or a proposal waiting elsewhere, for this order and action family (R15)."""
+        family = FAMILIES[decision]
+        decisions = family_decisions(decision)
+        with self._pool.connection() as conn:
+            ticket = conn.execute(
+                "SELECT id FROM tickets WHERE order_id = %s AND action = ANY(%s) LIMIT 1",
+                (order_id, decisions),
+            ).fetchone()
+            waiting = conn.execute(
+                """
+                SELECT id FROM cases
+                WHERE status = 'Waiting for approval' AND proposal_order_id = %s
+                  AND proposal_action = ANY(%s) AND id <> %s
+                LIMIT 1
+                """,
+                (order_id, decisions, case_id),
+            ).fetchone()
+        if ticket is not None:
+            return f"Order {order_id} already has a {family} ticket: {ticket['id']}. No new proposal was made."
+        if waiting is not None:
+            return f"Order {order_id} already has a {family} proposal waiting for a lead on case {waiting['id']}. No new proposal was made."
+        return None
 
     def _propose(
         self,

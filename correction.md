@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — A second proposal for the same order and action is blocked (issue #71)
+
+Status: decision
+
+What changed: Each proposal decision belongs to an action family (refund, cancel, address change, exchange, warranty claim). The family map in `northstar.actions` is also the source of `PROPOSALS`. After a rule proposes, the case store looks for a ticket on the same order and family, or a proposal for them waiting on another case. When one exists, the draft is `duplicate`: it names that ticket or case and makes no proposal. A different family on the same order is still proposed. The refund rule now treats only refund or cancel tickets as already paid. Before this, an exchange or address ticket made a later refund say "already refunded".
+
+Evidence: R15 in `prd.md`. A slice 1 test expected a deny proposal for a second refund after a ticket. It now expects the duplicate reply that names the ticket, which still meets R6. The `refunds` field case (NS-1003) still proposes a deny citing REF-DENY.
+
+Debug steps: `apps/api/tests/test_duplicates.py`.
+
+Fix: `packages/agent/northstar/actions.py`, `cases.py`.
+
 ## 2026-10-07 — Give the next step for a lost or delayed shipment (issue #75)
 
 Status: decision
