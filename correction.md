@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — A lead sees the handbook gaps list (issue #76)
+
+Status: decision
+
+What changed: An abstain now keeps the top reranked sections that fell under `RETRIEVAL_SCORE_TAU`, with their scores. They travel through the graph state and are saved on the message. `GET /gaps` (lead only) groups handbook abstains by question, ignoring case, spacing, and trailing punctuation. Each group shows how often it happened, when it last happened, and the best score per retrieved section. Groups are ordered by frequency, then by most recent. Catalog abstains are not handbook gaps and are left out. The questions are the screened text already saved on the case, so no customer personal data appears. The list is read-only and changes no handbook section. Slice 1 has no policy owner login, so the lead sees the list on the case desk.
+
+Evidence: R19 in `prd.md`.
+
+Debug steps: `apps/api/tests/test_gaps.py` sets the threshold above 1, so a covered question abstains with its weak sections. A threshold of 0.999 was not enough, because FlashRank scores the gold section above it. The local Playwright screens spec passes with the new section.
+
+Fix: `packages/agent/northstar/retrieve.py`, `handbook.py`, `graph.py`, `cases.py`, `apps/api/northstar_api/main.py`, the desk page.
+
 ## 2026-10-07 — An escalation hands off a packet that stands alone (issue #73)
 
 Status: decision

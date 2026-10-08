@@ -56,7 +56,8 @@ def retrieved_answer(question: str, directory: Path | None = None) -> Draft:
     )
     kept = [row for row in results if float(row["score"]) >= _tau()][:KEEP]
     if not kept:
-        return _abstain()
+        weak = tuple((str(row["id"]), round(float(row["score"]), 3)) for row in results[:KEEP])
+        return Draft("abstain", ABSTAIN_TEXT, (), {}, retrieved=weak)
 
     best = float(kept[0]["score"])
     lines = []

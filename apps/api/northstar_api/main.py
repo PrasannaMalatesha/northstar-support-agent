@@ -217,6 +217,10 @@ def create_app(
     def waiting_approvals(staff=Depends(require_lead)) -> list:
         return cases.pending()
 
+    @app.get("/gaps")
+    def handbook_gaps(staff=Depends(require_lead)) -> list:
+        return cases.gaps()
+
     @app.get("/cases/{case_id}")
     def read_case(case_id: str, staff=Depends(require_lead)) -> dict:
         try:

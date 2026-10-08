@@ -34,6 +34,7 @@ class TurnState(TypedDict, total=False):
     citations: list[str]
     match: dict[str, str]
     steps: list[str]
+    retrieved: list[list]
     followup: str
 
 
@@ -194,6 +195,7 @@ def _fields(draft: Draft) -> dict:
         "citations": list(draft.citations),
         "match": dict(draft.match),
         "steps": list(draft.steps),
+        "retrieved": [[section_id, score] for section_id, score in draft.retrieved],
     }
 
 
@@ -315,4 +317,5 @@ def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None 
         result["match"],
         tuple(result["steps"]),
         run_id,
+        tuple((section_id, float(score)) for section_id, score in result.get("retrieved") or ()),
     )
