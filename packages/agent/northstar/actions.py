@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Callable
 
 
@@ -30,6 +30,7 @@ class Order:
     # The catalog row for the line item, when there is one.
     item_sizes: tuple[str, ...] = ()
     item_in_stock: bool | None = None
+    item_final_sale: bool | None = None
 
     @property
     def ticketed(self) -> bool:
@@ -229,16 +230,67 @@ def exchange(question: str, order: Order, today: date) -> Proposal | Reply:
     )
 
 
+_EXCLUDED = re.compile(
+    r"\b(stain|stained|cut|cuts|normal wear|worn out|misuse|misused|dropped|change of mind|changed my mind|don't like|dislike)\b",
+    re.IGNORECASE,
+)
+_DEFECT = re.compile(
+    r"\bdefect|\bbroke|\bstopped working\b|\bfault|\bcrack|\b(does not|doesn't|won't) (work|turn on|charge)\b|\bseam\b|\bzipper\b",
+    re.IGNORECASE,
+)
+
+
+def warranty(question: str, order: Order, today: date) -> Proposal | Reply:
+    # WAR-COVERAGE: the return window first, then 90 days for apparel and 1 year for the rest.
+    if order.delivered_on is None:
+        return Reply(
+            "answer",
+            f"Order {order.id} has not been delivered, so neither the return window nor the warranty has started. (WAR-COVERAGE)",
+            ("WAR-COVERAGE",),
+        )
+    if order.item_final_sale or _EXCLUDED.search(question):
+        return Reply(
+            "answer",
+            "The warranty does not cover normal wear, cuts, stains, misuse, damage after delivery, final-sale lines, "
+            "or a change of mind. Those follow the returns handbook. (WAR-EXCLUSIONS)",
+            ("WAR-EXCLUSIONS",),
+        )
+    window_end = order.delivered_on + timedelta(days=RETURN_DAYS[order.category])
+    if today <= window_end:
+        # Inside the return window a defect is a return, not a warranty claim.
+        return refund(question, order, today)
+    coverage_end = window_end + timedelta(days=90 if order.category == "apparel and footwear" else 365)
+    if today > coverage_end:
+        return Reply(
+            "answer",
+            f"Warranty coverage for the {order.item} ended on {coverage_end.isoformat()}, so the claim is denied. (WAR-COVERAGE)",
+            ("WAR-COVERAGE",),
+        )
+    if not _DEFECT.search(question):
+        return Reply("ask_clarification", "Describe the defect on the line. Nothing is drafted yet.")
+    return Proposal(
+        "warranty_claim",
+        None,
+        ("WAR-COVERAGE", "WAR-CLAIM"),
+        f"Warranty claim drafted for the {order.item} on order {order.id}. Coverage runs through "
+        f"{coverage_end.isoformat()}. A person submits the claim, and its outcome is not known yet. (WAR-COVERAGE, WAR-CLAIM)",
+        details=f"{order.item}: {question.strip()[:300]}",
+    )
+
+
 # First match wins, so a narrower request sits above a broader one.
 ACTIONS: tuple[GatedAction, ...] = (
     GatedAction("cancel", re.compile(r"\bcancel"), cancel, "Which order id? Nothing is cancelled."),
     GatedAction("address_change", re.compile(r"\baddress\b"), address_change, "Which order id? No address is changed."),
     GatedAction("exchange", re.compile(r"\bexchange\b|\bswap\b"), exchange, "Which order id? Nothing is exchanged."),
+    GatedAction("warranty_claim", re.compile(r"\bwarranty\b|" + _DEFECT.pattern), warranty, "Which order id? No claim is drafted."),
     GatedAction("refund", re.compile(r"\brefunds?\b|\bcredit\b"), refund, "Which order id? No amount is proposed."),
 )
 
 # Every decision that is a proposal. These pause for a lead and must cite a section.
-PROPOSALS = frozenset({"approve_refund", "partial_credit", "deny", "cancel", "address_change", "exchange"})
+PROPOSALS = frozenset(
+    {"approve_refund", "partial_credit", "deny", "cancel", "address_change", "exchange", "warranty_claim"}
+)
 
 _ORDER_ID = re.compile(r"\bNS-\d+\b", re.IGNORECASE)
 # A policy question with no order id is a handbook question, not a request to act.
