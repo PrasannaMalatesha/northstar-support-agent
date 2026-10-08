@@ -1,10 +1,10 @@
 # LangSmith experiments
 
-## dev split, dataset tag slice2, 42 cases, 1 repetition(s), code checks only, no judge
+## dev split, dataset tag edit-20261008-054354, 43 cases, 1 repetition(s), with the quiz judge
 
-### v0: `northstar-v0-dev-a3318190`
+### v0: `northstar-v0-dev-d7a075cd`
 
-Mean scores: {'citation_valid': 1.0, 'label_match': 0.333}
+Mean scores: {'answer_correct': 0.9, 'citation_valid': 1.0, 'label_match': 0.349}
 
 Misses:
 - address-delivered-order: label_match (got abstain, wanted answer)
@@ -16,6 +16,7 @@ Misses:
 - cancel-placed-order: label_match (got answer, wanted cancel)
 - cancel-unbound: label_match (got answer, wanted unbound)
 - defect-inside-window: label_match (got abstain, wanted approve_refund)
+- edit-01a11a09: answer_correct (no comment)
 - exchange-home-item: label_match (got abstain, wanted answer)
 - exchange-in-stock: label_match (got answer, wanted exchange)
 - exchange-no-size: label_match (got answer, wanted ask_clarification)
@@ -36,14 +37,14 @@ Misses:
 - warranty-no-defect: label_match (got answer, wanted ask_clarification)
 - wool-coat-price: label_match (got answer, wanted catalog)
 
-### v1: `northstar-v1-dev-316cb87b`
+### v1: `northstar-v1-dev-643ca97d`
 
-Mean scores: {'citation_valid': 1.0, 'label_match': 1.0, 'status_correct': 1.0}
+Mean scores: {'answer_correct': 0.9, 'citation_valid': 1.0, 'label_match': 1.0, 'status_correct': 1.0}
 
 Misses:
-- none
+- edit-01a11a09: answer_correct (no comment)
 
-### router: `northstar-router-ed5dd8cf`
+### router: `northstar-router-57f6a4ed`
 
 Mean scores: {'correct': 1.0}
 

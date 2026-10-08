@@ -30,7 +30,9 @@ Last session, in order:
 
 Results are in `results/langsmith_test.md` and `results/langsmith_dev.md`.
 
-Next, only when Malatesha asks: slice 3 (#65), promoting a queued specialist edit, the hand-recorded LangSmith part of the walkthrough, or promoting `dev` → `uat`.
+7. The first specialist edit was promoted (`edit-01a11a09`, "Do you sell surfboard wax?", tag `edit-20261008-054354`, 68 cases). The dev experiment on that version shows the gap: v1 abstains where the specialist said the product is not carried.
+
+Next, only when Malatesha asks: slice 3 (#65), the hand-recorded LangSmith part of the walkthrough, or promoting `dev` → `uat`.
 
 How to run the demo:
 - **Servers:** restart any API or console started before PR #98, because they run old code (`make api`, `make web`).
