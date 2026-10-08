@@ -44,3 +44,32 @@ def test_an_id_with_digit_runs_is_not_mistaken_for_a_card():
     assert screen(f"Ticket: {ticket}.") == f"Ticket: {ticket}."
     assert screen("Card 4111 1111 1111 1111.") == "Card ************1111."
     assert screen("Card 4111-1111-1111-1111") == "Card ************1111"
+
+
+def test_the_published_support_address_is_shown_and_a_customer_address_is_not():
+    from northstar.privacy import screen
+
+    assert screen("Customers reach Northstar at help@northstar.example.") == "Customers reach Northstar at help@northstar.example."
+    assert screen("Customers reach Northstar at HELP@northstar.example.") == "Customers reach Northstar at HELP@northstar.example."
+    # Same domain, but a customer: still masked.
+    assert screen("Bound to mira.shah@northstar.example.") == "Bound to [email]."
+    assert screen("Write to ana@example.com.") == "Write to [email]."
+
+
+def test_every_address_the_handbook_publishes_is_on_the_list():
+    import re
+
+    from northstar.handbook import policy_dir
+    from northstar.privacy import PUBLISHED_EMAILS
+
+    found = {
+        address.lower()
+        for page in policy_dir().rglob("*.md")
+        for address in re.findall(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", page.read_text())
+    }
+    assert found and found <= PUBLISHED_EMAILS
+
+
+def test_the_contact_answer_keeps_the_support_address(client):
+    body = _ask(client, "What email should a customer use to contact support?")
+    assert "help@northstar.example" in body["messages"][-1]["body"]

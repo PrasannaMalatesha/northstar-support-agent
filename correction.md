@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-08 — The contact answer showed "[email]" instead of the support address
+
+Status: bug
+
+What broke: Asked for the support email, the desk replied "Customers reach Northstar at [email]." `screen()` masks every email address in saved text, including the one address the handbook publishes.
+
+Evidence: The judged LangSmith experiment (`northstar-v1-test-204f6302`) scored contact `answer_correct` 0 in all three repetitions. The decision and the citation (FAQ-CONTACT) were right, so no code check caught it.
+
+Debug steps: Compared the v1 output to the reference. Listed every address in `data/policy`: only `help@northstar.example`. A domain allowlist would not do: seed customers use the same domain (`mira.shah@northstar.example`).
+
+Fix: `PUBLISHED_EMAILS` in `privacy.py` holds the handbook's published addresses, and `screen()` leaves only those unmasked. A customer address on the same domain is still masked. Tests: the published address is kept and a customer address is not; every address in the handbook is on the list; the contact answer through the desk keeps the address (fails without the fix). Live after the fix: test split v1 `answer_correct` 1.0, `label_match` 1.0.
+
 ## 2026-10-07 — The judge model is now deepseek/deepseek-v4.1-flash, with a majority vote
 
 Status: decision
@@ -25,7 +37,7 @@ Debug steps: Recalibrated before letting the new judge score the test split (iss
 
 Fix: The offline quiz judge takes the majority of three calls. Two calibration runs then agreed 5 of 5, and `results/judge_calibration.md` records that. The judge rate limiter is 2 requests a second for the paid model. The live groundedness judge stays at one call, because it is sampled and only writes feedback.
 
-Judged result (test split, 3 repetitions, `results/langsmith_test.md`): v0 `answer_correct` 1.0, `label_match` 0.733. v1 `answer_correct` 0.909, `label_match` 1.0, status 1.0. Router 1.0. The v1 judge miss is real: on contact, the PII screen masks Northstar's own support address, so the reply says "Customers reach Northstar at [email]". Open, not fixed here.
+Judged result (test split, 3 repetitions, `results/langsmith_test.md`): v0 `answer_correct` 1.0, `label_match` 0.733. v1 `answer_correct` 0.909, `label_match` 1.0, status 1.0. Router 1.0. The v1 judge miss is real: on contact, the PII screen masks Northstar's own support address, so the reply says "Customers reach Northstar at [email]". Fixed: see "The contact answer showed \"[email]\" instead of the support address".
 
 ## 2026-10-07 — Policy questions that mention an order were refused or sent to the wrong path
 
@@ -61,7 +73,7 @@ Fix: `evals/experiments.py`.
 First LangSmith result (test split, tag `slice1`, 3 repetitions, code checks only; full list in `results/langsmith_test.md`):
 - v0 `label_match` 0.733, v1 0.667. Citations valid 1.0 for both. v1 case status 1.0. Router `correct` 1.0 on 14 rows. The same misses in all three repetitions.
 - v1 sends handbook questions through the real desk. The earlier local comparison (`results/v0_v1.md`) sent them to the handbook answerer, so it hid this.
-- Fixed in the next entry. With no customer bound, a policy question that mentions "order" gets `unbound` (duplicate-hold, one-exchange, one-promo). shipping-price hits the known "price" catalog quirk. wrong-item gets `ask_clarification`. These are desk routing bugs, recorded here as honest failures.
+- Fixed (see "Policy questions that mention an order were refused or sent to the wrong path"). With no customer bound, a policy question that mentions "order" gets `unbound` (duplicate-hold, one-exchange, one-promo). shipping-price hits the known "price" catalog quirk. wrong-item gets `ask_clarification`. These are desk routing bugs, recorded here as honest failures.
 
 ## 2026-10-07 — An amount edit now confirms with the ticket id
 

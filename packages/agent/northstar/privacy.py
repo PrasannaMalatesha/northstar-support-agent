@@ -14,6 +14,9 @@ _PHONE = re.compile(r"(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}"
 _CARD = re.compile(r"(?<![0-9A-Za-z])(?:\d[ -]?){12,18}\d(?![0-9A-Za-z])")
 _SECRET = re.compile(r"sk-[A-Za-z0-9-]{8,}|api[_-]?key\s*[:=]\s*\S+", re.IGNORECASE)
 
+# Northstar's own addresses, published in the handbook (FAQ-CONTACT). Not personal data, so never masked.
+PUBLISHED_EMAILS = frozenset({"help@northstar.example"})
+
 SECRET_REPLY = "This message contains a secret and was stopped."
 
 
@@ -42,6 +45,6 @@ def screen(text: str) -> str:
         return ("*" * (len(digits) - 4)) + digits[-4:]
 
     text = _SECRET.sub("[secret]", text)
-    text = _EMAIL.sub("[email]", text)
+    text = _EMAIL.sub(lambda m: m.group(0) if m.group(0).lower() in PUBLISHED_EMAILS else "[email]", text)
     text = _PHONE.sub("[phone]", text)
     return _CARD.sub(mask_card, text)
