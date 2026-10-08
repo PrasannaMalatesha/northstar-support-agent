@@ -2,7 +2,7 @@
 
 Read `AGENTS.md` before changing behavior. Product: `prd.md`. Spec: `docs/spec.md`. Build order: `docs/plans/slice-1-build-phases.md`. This file is only the stop point. It is not a second spec.
 
-Slices 1 and 2 are done. Owner: Malatesha (`PrasannaMalatesha`). Every commit, PR, issue, and release is authored by Malatesha only. No `Co-authored-by`, no "Made with" footers, no tool credits in commits, PRs, docs, or code. Do not print or commit `.env`.
+Slices 1, 2, and 3 are done. Owner: Malatesha (`PrasannaMalatesha`). Every commit, PR, issue, and release is authored by Malatesha only. No `Co-authored-by`, no "Made with" footers, no tool credits in commits, PRs, docs, or code. Do not print or commit `.env`.
 
 Canonical docs win over this file when they disagree. Update this file when you stop so the next session can continue.
 
@@ -16,39 +16,23 @@ git checkout dev
 git pull origin dev
 ```
 
-## Stop point (2026-10-08, before the demo)
+## Stop point (2026-10-08, after slice 3)
 
-Tip of `origin/dev`: the merge of the published-email fix (after PR #104). CI green. Nothing promoted to `uat` or `prod`.
+`dev`, `uat`, `prod`, and `main` hold the same tree (`a76d7e5`): PRs #117 (dev→uat), #118 (uat→prod), #119 (prod→main), CI green on each. Branch protection on all four: a PR, `Test API` and `Lint and build console`, admins included. No deploy hooks exist, so nothing deploys outside GitHub. `uv run pytest`: 183 passed. Browser suite (`npx playwright test` in `apps/web`): 3 passed with axe. **No open GitHub issues.**
 
-Last session, in order:
-1. Slices 1 and 2 were already done and closed. The console walkthrough was re-recorded after PR #98 (local, gitignored, in `apps/web/walkthrough-results/`).
-2. Issue #101, closed (PRs #102, #104): the golden dataset and experiments run in LangSmith. `make evals-sync` writes `Northstar Support: E2E` (tags `slice1`, `slice2`) and `Northstar Support: Intent Classifier`. `make evals` (or `uv run python -m evals.experiments run --split test --repetitions 3`) runs v0, v1 (the live desk), and the router with the code checks and the quiz judge. `promote <run_id>` adds a reviewed specialist edit under a new tag.
-3. PR #103: desk bugs on policy questions that mention an order, start with "If", end in ", right?", or say "how much"/"price", found by the first v1 experiment. Fixed.
-4. PR #104: the judge is `deepseek/deepseek-v4.1-flash` on OpenRouter (key only in `.env`). The offline quiz judge is a majority of three and was recalibrated 5 of 5.
-5. The judge found the contact answer showing "[email]": `screen()` masked the handbook's own support address. Fixed with `PUBLISHED_EMAILS`. Live after the fix: test split v1 answer_correct 1.0, label_match 1.0, status 1.0 (v0 label_match 0.733). Router 1.0.
-6. A LangSmith online LLM judge (`langsmith_groundedness`, rule "Northstar groundedness (LangSmith judge)") now scores every LangGraph root run in `northstar-local`, beside the in-app judge. The prompt is the whole handbook, rebuilt from `data/policy` by `uv run python -m northstar.online`; rerun it after a handbook change (delete the rule first, it is created once).
+What exists now, beyond slices 1 and 2:
+- **LangSmith evals (#101):** `make evals-sync` writes `Northstar Support: E2E` (tags `slice1` 40, `slice2` 67, `edit-20261008-054354` 68, `slice3-es` 74, `slice3-photo` 77) and `Northstar Support: Intent Classifier` (14). `uv run python -m evals.experiments run --split test --repetitions 3` runs v0, v1 (the live desk), and the router; `--version <tag>` limits to one version's cases; results go to `results/langsmith_<split>[_<version>].md`. `promote <run_id> --decision ... --sections ...` adds a reviewed specialist edit under a new tag (one done: the surfboard-wax case).
+- **Judges:** `deepseek/deepseek-v4.1-flash` on OpenRouter (key only in `.env`, also a LangSmith workspace secret for the rule). The offline quiz judge is a majority of three, calibrated 5 of 5. Three online checks on `northstar-local`: the `safety` code rule, the LangSmith LLM judge rule (`langsmith_groundedness`, prompt rebuilt from `data/policy` by `uv run python -m northstar.online`; delete the rule first to rebuild), and the in-app sampled judge (`policy_groundedness`).
+- **Fixes the experiments found:** policy questions that mention an order or start with "If" (#103); the masked support address (`PUBLISHED_EMAILS`, #105); "do you sell" now asks the catalog (#108).
+- **Slice 3:** #81 Spanish (`northstar/language.py`, #114); #80 damaged-item photo and the REF-DAMAGED rule (`northstar/photo.py`, seed order NS-1011, #112); #79 customer chat (`/chat`, order id plus order email, chat token audience `northstar-chat`, cases owned by the disabled `chat@northstar.example`, #113; decision in `prd.md`); #78 Google SSO (`POST /auth/sso`, role from `staff_users`, #115).
+- **Trace upload off the request (#116):** a turn no longer waits for LangSmith.
 
-Results are in `results/langsmith_test.md` and `results/langsmith_dev.md`.
+Waiting on Malatesha:
+- **Google SSO is off** until `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` are in `.env` (redirect URI `http://localhost:3000/api/auth/callback/google`). A real Google sign-in has not been tried yet.
+- **LangSmith hit its monthly unique-trace limit** (429, 2026-10-08). New traces, rule scores, judge feedback, and experiments are dropped until the 2026-11-01 reset or a raised limit. The app is unaffected.
+- **Demo:** after slice 3, as decided. Restart servers on a fresh database first.
 
-7. The first specialist edit was promoted (`edit-01a11a09`, "Do you sell surfboard wax?", tag `edit-20261008-054354`, 68 cases). The dev experiment on that version showed the gap (v1 abstained where the specialist said the product is not carried). Fixed: "Do you sell / carry / stock / have" now asks the catalog (R21). Dev split v1 1.0 on all 43 cases.
-
-8. 2026-10-08: `dev` was promoted to `uat` (PR #109) and `uat` to `prod` (PR #110). All three held the same tree (`a9eb298`), CI green on each. `main` was not touched. No deploy hooks exist, so nothing deployed outside GitHub.
-
-Slice 3 (#65) has started. Malatesha's decisions:
-- Build order: #81 (Spanish) → #80 (damaged-item photo) → #78 (SSO) → #79 (customer chat). The demo comes after slice 3.
-- #81: Spanish is the one extra language. Built (`northstar/language.py`, `SPANISH_CASES`, tag `slice3-es`), live 1.0 on all checks over 3 repetitions. The parked branch `feature/spanish-replies` is superseded.
-- #78: Google single sign-on. Built; on when the client id and secret are in `.env`.
-- #79: a customer identifies with an order id plus the email on that order (no account, no password). Record this in `prd.md` in the #79 PR before building.
-
-#80 (damaged-item photo) is built: `northstar/photo.py`, the REF-DAMAGED rule in `actions.refund`, seed order NS-1011, labeled `PHOTO_CASES` (tag `slice3-photo`).
-
-#79 (customer chat) is built: `/chat` in the console; `POST /chat/start`, `GET /chat`, `POST /chat/messages` in the API; chat token audience `northstar-chat`; chat cases owned by the disabled `chat@northstar.example`. Same agent and gates; only identity, scope, and the customer view differ. `prd.md` records the order id plus email decision.
-
-#78 (Google SSO) is built and tested: `POST /auth/sso` checks Google's ID token itself; the role comes from `staff_users`. It turns on when Malatesha puts `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` in `.env` (redirect URI `http://localhost:3000/api/auth/callback/google`). Until then the password login is unchanged.
-
-Slice 3 (#65) is complete. No open issues.
-
-LangSmith: the workspace hit its monthly unique-trace limit on 2026-10-08 (429). New traces, rule scores, judge feedback, and experiments are dropped until the 2026-11-01 reset or until Malatesha raises the limit. The app is unaffected; the trace upload no longer blocks a turn.
+Keep: every LangSmith experiment (do not delete). `:memory:.ses` stays untracked. The old branch `feature/spanish-replies` is superseded by #114 and was left in place.
 
 How to run the demo:
 - **Servers:** restart any API or console started before PR #98, because they run old code (`make api`, `make web`).
@@ -66,6 +50,9 @@ Demo script, binding Mira Shah (`mira.shah@northstar.example`):
 - **Gaps list:** "What is your favorite color?" appears in the lead's handbook gaps list.
 - **Escalation:** "The website said I have 60 days to return order NS-1001." Escalated, with a handoff packet (owner: policy).
 - **Preference:** a new case with "I prefer email. Please refund order NS-1001." The preference and history show, and the amount is unchanged.
+- **Damaged-item photo:** "The desk lamp on order NS-1011 arrived damaged." with `evals/photos/lamp-cracked.png` attached. REF-DAMAGED proposal; the lead sees "Photo: visible damage."
+- **Spanish:** "¿Cuántos días tengo para devolver unos zapatos?" Spanish answer citing REF-CATEGORY.
+- **Customer chat:** open `/chat`, order NS-1006 with `mira.shah@northstar.example`, then "Please refund order NS-1006." The customer sees "Nothing is approved yet"; the lead's queue has the proposal.
 
 `:memory:.ses` (stray, untracked) stays as is, per Malatesha. Do not commit or delete it.
 
@@ -131,7 +118,7 @@ How the online path works now:
 
 ## Still open
 
-No open slice 1 issues. #22 closed after branch protection made a CI miss block the merge into `uat`. #1 closed after #22.
+No open issues. Slices 1 (#1), 2 (#64), and 3 (#65) and #101 are closed.
 
 Unfinished work, not GitHub tickets unless Malatesha opens them:
 
@@ -139,7 +126,6 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 - Only the `northstar-local` LangSmith project exists. When `northstar-dev`/`uat`/`prod` get traffic, attach the safety rule and the LangSmith groundedness judge with `uv run python -m northstar.online` and that `LANGSMITH_PROJECT`.
 - Turns that end before the graph (request limit, secret block, slur/jailbreak block) have no LangGraph trace. That is by design: a deterministic block ends before any model call.
 - `:memory:.ses` in the repo root is a stray untracked file. Malatesha asked to keep it for now. Do not commit or delete it.
-- Do not start slice 2.
 
 ---
 
@@ -175,8 +161,8 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 
 ## Out of scope until asked
 
-- Creating tickets from slice 2 (P1: `PostgresStore` prefs, queue decide-from-list, R13–R20) or slice 3 (P2).
-- Promoting `dev` → `uat` → `prod`.
+- Creating new tickets.
+- Promoting `dev` → `uat` → `prod` → `main`.
 - Inventing Render/Vercel deploy hooks.
 - Screen recording (submission artifact; not a code ticket unless opened).
 - `trd.md` (do not write until asked).
@@ -185,7 +171,7 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 
 ## Continue checklist
 
-1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (136 or more).
-2. Read the Stop point section above. Ask Malatesha what is next: the demo prep, slice 3 (#65), the LangSmith part of the walkthrough, or promoting `dev` → `uat`.
+1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (183 or more).
+2. Read the Stop point section above. Ask Malatesha what is next: the demo, turning on Google SSO, the LangSmith limit, or new work. Do not create tickets or promote branches unless asked.
 3. Every change: a `feature/*` branch from `origin/dev`, a PR into `dev`, merged only when CI is green.
 4. Rewrite the Stop point section before you stop.
