@@ -6,7 +6,6 @@ Send the same fields to LangSmith when LANGSMITH_API_KEY is set.
 
 from __future__ import annotations
 
-import logging
 import re
 import uuid
 from datetime import datetime
@@ -18,6 +17,7 @@ from northstar.graph import TurnTools, resume_turn, run_turn
 from northstar.memory import graph_for
 from northstar.agent_model import handbook_reply
 from northstar.handbook import ABSTAIN_TEXT, Draft, guard_draft
+from northstar import online
 from northstar.online import record_edit, record_judge
 from northstar.preferences import recall, remember, stated
 from northstar.privacy import SECRET_REPLY, has_secret, screen
@@ -775,15 +775,10 @@ class CaseStore:
         question = "" if asked is None else asked["body"]
         before = draft["body"] if final_text else f"{proposed_cents} cents"
         after = final_text if final_text else f"{amount_cents} cents"
-        try:
-            record_judge(draft["run_id"], question, draft["decision"] or "", text, draft["citations"], 1.0, edited=True)
-        except Exception:
-            # A LangSmith or judge outage must not undo a close or a ticket.
-            logging.getLogger(__name__).warning("edit judge failed for run %s", draft["run_id"], exc_info=True)
-        try:
-            record_edit(draft["run_id"], question, draft["citations"], before, after)
-        except Exception:
-            logging.getLogger(__name__).warning("edit pair was not sent for run %s", draft["run_id"], exc_info=True)
+        # After the close or the ticket returns. A LangSmith or judge outage is logged, never raised.
+        citations = list(draft["citations"])
+        online.background(record_judge, draft["run_id"], question, draft["decision"] or "", text, citations, 1.0, edited=True)
+        online.background(record_edit, draft["run_id"], question, citations, before, after)
 
     def _resume(self, case_id: uuid.UUID, decision: str) -> None:
         resume_turn(graph_for(self._pool.conninfo), str(case_id), decision)

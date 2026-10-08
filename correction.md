@@ -13,6 +13,42 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — An amount edit now confirms with the ticket id
+
+Status: bug
+
+What broke: Approve sent the lead back to the desk with "Ticket <id>". Edit amount also records a ticket, but went back to the plain desk with no confirmation (the PRD's Peak-End rule asks for one).
+
+Evidence: Browser dry run: the lead edited 4800 to 4000 cents and saw only "No proposal is waiting."
+
+Debug steps: Read the edit server action. It ignored the API's `ticket_id`.
+
+Fix: The edit action redirects to `/desk?ticket=<id>`, the same as approve. Checked in the browser (12800 edited to 6400, "Ticket ..." shown). The desk page.
+
+## 2026-10-07 — The live judge made a sampled turn wait a minute
+
+Status: bug
+
+What broke: In the browser dry run, a cancel took more than a minute to come back. The groundedness judge ran inside the request. The free OpenRouter judge model sends its response headers at once (that is when httpx logs 200) and then takes up to a minute to write the body. Every sampled turn (abstain, escalate, an edit, or the 10 percent sample) made the specialist wait for it, which also breaks the 10-second p95 release bar for live traffic. The same script outside the server ran the turn in 2.9 seconds, because that turn was not sampled.
+
+Evidence: The API log showed Gemini, then OpenRouter 200, then the `POST /cases/current/messages` line about a minute later. `pg_stat_activity` showed no lock waits.
+
+Debug steps: Reproduced the turn in a script with `faulthandler.dump_traceback_later`. That turn was not sampled and returned in 2.9 seconds.
+
+Fix: `online.background` runs the turn judge, the edit judge, and the edit-pair upload on a daemon thread after the response. A failure is logged and never raised. Tests replace it with an inline runner. `test_an_online_check_runs_off_the_turn_and_a_failure_is_only_logged` covers the thread. A daemon thread is lost if the process exits mid-check, which is acceptable for a sampled online score.
+
+## 2026-10-07 — A paused turn showed the previous turn's reply
+
+Status: bug
+
+What broke: On a case with an earlier answer, a later proposal (cancel, refund) was saved with the earlier answer's text, although its decision and citations were right. The case thread keeps the last turn's state in Postgres. A turn that pauses for approval stops before `compile_followup` writes `followup`, so `run_turn` read the stale `followup` from the checkpoint. Slice 1 had the same bug for a refund asked after another question. The tests never ran a second turn that pauses, and the walkthrough checked only the status.
+
+Evidence: In the browser dry run, "How long does a customer have to return a pair of shoes?" followed by "Please cancel order NS-1004." showed the shoes answer cited as ORD-CANCEL.
+
+Debug steps: `test_a_proposal_after_an_answer_shows_its_own_text` in `apps/api/tests/test_checkpointer.py` fails on the old code ("Thirty days." instead of the refund text) and passes now.
+
+Fix: Each turn's input clears `followup`, and a paused turn falls back to its own `text`. `packages/agent/northstar/graph.py`.
+
 ## 2026-10-07 — A customer's stated preferences carry across cases (issue #77)
 
 Status: decision

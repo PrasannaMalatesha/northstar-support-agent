@@ -53,3 +53,23 @@ def test_a_new_connection_still_has_the_thread():
         done = _compile(saver).get_state(config)
     assert done.next == ()
     assert done.values["followup"] == "Approve."
+
+
+def test_a_proposal_after_an_answer_shows_its_own_text():
+    _ensure_test_database()
+
+    def refund(_question: str) -> Draft:
+        return Draft("approve_refund", "Approve. Amount: 12800 cents.", ("REF-ELIGIBILITY",), {"REF-ELIGIBILITY": "strong"}, ())
+
+    def support(_question: str) -> Draft:
+        return Draft("answer", "Thirty days.", ("REF-CATEGORY",), {"REF-CATEGORY": "strong"}, ())
+
+    import uuid
+
+    thread = f"thread-two-turns-{uuid.uuid4()}"
+    graph = graph_for(_URL)
+    first = run_turn("How long are returns?", TurnTools(refund, support), graph=graph, thread_id=thread)
+    second = run_turn("Please refund NS-1001", TurnTools(refund, support), graph=graph, thread_id=thread)
+    assert first.text == "Thirty days."
+    assert second.decision == "approve_refund"
+    assert second.text == "Approve. Amount: 12800 cents."
