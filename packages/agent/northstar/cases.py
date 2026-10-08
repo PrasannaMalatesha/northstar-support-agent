@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from dataclasses import replace
 from datetime import datetime
 
 from northstar.actions import FAMILIES, Order, Proposal, Reply, family_decisions, gated, order_id as _order_id
@@ -15,6 +16,7 @@ from northstar.clock import Clock
 from northstar.escalate import handoff, manual_handoff
 from northstar.graph import TurnTools, resume_turn, run_turn
 from northstar.memory import graph_for
+from northstar.photo import describe
 from northstar.agent_model import handbook_reply
 from northstar.handbook import ABSTAIN_TEXT, Draft, guard_draft
 from northstar import online
@@ -328,7 +330,7 @@ class CaseStore:
         question = "" if asked is None else asked["body"]
         return manual_handoff(question, sections, self._tried(case_id), note).text
 
-    def ask(self, staff_id: uuid.UUID, question: str) -> dict:
+    def ask(self, staff_id: uuid.UUID, question: str, photo: str | None = None) -> dict:
         case_id = self._open(staff_id)
         if self._status(case_id) != "Open":
             raise CaseClosed()
@@ -340,6 +342,10 @@ class CaseStore:
         self._requests[key] = self._requests.get(key, 0) + 1
         if has_secret(question):
             return self._save(case_id, question, _plain("blocked", SECRET_REPLY), now)
+        # A photo is described for the lead. It never chooses the action (issue #80).
+        seen = describe(photo, question) if photo else None
+        note = seen.line if seen else ("Photo: attached, but it could not be described." if photo else "")
+        asked_with = f"{question}\n[Photo attached]" if photo else question
         self._remember_preferences(case_id, question, now)
         escalated = handoff(question, self._tried(case_id))
         if escalated is not None:
@@ -348,14 +354,14 @@ class CaseStore:
             # Through the graph, so the escalation has a LangGraph trace for the safety rule and the judge.
             fixed = Draft("escalate", text, (section,), {section: "strong"}, ())
             tools = TurnTools(refund=lambda _text: fixed, support=lambda _text: fixed)
-            return self._save(case_id, question, self._turn(case_id, question, tools), now)
+            return self._save(case_id, asked_with, _noted(self._turn(case_id, question, tools), note), now)
         if _blocked(question):
-            return self._save(case_id, question, _plain("safe", SAFE_REPLY), now)
+            return self._save(case_id, asked_with, _plain("safe", SAFE_REPLY), now)
         tools = TurnTools(
-            refund=lambda text: self._gated_draft(case_id, staff_id, text, now),
+            refund=lambda text: self._gated_draft(case_id, staff_id, text, now, note),
             support=lambda text: self._support_draft(case_id, staff_id, text, now),
         )
-        return self._save(case_id, question, self._turn(case_id, question, tools), now)
+        return self._save(case_id, asked_with, _noted(self._turn(case_id, question, tools), note), now)
 
     def _turn(self, case_id: uuid.UUID, question: str, tools: TurnTools) -> Draft:
         return run_turn(question, tools, graph=graph_for(self._pool.conninfo), thread_id=str(case_id))
@@ -800,7 +806,7 @@ class CaseStore:
         self._charge(staff_id, day, TOKENS_PER_TURN)
         return handbook_reply(question)
 
-    def _gated_draft(self, case_id: uuid.UUID, staff_id: uuid.UUID, question: str, now: datetime) -> Draft:
+    def _gated_draft(self, case_id: uuid.UUID, staff_id: uuid.UUID, question: str, now: datetime, note: str = "") -> Draft:
         """Any request that waits for a lead. The handbook rule for each action lives in northstar.actions."""
         action = gated(question)
         if action is None:
@@ -851,6 +857,8 @@ class CaseStore:
         existing = self._existing(case_id, order_id, planned.action)
         if existing is not None:
             return _plain("duplicate", existing)
+        if note:
+            planned = replace(planned, details=" ".join(part for part in (planned.details, note) if part))
         return self._propose(case_id, staff_id, order_id, planned, now)
 
     def _existing(self, case_id: uuid.UUID, order_id: str, decision: str) -> str | None:
@@ -1021,6 +1029,11 @@ def _plain(decision: str, text: str) -> Draft:
     return Draft(decision, text, (), {}, ())
 
 
+def _noted(draft: Draft, note: str) -> Draft:
+    """The photo line under the draft, for the specialist and the lead."""
+    return replace(draft, text=f"{draft.text}\n{note}") if note else draft
+
+
 _CUSTOMERS = (
     ("Mira Shah", "mira.shah@northstar.example", "5125550142"),
     ("Jon Hale", "jon.hale@northstar.example", "5125550198"),
@@ -1040,6 +1053,8 @@ _ORDERS = (
     ("NS-1008", "mira.shah@northstar.example", "delivered", "2026-02-25", "Linen shirt, size M", "none", 5400, "2026-03-01", "apparel and footwear", "2026-02-26"),
     ("NS-1009", "mira.shah@northstar.example", "shipped", "2026-09-15", "Canvas tote", "none", 4800, None, "bags and accessories", "2026-09-16"),
     ("NS-1010", "mira.shah@northstar.example", "shipped", "2026-10-04", "Linen shirt, size L", "none", 5400, None, "apparel and footwear", "2026-10-05"),
+    # Delivered six days before the tests' clock: inside the REF-DAMAGED 14-day window (issue #80).
+    ("NS-1011", "mira.shah@northstar.example", "delivered", "2026-09-26", "Desk lamp", "none", 4200, "2026-09-30", "home and kitchen", "2026-09-27"),
 )
 
 

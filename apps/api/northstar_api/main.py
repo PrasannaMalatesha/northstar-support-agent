@@ -12,6 +12,7 @@ from northstar.cases import (
     ProposalNotWaiting,
 )
 from northstar.clock import Clock, SystemClock
+from northstar.photo import BadPhoto, checked
 from northstar.identity.postgres import PostgresIdentityStore
 from northstar.identity.seed import seed_staff
 from northstar.identity.service import (
@@ -42,6 +43,8 @@ class RefreshBody(BaseModel):
 
 class QuestionBody(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
+    # Optional damaged-item photo as a data URL (issue #80). Checked again in northstar.photo.
+    photo: str | None = Field(default=None, max_length=6_000_000)
 
 
 class BindBody(BaseModel):
@@ -101,7 +104,9 @@ def create_app(
     @app.middleware("http")
     async def limit_body(request, call_next):
         length = request.headers.get("content-length")
-        if length is not None and int(length) > 16_384:
+        # A message may carry a photo of up to 4 MB, about 5.6 MB as base64 (issue #80). Everything else stays small.
+        limit = 6_000_000 if request.url.path == "/cases/current/messages" else 16_384
+        if length is not None and int(length) > limit:
             from fastapi.responses import JSONResponse
 
             return JSONResponse({"detail": "Request is too large."}, status_code=413)
@@ -189,8 +194,13 @@ def create_app(
 
     @app.post("/cases/current/messages")
     def ask_case(body: QuestionBody, staff=Depends(staff_from_token)) -> dict:
+        if body.photo:
+            try:
+                checked(body.photo)
+            except BadPhoto as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
         try:
-            return cases.ask(staff.id, body.question)
+            return cases.ask(staff.id, body.question, body.photo)
         except CaseClosed as exc:
             raise HTTPException(status_code=409, detail="This case is closed.") from exc
 

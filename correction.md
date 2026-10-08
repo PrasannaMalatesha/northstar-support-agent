@@ -13,6 +13,20 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-08 — A damaged-item photo, and the REF-DAMAGED rule it needs (issue #80)
+
+Status: decision
+
+What changed: A specialist can attach a photo (PNG, JPEG, or WebP, under 4 MB) to a desk message. Gemini returns a structured verdict (does it show the item, is damage visible) and a two-sentence description; the draft and the proposal details get one line, "Photo: visible damage." / "Photo: no visible damage." / "Photo: does not show the item.", which the lead sees in the queue. The action still comes only from the specialist's words and the handbook rules, and the lead still decides: a photo alone proposes nothing. The image is checked, described, and dropped: not saved, not in `PostgresStore`, not in the handbook index, and the vision call runs with LangSmith tracing off. The description passes the PII screen. Both groundedness judges are told a "Photo:" line is evidence, not a policy claim.
+
+REF-DAMAGED did not exist as a rule: "arrived damaged" matched no action, and "arrived cracked" became an ordinary return citing REF-ELIGIBILITY. Now a damage report on a delivered order within 14 days is a full refund of the line and its outbound shipping citing REF-DAMAGED; after 14 days the ordinary return window applies, as the handbook says. Seed order NS-1011 (desk lamp, delivered 2026-09-30) mirrors the handbook's own example.
+
+Evidence: `test_damage_photo.py` (stand-in describer): REF-DAMAGED inside and after 14 days; the three labeled photos reach the draft and the lead while the decision stays REF-DAMAGED; a photo alone proposes nothing; with no vision model the photo is noted and nothing breaks; a wrong type or an oversized image is refused with 422 before the desk runs; no image bytes are stored. A browser test in `screens.spec.ts` uploads the photo and passes axe. Live experiment on `PHOTO_CASES` (tag `slice3-photo`, 3 repetitions, `results/langsmith_dev_slice3-photo.md`): v1 `photo_verdict` 1.0, `label_match` 1.0, status 1.0.
+
+Debug steps: The first live check called the intact-lamp drawing damaged because the drawn shade sat off its stem; the drawings were redrawn with the shade centered. The API refused any body over 16 KB, so a real phone photo would have failed with 413; tiny test drawings hid it. The browser test first gave up after 5 seconds while the live vision turn was still running.
+
+Fix: The message route allows 6 MB (a 4 MB photo as base64); every other route keeps 16 KB. The console's server actions allow 6 MB. The browser test waits up to 30 seconds for the photo line. The photos in `evals/photos/` are synthetic drawings, not real customer photos. Experiment results are now written per version, so runs do not overwrite each other.
+
 ## 2026-10-08 — "Do you sell X?" now asks the catalog (the promoted surfboard case)
 
 Status: bug

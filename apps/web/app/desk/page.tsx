@@ -142,13 +142,19 @@ async function askAction(formData: FormData) {
   if (!access) {
     redirect("/login");
   }
+  // An optional damaged-item photo goes to the API as a data URL. The API checks type and size.
+  const file = formData.get("photo");
+  const photo =
+    file instanceof File && file.size > 0
+      ? `data:${file.type};base64,${Buffer.from(await file.arrayBuffer()).toString("base64")}`
+      : undefined;
   await fetch(`${apiUrl}/cases/current/messages`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${access}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ question: String(formData.get("question") ?? "") }),
+    body: JSON.stringify({ question: String(formData.get("question") ?? ""), photo }),
   });
   redirect("/desk");
 }
@@ -458,6 +464,10 @@ export default async function DeskPage({
             <label>
               Handbook question
               <textarea name="question" required maxLength={2000} />
+            </label>
+            <label>
+              Photo of the item (optional)
+              <input name="photo" type="file" accept="image/png,image/jpeg,image/webp" />
             </label>
             <button type="submit">Ask</button>
           </form>
