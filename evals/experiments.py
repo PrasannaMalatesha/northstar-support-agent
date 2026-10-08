@@ -84,7 +84,9 @@ def _add(client, name: str, description: str, examples: list[dict], tag: str | N
     if new:
         client.create_examples(dataset_id=dataset.id, examples=new)
         if tag:
-            client.update_dataset_tag(dataset_id=dataset.id, as_of=datetime.now(timezone.utc), tag=tag)
+            # Tag the server's newest version. A local clock can sit just before it and miss the new rows.
+            latest = next(iter(client.list_dataset_versions(dataset_id=dataset.id, limit=1)))
+            client.update_dataset_tag(dataset_id=dataset.id, as_of=latest.as_of, tag=tag)
     return len(new)
 
 
@@ -285,7 +287,7 @@ def promote(client, run_id: str, decision: str, sections: list[str], split: str,
     edits = [fb for fb in client.list_feedback(run_ids=[run_id], feedback_key=["specialist_edit"]) if fb.correction]
     if not edits:
         raise SystemExit("that run has no specialist edit")
-    question = client.read_run(run_id).inputs["question"]
+    question = client.read_run(run_id).inputs["question"]  # read_run is the stable sync call in this SDK
     case_id = f"edit-{run_id[:8]}"
     tag = f"edit-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
     example = {

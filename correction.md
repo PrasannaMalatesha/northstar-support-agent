@@ -13,6 +13,20 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-08 — The first specialist edit promoted into the golden dataset
+
+Status: decision
+
+What changed: One reviewed edit became a labeled case: "Do you sell surfboard wax?" The desk abstained ("No handbook section covers that."); the specialist's final text was "We don't carry surfboard wax." It was promoted with label `abstain`, no sections, status Open, split dev, as `edit-01a11a09` under tag `edit-20261008-054354` (68 cases; `slice1` 40 and `slice2` 67 unchanged).
+
+Evidence: The three edits already in the queue were not promoted. Two were amount edits made during the browser dry run (12800 to 6400 and 4800 to 4000 cents); they contradict the handbook amounts, so as labels they would be wrong. The third pointed at the wrong trace (a lead's approve run with no question), recorded before PR #62 fixed which run gets the edit. A live repro on current code (shoe question, refund, approve, surfboard question, edited close) sent the edit to the surfboard turn's own root run.
+
+Debug steps: The first tag returned 67 rows, not 68: `_add` tagged `datetime.now()` from the local clock, which sat a moment before the server's new version.
+
+Fix: `_add` now tags the server's newest dataset version (`list_dataset_versions`), not the local time. The edit tag was moved to that version and returns 68.
+
+First experiment on the new version (dev split, 43 cases, with the judge, `results/langsmith_dev.md`): v1 `label_match` 1.0, status 1.0, `answer_correct` 0.9; the one judge miss is the promoted case, because the desk still abstains where the specialist named the product as not carried. v0 `label_match` 0.349. Router 1.0. The gap is recorded, not fixed.
+
 ## 2026-10-08 — A LangSmith online LLM judge runs beside the in-app judge
 
 Status: decision
