@@ -148,6 +148,7 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 | `packages/agent/northstar/cases.py` | Cases, proposals, edit amount |
 | `apps/api/northstar_api/main.py` | FastAPI routes including `/approvals/.../edit` |
 | `evals/release_bar.py` | Release bar / online check helpers |
+| `evals/experiments.py` | LangSmith datasets (`sync`), v0/v1/router experiments (`run`), edit promotion (`promote`) |
 | `correction.md` | What changed and why |
 | `.github/workflows/ci.yml` | Lint, pytest, smoke, axe |
 

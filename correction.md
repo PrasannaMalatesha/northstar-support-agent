@@ -13,6 +13,28 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — The golden dataset and the v0-to-v1 experiments now run in LangSmith (issue #101)
+
+Status: bug
+
+What broke: `AGENTS.md` asks for the golden dataset, `aevaluate` experiments, and edit pairs promoted into a new dataset version. Only the local half existed: the labeled cases, pytest checks, and `results/*.md`. LangSmith had traces and feedback but no dataset and no experiment.
+
+Evidence: `Client().list_datasets()` returned nothing. No code called `evaluate` or `create_examples`.
+
+Debug steps: Checked each live piece before building: the judge key graded a right and a wrong answer correctly, Pinecone retrieved REF-CATEGORY, and LangSmith held `policy_groundedness`, `safety`, and `specialist_edit` feedback from live turns.
+
+Fix: `evals/experiments.py`.
+- `sync` writes `Northstar Support: E2E` (the 40 frozen cases tagged `slice1`, plus the slice 2 cases tagged `slice2`) and `Northstar Support: Intent Classifier` (hand-labeled routes in `INTENT_CASES`). Example ids come from the case id, so a second sync adds nothing.
+- `run` evaluates v0 (the handbook answerer) and v1 (the desk through the API, live agent model and Pinecone, one case at a time) on one split and tag, with `label_match`, `citation_valid`, `status_correct`, and the calibrated quiz judge `answer_correct` on handbook rows. The router gets its own experiment with `correct`. It uses `client.evaluate`, the sync form, because the desk target is synchronous ([evaluate a complex agent](https://docs.langchain.com/langsmith/evaluate-complex-agent)).
+- `promote` adds one reviewed specialist edit as a labeled case under a new tag. A person picks the decision and sections. Nothing is added automatically.
+- The first run hung on a judge call with no timeout, and the app's sampled online judge ran on every experiment turn and competed for the free judge model. The judge now has a 60 s timeout, retries, and an `InMemoryRateLimiter` ([rate limits](https://docs.langchain.com/langsmith/handle-model-rate-limiting)). The experiment harness turns the online judge off. The free model sometimes returns no choices, so `answer_correct` tries three times.
+- The OpenRouter key then hit its free daily cap (`free-models-per-day`, 50 requests, reset 2026-10-08 19:00 CDT). Until it resets or credits are added, the quiz judge and the live groundedness judge both fail; the live one only logs. `run --no-judge` scores with the code checks alone, and the judge scores are added by a later `run` once the key has quota.
+
+First LangSmith result (test split, tag `slice1`, 3 repetitions, code checks only; full list in `results/langsmith_experiments.md`):
+- v0 `label_match` 0.733, v1 0.667. Citations valid 1.0 for both. v1 case status 1.0. Router `correct` 1.0 on 14 rows. The same misses in all three repetitions.
+- v1 sends handbook questions through the real desk. The earlier local comparison (`results/v0_v1.md`) sent them to the handbook answerer, so it hid this.
+- Open, not fixed: with no customer bound, a policy question that mentions "order" gets `unbound` (duplicate-hold, one-exchange, one-promo). shipping-price hits the known "price" catalog quirk. wrong-item gets `ask_clarification`. These are desk routing bugs, recorded here as honest failures.
+
 ## 2026-10-07 — An amount edit now confirms with the ticket id
 
 Status: bug
