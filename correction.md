@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-07 — A customer's stated preferences carry across cases (issue #77)
+
+Status: decision
+
+What changed: When a bound case's message states a contact channel ("I prefer email", "contact me by text"), the channel goes into LangGraph's `PostgresStore` under `("customers", customer_id, "prefs")`, key `contact_channel`, with the date it was stated. Only the derived channel (email, phone, or text) is stored, never the customer's free text, so a payment number, credential, or secret cannot become a preference. The case view returns the customer's preferences with the history record, the history panel shows them, and an unbound case reads none. A preference never changes an amount, a citation, or a handbook answer.
+
+Evidence: R20 in `prd.md`. `AGENTS.md` (Customer history) names that namespace. [Stores](https://docs.langchain.com/oss/python/langgraph/stores).
+
+Debug steps: `apps/api/tests/test_preferences.py`. The first run failed with "the connection is closed" on 60 tests. `PostgresStore.from_conn_string` returns a generator-backed context manager, and the entered store was kept while the context was dropped. The context was garbage-collected and closed the connection. The context is now kept alongside the store, as `memory.graph_for` does for the saver.
+
+Fix: `packages/agent/northstar/preferences.py`, `cases.py`, the desk page.
+
 ## 2026-10-07 — A specialist's edit is kept beside the original (issue #67)
 
 Status: decision
