@@ -32,6 +32,7 @@ We do not copy their music-store SQL bot. Their refund node writes immediately. 
 5. Adopted the official three experiments: final response, intent node alone, trajectory. The published trajectory score is `trajectory_subsequence` (fraction of expected steps found in order). Extra wasted steps are counted separately, because that official score does not punish them.
 6. Stacked guardrails: cheap input blocks first, then PII redaction, then human approval, then an output check. A blocked input does not spend an agent-model call.
 7. Split storage. Pinecone holds policy vectors. Postgres holds chats, the HITL pause, cross-thread user memory, orders, and tickets.
+8. A refund proposal pauses the graph thread with `interrupt`. The lead's decision resumes it. The case row is still the ticket.
 
 ## Why Next.js and FastAPI
 
@@ -66,7 +67,7 @@ CI runs the offline set before deploy. Live traffic gets reference-free judges a
 
 ## Why this reranker, and why retrieval is graded by code
 
-Vector search is good at finding the neighborhood and bad at ordering it. A reranker reads the question and each chunk together, then reorders them. The agent sees only the top 4 chunks, so the order decides the answer. We use LangChain's `FlashrankRerank` because it runs on a CPU without Torch, fits the free server, and costs nothing per call. That means the evals test the same reranker that production runs. Pinecone's hosted reranker would have run out of free calls within a few CI runs.
+Vector search is good at finding the neighborhood and bad at ordering it. A reranker reads the question and each chunk together, then reorders them. The agent sees only the top 4 chunks, so the order decides the answer. We call the `flashrank` package directly, model `ms-marco-MiniLM-L-12-v2`, because it runs on a CPU without Torch, fits the free server, and costs nothing per call. The LangChain wrapper lived in `langchain-community`, which was sunset on 2026-05-22, so the adapter does not import it. That means the evals test the same reranker that production runs. Pinecone's hosted reranker, `bge-reranker-v2-m3`, allows 500 requests a month on the Starter plan, which a few CI runs would spend.
 
 Every labeled case says which handbook sections should come back. So "did retrieval find the right section?" is a lookup, not an opinion. Plain code grades it as recall and rank. The LLM judges are kept for things only a reader can decide: whether the draft agrees with the gold answer, whether every claim is in the retrieved text, and whether it helps the customer.
 
@@ -100,6 +101,10 @@ The specialist and the lead work under time pressure, so the case desk reads in 
 
 Open the trace. See whether retrieval, the router, a tool argument, the interrupt, or the final wording failed. Add one example whose expected answer matches a real policy section. Re-run that example, then the test split. Change the layer that failed: the doc, the index, the router, the tool, or the approval gate.
 
+## Why the handbook comes first
+
+Every later ticket cites a section id. The handbook was written and frozen as `northstar-policy-v2` before any agent code, so retrieval, prompts, and labeled cases all point at rules that will not move under them. Where two sections use the same numeral, they are different clocks: damage is 14 days from delivery, a lost package is 14 days from the ship date, and a price drop is 14 days from delivery. Each sentence lives in one section.
+
 ## What is not built yet
 
-No application code, no index, no database, and no experiment results. `correction.md` is where later bugs and approach changes go.
+Slice 1 (#1 to #22) and slice 2 (#64, #66 to #77) are built and closed. Slice 3 is tickets under #65, waiting until slice 2 is in use. The console part of the walkthrough recording is scripted. The LangSmith part is recorded by hand. `correction.md` is where later bugs and approach changes go.

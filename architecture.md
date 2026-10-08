@@ -22,18 +22,18 @@ Walk the diagrams in this order:
 | --- | --- | --- | --- |
 | UI | Next.js (App Router), Auth.js `Credentials` | Three screens: login, case desk with a read-only history panel, and the lead's waiting for approval list. WCAG 2.2 AA. Server route handlers are the only gateway to the API | [Auth.js](https://authjs.dev/guides/integrating-third-party-backends) |
 | API | Python FastAPI | Auth (argon2id, short-lived tokens), role checks, rate limits, threads, messages, resume, streaming | App boundary |
-| Agent | LangGraph `StateGraph` router; `support_agent` and `refund_agent` are `create_agent` subgraphs | Router, subgraphs, interrupts, built-in middleware (PII, HITL, call limits, retry, fallback, summarization) | [Graph API](https://docs.langchain.com/oss/python/langgraph/graph-api), [Built-in middleware](https://docs.langchain.com/oss/python/langchain/middleware/built-in) |
+| Agent | LangGraph `StateGraph` router; `support_agent` and `refund_agent` are `create_agent` subgraphs | Router, subgraphs, interrupts, built-in middleware (PII, call limits, retry, fallback, tool error); approval is the graph interrupt plus the lead's API decision | [Graph API](https://docs.langchain.com/oss/python/langgraph/graph-api), [Built-in middleware](https://docs.langchain.com/oss/python/langchain/middleware/built-in) |
 | Structured output | `ToolStrategy(PydanticModel, handle_errors=True)` | Validated decision, automatic retry on bad output | [Structured output](https://docs.langchain.com/oss/python/langchain/structured-output) |
 | Customer history | `cases` table plus `PostgresStore` `("customers", id, "prefs")` | Short history record at case start, never past transcripts | [Stores](https://docs.langchain.com/oss/python/langgraph/stores) |
 | Routing | `Command(goto=...)` | Intent node picks a subgraph | [Evaluate a complex agent](https://docs.langchain.com/langsmith/evaluate-complex-agent) |
 | Tools and RAG | LangChain retriever and tools | Policy search, order lookup, ticket | [Pinecone vector store](https://docs.langchain.com/oss/python/integrations/vectorstores/pinecone) |
-| Rerank | `FlashrankRerank` (`ms-marco-MiniLM-L-12-v2`, ONNX, CPU) | Reorder top-20 to at most 4, drop below `RETRIEVAL_SCORE_TAU` | [FlashrankRerank](https://reference.langchain.com/python/langchain-community/document_compressors/flashrank_rerank/FlashrankRerank) |
+| Rerank | `flashrank.Ranker` (`ms-marco-MiniLM-L-12-v2`, ONNX, CPU), behind the `Reranker` port | Reorder top-20 to at most 4, drop below `RETRIEVAL_SCORE_TAU` | [FlashRank](https://github.com/PrithivirajDamodaran/FlashRank) |
 | Short-term memory | `PostgresSaver` | One thread, including the HITL pause | [Checkpointers](https://docs.langchain.com/oss/python/langgraph/checkpointers) |
 | Long-term memory | `PostgresStore` | Facts across threads, per user | [Stores](https://docs.langchain.com/oss/python/langgraph/stores) |
 | Guardrails | LangChain middleware | Input block, PII, output check | [Guardrails](https://docs.langchain.com/oss/python/langchain/guardrails) |
 | Pause | `interrupt` then `Command(resume=...)` | Refund approval | [Interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts) |
 | Traces and evals | LangSmith | Experiments, online judges, dashboards | [Evaluation](https://docs.langchain.com/langsmith/evaluation) |
-| Models | OpenAI | Agent and judges. Default `gpt-4o-mini` | Keys stay on the API |
+| Models | Gemini for the agent. OpenRouter for the judge | Agent `gemini-3-flash-preview`. Judge `deepseek/deepseek-v4.1-flash` | Keys stay on the API |
 
 Next.js never holds the model key. FastAPI holds `OPENAI_API_KEY`, `PINECONE_API_KEY`, `LANGSMITH_API_KEY`, and `DATABASE_URL`.
 
@@ -80,9 +80,15 @@ flowchart TD
   safeReply --> client
 ```
 
+The walkthrough image is `diagrams/northstar-architecture.png` (JPEG copy beside it), rendered from this chart.
+
 `intent_classifier` is one node. Eval strategy 2 runs that node alone and checks `command.goto` against `refund_agent` or `support_agent`. Source: [Evaluate a complex agent](https://docs.langchain.com/langsmith/evaluate-complex-agent).
 
 `compile_followup` writes state key `followup`. Final-response eval reads that key.
+
+The running graph is that router. With a model key, `refund_agent` and `support_agent` each call `create_agent` and one desk tool. The desk draft is the decision. Pytest keeps the direct call. Source: [Agents](https://docs.langchain.com/oss/python/langchain/agents).
+
+A handbook turn calls `retrieved_answer`. Overlap picks 20 sections, then `flashrank.Ranker(model_name="ms-marco-MiniLM-L-12-v2")` keeps at most 4 at or above `RETRIEVAL_SCORE_TAU` (0.2). Pinecone replaces the overlap pick when the index exists. `answer()` stays the v0 scorer.
 
 ## 3. Support subgraph
 
@@ -93,7 +99,7 @@ flowchart TD
   kind -->|"catalog"| catalog[lookup_catalog]
   kind -->|"this customer order"| lookup[lookup_order]
   retrieve --> pinecone[PineconeTop20]
-  pinecone --> rerank[FlashrankTop4]
+  pinecone --> rerank[FlashRankTop4]
   rerank --> gate{ScoreAtLeastTau}
   gate -->|"no"| abstain[Abstain]
   gate -->|"yes"| draft[CitedAnswer]
@@ -109,7 +115,7 @@ Handbook answers use retrieval. Catalog answers use Postgres rows. Order answers
 
 ## 4. Refund subgraph and human approval
 
-The Chinook sample writes the refund inside the graph. This graph does not. `interrupt` pauses the thread in Postgres. Resume uses the same `thread_id`. Source: [Interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts).
+The Chinook sample writes the refund inside the graph. This graph does not. When the decision is a proposal and the thread has a checkpointer, `compile_followup` calls `interrupt` and the thread stays in Postgres. A lead approve, edit, or reject resumes that same `thread_id`. The case row still writes the ticket. Source: [Interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts).
 
 ```mermaid
 flowchart TD
@@ -163,7 +169,7 @@ flowchart TB
 
 Short-term memory is the checkpointer: one conversation. Long-term memory is the store: facts that should exist in the next conversation. The store is not a source of refund rules. Those still come from Pinecone and must be cited.
 
-`MemorySaver` keeps checkpoints in RAM and drops them on restart ([persistence](https://docs.langchain.com/oss/python/langgraph/persistence)). The API uses Postgres in local and deployed environments. Call `checkpointer.setup()` and `store.setup()` once on an empty database. Keep `thread_id` inside the checkpointer column length; an oversized id is a database error, not a model failure.
+`MemorySaver` keeps checkpoints in RAM and drops them on restart ([persistence](https://docs.langchain.com/oss/python/langgraph/persistence)). The running graph writes each case id through `PostgresSaver`, in local and deployed environments. Call `checkpointer.setup()` once. Keep `thread_id` inside the checkpointer column length; an oversized id is a database error, not a model failure.
 
 ## 6. Retrieval steps
 
@@ -171,13 +177,13 @@ Short-term memory is the checkpointer: one conversation. Long-term memory is the
 flowchart LR
   query[Query] --> embedQ[EmbedQuery]
   embedQ --> topk[PineconeTop20]
-  topk --> rerank[FlashrankRerankTop4]
+  topk --> rerank[FlashRankTop4]
   rerank --> score{AnyChunkAboveTau}
   score -->|"no"| abstain[Abstain]
   score -->|"yes"| generate[GenerateWithCitations]
 ```
 
-Rerank is `ContextualCompressionRetriever` with `FlashrankRerank` ([reference](https://reference.langchain.com/python/langchain-community/document_compressors/flashrank_rerank/FlashrankRerank)). It runs on CPU with ONNX and no Torch, so it fits the 512 MB free host and is the same in CI and every environment. Its `score_threshold` is the weak-match gate. `PineconeRerank` was rejected for the free plan: 500 rerank requests a month per organization ([Pinecone limits](https://docs.pinecone.io/reference/api/database-limits)). Doc for scoring retrieval apart from the answer: [Evaluate a RAG application](https://docs.langchain.com/langsmith/evaluate-rag-tutorial).
+Rerank calls `flashrank.Ranker` with `model_name="ms-marco-MiniLM-L-12-v2"` from the `Reranker` adapter ([FlashRank](https://github.com/PrithivirajDamodaran/FlashRank)). It runs on CPU with ONNX and no Torch, so it fits the 512 MB free host and is the same in CI and every environment. Passages below `RETRIEVAL_SCORE_TAU` are dropped, and at most 4 remain. `langchain-community`, which used to ship `FlashrankRerank`, was sunset on 2026-05-22 ([sunset](https://github.com/langchain-ai/langchain-community/issues/674)). `PineconeRerank` was rejected for the Starter plan: `bge-reranker-v2-m3` allows 500 requests per month per model and 60 per minute, and it is the only rerank model on that plan ([Pinecone limits](https://docs.pinecone.io/reference/api/database-limits), [pricing](https://www.pinecone.io/pricing/)). Doc for scoring retrieval apart from the answer: [Evaluate a RAG application](https://docs.langchain.com/langsmith/evaluate-rag-tutorial).
 
 Embedding dimension and the Pinecone index dimension must match. The Pinecone notebook creates an index at dimension 1536 for a matching embedding model. Set both from env. Do not mix models.
 
@@ -240,7 +246,9 @@ flowchart TD
 | Wasted steps | Same trajectory | `extra_step_count` | Ours. The published subsequence scorer does not punish extras |
 | Safety | Same full-graph run | Code | Citation ids, HITL, allowlist |
 
-Live runs use reference-free judges and dashboards. Source: [Online evaluations](https://docs.langchain.com/langsmith/online-evaluations-llm-as-judge) and [Dashboards](https://docs.langchain.com/langsmith/dashboards). A failing live trace is added to the dataset and then re-run offline. Source: [Evaluation concepts](https://docs.langchain.com/langsmith/evaluation-concepts).
+The quiz judge is that prompt, called through OpenRouter as `deepseek/deepseek-v4.1-flash`. With no `OPENROUTER_API_KEY` it returns no score and does not write agreement. It does not grade the test split while `results/judge_calibration.md` still says the judges have not been run. Source: [Evaluate a complex agent](https://docs.langchain.com/langsmith/evaluate-complex-agent).
+
+Live runs use reference-free judges and dashboards. The safety code check scores every LangGraph root run. The groundedness judge scores every abstain, every escalation, every draft or amount a person edited, and a 10 percent sample. Source: [Online evaluations](https://docs.langchain.com/langsmith/online-evaluations-llm-as-judge) and [Dashboards](https://docs.langchain.com/langsmith/dashboards). A failing live trace is added to the dataset and then re-run offline. Source: [Evaluation concepts](https://docs.langchain.com/langsmith/evaluation-concepts).
 
 ## 9. Deploy
 
