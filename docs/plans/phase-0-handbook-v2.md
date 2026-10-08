@@ -1,6 +1,6 @@
 # Phase 0: Northstar handbook v2
 
-Status: planned, not started.
+Status: written, 2026-10-06. Corpus version `northstar-policy-v2`.
 
 ## Why first
 
@@ -125,12 +125,12 @@ The handbook is the only thing the agent's RAG may cite. Every labeled eval case
 
 ## Tasks
 
-- [ ] Write `company-overview.md` (CO-ABOUT, CO-CATEGORIES, CO-SCOPE)
-- [ ] Rewrite `returns-and-refunds.md`
-- [ ] Write `exchanges.md` (EXC-* and REP-REPLACEMENT)
-- [ ] Rewrite `shipping-and-delivery.md`
-- [ ] Rewrite `warranty.md` and extend `order-changes.md`
-- [ ] Write `payments-and-pricing.md` and `promotions-and-gift-cards.md`
-- [ ] Extend `support-escalation.md`, `privacy-and-pii.md`, `faq-general.md`
-- [ ] Rewrite `SECTION_IDS.md` for v2 and run the conflict checks
-- [ ] Update `prd.md`, `AGENTS.md`, `CONTEXT.md`, `correction.md`, `explanation.md`
+- [x] Write `company-overview.md` (CO-ABOUT, CO-CATEGORIES, CO-SCOPE)
+- [x] Rewrite `returns-and-refunds.md`
+- [x] Write `exchanges.md` (EXC-* and REP-REPLACEMENT)
+- [x] Rewrite `shipping-and-delivery.md`
+- [x] Rewrite `warranty.md` and extend `order-changes.md`
+- [x] Write `payments-and-pricing.md` and `promotions-and-gift-cards.md`
+- [x] Extend `support-escalation.md`, `privacy-and-pii.md`, `faq-general.md`
+- [x] Rewrite `SECTION_IDS.md` for v2 and run the conflict checks
+- [x] Update `prd.md`, `AGENTS.md`, `CONTEXT.md`, `correction.md`, `explanation.md`

@@ -1,0 +1,13 @@
+flowchart TD
+  msg[UserMessage] --> inputGuard[BeforeAgentFilter]
+  inputGuard -->|"blocked"| safeReply[FixedSafeReply]
+  inputGuard -->|"allowed"| piiIn[PiiOnInput]
+  piiIn --> loadThread[LoadThreadFromPostgres]
+  loadThread --> router[intent_classifier]
+  router -->|"Command goto support_agent"| support[support_agent]
+  router -->|"Command goto refund_agent"| refund[refund_agent]
+  support --> followup[compile_followup]
+  refund --> followup
+  followup --> outputGuard[AfterAgentFilter]
+  outputGuard --> client[FollowupToUser]
+  safeReply --> client
