@@ -123,7 +123,7 @@ def _live_grounded(question: str, text: str, citations: tuple[str, ...]) -> bool
 
     from northstar.handbook import _sections, policy_dir
 
-    JUDGE_MODEL_DEFAULT = "nvidia/nemotron-3-ultra-550b-a55b:free"
+    JUDGE_MODEL_DEFAULT = "deepseek/deepseek-v4.1-flash"
     OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
     class Grounded(TypedDict):

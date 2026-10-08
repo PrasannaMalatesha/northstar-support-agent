@@ -53,7 +53,7 @@ def grader_messages(question: str, reference: str, response: str) -> list[dict[s
     ]
 
 
-JUDGE_MODEL_DEFAULT = "nvidia/nemotron-3-ultra-550b-a55b:free"
+JUDGE_MODEL_DEFAULT = "deepseek/deepseek-v4.1-flash"
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
 
@@ -120,8 +120,9 @@ def calibration_text(rows: list[dict]) -> str:
 
 
 def _live_grade(question: str, reference: str, response: str) -> bool:
-    grade = _grader().invoke(grader_messages(question, reference, response))
-    return bool(grade["is_correct"])
+    # The provider samples even at temperature 0, so one call can flip a verdict. Majority of three.
+    votes = [bool(_grader().invoke(grader_messages(question, reference, response))["is_correct"]) for _ in range(3)]
+    return sum(votes) >= 2
 
 
 @lru_cache(maxsize=1)
@@ -129,8 +130,8 @@ def _grader():
     from langchain.chat_models import init_chat_model
     from langchain_core.rate_limiters import InMemoryRateLimiter
 
-    # The model id contains a colon (`:free`). Pass the provider separately
-    # so that colon is not read as an OpenAI model prefix.
+    # OpenRouter speaks the OpenAI API. Pass the provider separately so a model id
+    # with a colon (for example `:free`) is not read as a provider prefix.
     name = os.environ.get("JUDGE_MODEL") or JUDGE_MODEL_DEFAULT
     return init_chat_model(
         name,
@@ -141,5 +142,5 @@ def _grader():
         timeout=60,
         max_retries=3,
         # https://docs.langchain.com/langsmith/handle-model-rate-limiting
-        rate_limiter=InMemoryRateLimiter(requests_per_second=0.5, max_bucket_size=2),
+        rate_limiter=InMemoryRateLimiter(requests_per_second=2, max_bucket_size=3),
     ).with_structured_output(Grade, method="json_schema", strict=True)

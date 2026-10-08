@@ -1,6 +1,6 @@
 # Judge calibration
 
-The quiz judge scored the handbook rows in train_judge.
+The quiz judge (deepseek/deepseek-v4.1-flash) scored the handbook rows in train_judge.
 The student text is the handbook answerer. The ground truth is the gold section rule, or the abstain text.
 Desk rows in that split stay on code checks.
 
