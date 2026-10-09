@@ -156,6 +156,26 @@ How a customer is identified (decided for slice 3): the customer enters an order
 
 **Single sign-on.** Slice 1 uses real staff accounts with email and password. SSO replaces password login later.
 
+### Update phase — production readiness and live human support
+
+Slices 1 to 3 are built. The update phase makes the product safe to run for real customers and adds a person behind the customer chat. It is planned, not started. It is grilled before any ticket is opened. The technical plan is `docs/plans/update-phase.md`.
+
+**Bounded agent.** Every model call has a time limit and a fixed number of attempts. Every graph run has a step cap. A conversation that keeps failing stops and offers a person instead of trying again. A slow turn drops optional steps, such as rewording or translation, rather than running past its deadline. The first part (timeouts, attempts, step caps) is done in #128.
+
+**Fair limits per customer.** Each chat customer has their own daily model budget and request limit, so one customer cannot use up the chat for everyone. Limits live in the database, so they survive a restart and hold across server processes.
+
+**Escalations are picked up.** Every escalated case, from the desk or the chat, appears in a staff inbox with its handoff packet. The promise "a specialist will follow up" has a place where that happens.
+
+**Talk to a person.** In the customer chat, the customer can ask for a person. The agent can also hand over: after an escalation, or after a run of turns it could not resolve. The customer joins a line, sees their place and an estimated wait as a range, and can go back to the agent at any time. When the wait is too long or no one is online, the customer can leave a message instead, and it goes to the escalations inbox.
+
+**Specialists take live chats.** A specialist marks themselves available and takes up to a set number of chats at once. A chat is offered to the specialist with the most spare capacity, and they accept it within a short window. A chat that is not accepted goes to the next specialist. While a person is in the chat, the agent does not reply. The specialist sees the conversation so far, the customer's orders, and their past cases.
+
+**People still approve money.** A refund, cancel, exchange, address change, or warranty claim raised in a live chat is still a proposal for a lead. The specialist who raised it cannot approve it.
+
+**Quiet customers free the specialist.** If the customer stops replying, the chat is nudged, then set aside so the specialist can take the next customer, then closed. A customer who comes back returns to the same specialist when they can, with the conversation kept.
+
+**Quality measured within budget.** Experiments are sized to stay inside the monthly LangSmith trace allowance. The release bar's latency and token gates are measured on real runs and enforced before `uat`.
+
 ## Requirements
 
 Each requirement has an acceptance check a person can observe. Identifiers are stable so `trd.md` can point at them.
@@ -195,6 +215,22 @@ Each requirement has an acceptance check a person can observe. Identifiers are s
 | R31 | Final text is kept | The agent’s draft and the specialist’s final text are both saved on the case | P0 |
 | R32 | The console is accessible | Every screen passes automated WCAG 2.2 AA checks and can be used by keyboard alone | P0 |
 | R33 | Staff see the customer's past cases | The case desk shows a read-only panel with the customer's 5 most recent cases (id, status, outcome, refunded lines). It is empty on an unbound case | P0 |
+| R34 | Every model call is bounded | Each model request times out, and each call makes a fixed, small number of attempts. Each graph run has a step cap below the library default. Done in #128 | U |
+| R35 | A failing conversation stops | After a set number of turns in a row that end in a clarification, an abstain, or a failed lookup, the agent stops trying and offers a person | U |
+| R36 | A turn has a deadline | A turn that runs short of time skips optional steps and still returns a checked reply. No turn waits on a model with no limit | U |
+| R37 | Chat limits are per customer | One chat customer reaching their daily budget or request limit does not stop another customer. Limits hold after a restart | U |
+| R38 | Escalations have an inbox | Every escalated case appears in a staff list with its handoff packet, from the desk and from the chat | U |
+| R39 | A customer can ask for a person | The chat has a control to talk to a person. Using it puts the customer in the line and says so | U |
+| R40 | The wait is shown honestly | A waiting customer sees their place and an estimated wait as a range. With too little history, the chat says so instead of showing a number | U |
+| R41 | No endless line | When the estimate is over the cap or no specialist is online, the customer is offered to leave a message instead of joining the line | U |
+| R42 | One customer, one specialist | A waiting customer is offered to one specialist at a time. No specialist gets more chats than their capacity. Concurrent assignment never gives one customer to two people | U |
+| R43 | Unaccepted chats move on | A chat not accepted within the window goes to the next specialist. A customer is offered a set number of times before the leave-a-message option. A specialist who misses offers in a row is set to away | U |
+| R44 | Quiet customers free the specialist | With no customer reply, the chat is nudged, then set aside so the specialist's slot is free, then closed. A returning customer goes back to the same specialist when they can | U |
+| R45 | Live chats keep the approval gate | A gated action raised in a live chat becomes a proposal in the lead's queue. The specialist who raised it cannot approve it | U |
+| R46 | A person's replies are checked | A specialist's chat message is screened for personal data before the customer sees it, and it is audited. The agent does not reply while a person holds the chat | U |
+| R47 | The chat survives the wait | A customer waiting for or talking to a person is not signed out of the chat mid-conversation | U |
+| R48 | Quality is measured within budget | One full experiment round fits inside the monthly trace allowance with room left. Latency and token gates are computed from real runs and checked before `uat` | U |
+| R49 | Leads see the line | A lead sees specialists online, the line length, the longest wait, and the average chat length | U |
 
 ## Experience
 
@@ -290,6 +326,7 @@ Perfect scores are not the goal. Known failures are listed with the case that sh
 | 1 | P0 features, synthetic customers, orders, and catalog, mock tickets, staff console with specialist and lead logins, evaluation on the labeled set | P1 queue, SSO, real payments, photos, customer-facing chat |
 | 2 | P1 features | P2 |
 | 3 | P2 only after slice 2 is in use | |
+| Update phase | R34 to R49: bounded agent, fair limits, escalations inbox, live human chat, quality within budget | Real payments, voice, a customer login |
 
 Slice 1 is what the first implementation builds. Slice 2 and slice 3 stay in this document so they are not redesigned from scratch.
 
@@ -308,12 +345,24 @@ Order records used in the demo are synthetic.
 | Staff over-trust the draft | Show the section and the match strength |
 | The labeled set drifts from real tickets | Add failed live cases and specialist edits back into the set |
 | Scope grows past a reviewable demo | Slice 1 is P0 only |
+| A model hangs or a loop runs away | Time limits, fixed attempts, step caps, and a stop after repeated failed turns (R34 to R36) |
+| Evals use up the trace allowance | Experiments sized to the monthly budget (R48) |
+| Customers wait with no one coming | Honest estimates, a cap, and leave-a-message (R40, R41) |
+| A live chat moves money without review | The lead approval gate holds in live chats (R45) |
 
 ## Open points
 
 These are product choices still open. They are not technical designs.
 
-None.
+Update phase settings, proposed and not yet agreed:
+- Chats per specialist at once: 2.
+- Window to accept an offered chat: 45 seconds. Offers per customer before leave-a-message: 3. Missed offers in a row before a specialist is set to away: 2.
+- Quiet customer: nudge at 2 minutes, slot freed at 3 minutes, chat closed at 15 minutes.
+- Longest estimated wait before leave-a-message: 20 minutes.
+- Turns in a row without progress before the agent offers a person: 3.
+- Support hours: not defined.
+- Whether leads also take live chats, or only approve.
+- A separate LangSmith account with a fresh monthly allowance for the demo, later.
 
 Closed:
 - Partial credit is 50% store credit only (REF-PARTIAL).
@@ -341,4 +390,5 @@ Any feature not in this document is out of scope until it is added here first.
 | `docs/spec.md` | Implementation spec for slice 1 |
 | `docs/plans/phase-0-handbook-v2.md` | Handbook v2 plan |
 | `docs/plans/slice-1-build-phases.md` | Build phases and requirement mapping |
+| `docs/plans/update-phase.md` | Update phase plan: bounded agent, live human chat, quality within budget |
 | `trd.md` | Not written yet |

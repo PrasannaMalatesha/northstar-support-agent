@@ -13,6 +13,16 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-09 — Update phase planned: production readiness and live human support
+
+Status: decision
+
+What changed: Slices 1 to 3 are built, but an end-to-end check and a review found gaps for real customers. Chat customers share one model budget. Request limits live in memory. Escalated chats have no staff list. The chat token cannot be renewed. Experiments use up the trace allowance. There is no way for a customer to reach a person. `prd.md` now has an update phase (R34 to R49), and `docs/plans/update-phase.md` holds the design and build order (U0 to U7).
+
+Evidence: The code facts are listed under "What the code showed" in the plan. Routing, capacity, the wait estimate, and the timers follow Twilio TaskRouter, Salesforce Omni-Channel, Zendesk, Intercom, and the Postgres docs, as cited in the plan.
+
+Fix: Planned only. U0 is done in #128. The rest waits until Malatesha has grilled the plan and agreed the settings listed under Open points in `prd.md`.
+
 ## 2026-10-09 — Model calls had no timeout, stacked retries, and no real step cap
 
 Status: bug
