@@ -13,6 +13,16 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-09 — Update phase grilled and settled
+
+Status: decision
+
+What changed: Malatesha and the plan went through four rounds of questions. Every open setting is now agreed. Specialists take live chats, and leads only approve. A specialist holds 2 live chats at once. An offer has 45 seconds to be accepted. Quiet-customer timers are 2, 3, and 15 minutes. The wait cap is 20 minutes, and a customer who stops refreshing for 2 minutes leaves the line. After 3 failed turns the chat offers a person. Each chat customer gets 10 agent turns a day, and all chat customers 500. The release bar runs locally with a results file that CI checks, because CI holds no keys. Spanish has its own p95 target of 20 s. "Handoff" keeps its meaning (the packet). A customer's request for a person is a "live chat request" waiting in "the line" (`CONTEXT.md`).
+
+Evidence: The decisions are listed in `docs/plans/update-phase.md` (agreed settings) and `prd.md` (R34 to R49, Open points). The line's design is recorded in `docs/adr/0001-live-chat-line-in-postgres.md`.
+
+Fix: Documentation only. Building starts at U1 when Malatesha asks.
+
 ## 2026-10-09 — Update phase planned: production readiness and live human support
 
 Status: decision
