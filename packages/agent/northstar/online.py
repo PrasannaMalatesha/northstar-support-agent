@@ -139,6 +139,9 @@ def _live_grounded(question: str, text: str, citations: tuple[str, ...]) -> bool
         base_url=OPENROUTER_BASE,
         api_key=os.environ["OPENROUTER_API_KEY"],
         temperature=0,
+        # Background thread: a hung call must not hold it forever. OpenAI's max_retries counts retries.
+        timeout=30,
+        max_retries=1,
     ).with_structured_output(Grounded, method="json_schema", strict=True)
     grade = grader.invoke(
         [

@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-09 — Model calls had no timeout, stacked retries, and no real step cap
+
+Status: bug
+
+What broke: Nothing visible yet, but there were three limits missing. (1) The Gemini client had `timeout=None` and `max_retries=6`. google-genai counts that as 6 attempts including the first, and `ModelRetryMiddleware(max_retries=2)` repeats the whole call 3 times, so one model call could make up to 18 requests, each with no time limit. (2) No `recursion_limit` was set, and the installed LangGraph 1.2.14 defaults to 10007 supersteps (`langgraph/_internal/_config.py`), not the 25 the docs page shows. (3) The background groundedness judge on OpenRouter had no timeout either.
+
+Evidence: Read `HttpRetryOptions.attempts` ("Maximum number of attempts, including the original request") and `retry_args` in google-genai 2.28.0, and how langchain-google-genai 4.4.0 passes `timeout` and `max_retries`. Counted supersteps on a live turn: the router takes 3; the agent takes 12 per model call because every middleware hook is its own step. Probed the limit with a scripted model: a normal agent turn needs 26, and the worst case `run_limit=3` allows needs 43.
+
+Fix: Every model call now gets at most 3 attempts of at most 20 s each, and only one layer retries. Calls outside `create_agent` (wording, translation, photo) let the client retry (`max_retries=3`). The agent's model and fallback make one attempt each, and `ModelRetryMiddleware` retries. The router runs with `recursion_limit=10` and the agent subgraph with its own `recursion_limit=50`. It is set on the agent's call, because the router's config would otherwise carry over. The background judge has `timeout=30, max_retries=1`. A live check with every model call forced to time out: the handbook answer and the damaged-item refund still came back from the desk rules, the Spanish turn abstained instead of guessing, and no turn hung.
+
+Also found: the LangSmith monthly limit was used up by experiments, not retries. A retry stays inside its trace. This month: 3,855 evaluator traces (3,852 on 2026-10-08), about 1,165 experiment traces, and 158 app traces. Each experiment row adds one trace per evaluator. Next: one evaluator that returns several scores, one repetition while developing, and `upload_results=False` for local runs.
+
 ## 2026-10-08 — Customer chat stuck after an escalation, and a silent desk tool failure
 
 Status: bug
