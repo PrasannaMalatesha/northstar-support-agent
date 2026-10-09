@@ -11,6 +11,8 @@ import uuid
 from dataclasses import replace
 from datetime import datetime
 
+from psycopg import sql
+
 from northstar.actions import FAMILIES, PROPOSALS, Order, Proposal, Reply, family_decisions, gated, order_id as _order_id
 from northstar.clock import Clock
 from northstar.escalate import handoff, manual_handoff
@@ -29,7 +31,7 @@ from northstar.retrieve import retrieved_answer
 from northstar.privacy import SECRET_REPLY, has_secret, screen
 
 # ponytail: 1_000 tokens stands in for one handbook draft. Replace with the
-# model's reported usage when a model is called. Request counts are in memory.
+# model's reported usage when a model is called.
 TOKENS_PER_TURN = 1_000
 REQUEST_LIMIT_TEXT = (
     "This account has hit the request limit. The case is still here. Try again later."
@@ -136,6 +138,15 @@ CREATE TABLE IF NOT EXISTS usage_days (
     tokens integer NOT NULL,
     PRIMARY KEY (staff_id, day)
 );
+-- Requests and tokens per limit key and day (issue #134). It replaces usage_days and the
+-- in-memory counter, so limits survive a restart and hold across server processes.
+CREATE TABLE IF NOT EXISTS daily_limits (
+    limit_key text NOT NULL,
+    day date NOT NULL,
+    requests integer NOT NULL DEFAULT 0,
+    tokens integer NOT NULL DEFAULT 0,
+    PRIMARY KEY (limit_key, day)
+);
 """
 
 
@@ -160,12 +171,21 @@ class AmountOutOfBounds(Exception):
 
 
 class CaseStore:
-    def __init__(self, pool, clock: Clock, request_limit: int = 60, token_budget: int = 20_000) -> None:
+    def __init__(
+        self,
+        pool,
+        clock: Clock,
+        request_limit: int = 60,
+        token_budget: int = 20_000,
+        chat_turns_per_customer: int = 10,
+        chat_turns_per_day: int = 500,
+    ) -> None:
         self._pool = pool
         self._clock = clock
         self._request_limit = request_limit
         self._token_budget = token_budget
-        self._requests: dict[tuple[uuid.UUID, object], int] = {}
+        self._chat_turns_per_customer = chat_turns_per_customer
+        self._chat_turns_per_day = chat_turns_per_day
 
     def ensure_schema(self) -> None:
         with self._pool.connection() as conn:
@@ -347,17 +367,21 @@ class CaseStore:
         photo: str | None = None,
         *,
         case_id: uuid.UUID | None = None,
-        limit_key: object = None,
+        chat_customer: uuid.UUID | None = None,
     ) -> dict:
         case_id = case_id or self._open(staff_id)
         if self._status(case_id) != "Open":
             raise CaseClosed()
         now = self._clock.now()
-        day = now.date()
-        key = (limit_key or staff_id, day)
-        if self._requests.get(key, 0) >= self._request_limit:
+        if chat_customer is None:
+            key = f"staff:{staff_id}"
+            limits = {key: self._request_limit}
+        else:
+            # Each chat customer has their own turns. The total across customers is the cost ceiling.
+            key = f"chat:{chat_customer}"
+            limits = {key: self._chat_turns_per_customer, "chat": self._chat_turns_per_day}
+        if not self._take(now.date(), "requests", 1, limits):
             return self._save(case_id, question, _plain("limit", REQUEST_LIMIT_TEXT), now)
-        self._requests[key] = self._requests.get(key, 0) + 1
         if has_secret(question):
             return self._save(case_id, question, _plain("blocked", SECRET_REPLY), now)
         # A Spanish question is decided in English and answered in Spanish (issue #81).
@@ -381,7 +405,7 @@ class CaseStore:
             return self._save(case_id, asked_with, reply(_plain("safe", SAFE_REPLY)), now)
         tools = TurnTools(
             refund=lambda text: self._gated_draft(case_id, staff_id, text, now, note),
-            support=lambda text: self._support_draft(case_id, staff_id, text, now),
+            support=lambda text: self._support_draft(case_id, key, text, now),
         )
         return self._save(case_id, asked_with, reply(_noted(self._turn(case_id, asked, tools), note)), now)
 
@@ -835,7 +859,7 @@ class CaseStore:
         elif status != "Open":
             raise CaseClosed()
         # Limits are per customer, so one customer cannot use up the chat for everyone.
-        self.ask(staff_id_for(CHAT_STAFF_EMAIL), question, case_id=case_id, limit_key=("chat", customer_id))
+        self.ask(staff_id_for(CHAT_STAFF_EMAIL), question, case_id=case_id, chat_customer=customer_id)
         return self._chat_view(case_id)
 
     def _chat_case(self, customer_id: uuid.UUID) -> uuid.UUID:
@@ -889,7 +913,7 @@ class CaseStore:
     def _resume(self, case_id: uuid.UUID, decision: str) -> None:
         resume_turn(graph_for(self._pool.conninfo), str(case_id), decision)
 
-    def _support_draft(self, case_id: uuid.UUID, staff_id: uuid.UUID, question: str, now: datetime) -> Draft:
+    def _support_draft(self, case_id: uuid.UUID, limit_key: str, question: str, now: datetime) -> Draft:
         order_id = _order_id(question)
         if order_id or (self._customer(case_id) is None and _asks_for_an_order(question)):
             if self._customer(case_id) is None:
@@ -899,10 +923,8 @@ class CaseStore:
         catalog = self._catalog_draft(question)
         if catalog is not None:
             return catalog
-        day = now.date()
-        if self._used(staff_id, day) + TOKENS_PER_TURN > self._token_budget:
+        if not self._take(now.date(), "tokens", TOKENS_PER_TURN, {limit_key: self._token_budget}):
             return _plain("quota", QUOTA_TEXT)
-        self._charge(staff_id, day, TOKENS_PER_TURN)
         return handbook_reply(question)
 
     def _gated_draft(self, case_id: uuid.UUID, staff_id: uuid.UUID, question: str, now: datetime, note: str = "") -> Draft:
@@ -1047,26 +1069,29 @@ class CaseStore:
             return _plain("abstain", "I don't have that item in the catalog.")
         return None
 
-    def _used(self, staff_id: uuid.UUID, day) -> int:
-        with self._pool.connection() as conn:
-            row = conn.execute(
-                "SELECT tokens FROM usage_days WHERE staff_id = %s AND day = %s",
-                (staff_id, day),
-            ).fetchone()
-        return int(row["tokens"]) if row else 0
+    def _take(self, day, column: str, amount: int, limits: dict[str, int]) -> bool:
+        """Add amount under every limit, or under none. False when any limit would be passed.
 
-    def _charge(self, staff_id: uuid.UUID, day, tokens: int) -> None:
+        One statement per key: the row lock makes concurrent requests count exactly.
+        """
+        if any(amount > limit for limit in limits.values()):
+            return False
+        counted = sql.SQL(
+            """
+            INSERT INTO daily_limits (limit_key, day, {column}) VALUES (%s, %s, %s)
+            ON CONFLICT (limit_key, day)
+            DO UPDATE SET {column} = daily_limits.{column} + EXCLUDED.{column}
+            WHERE daily_limits.{column} + EXCLUDED.{column} <= %s
+            RETURNING limit_key
+            """
+        ).format(column=sql.Identifier(column))
         with self._pool.connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO usage_days (staff_id, day, tokens)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (staff_id, day)
-                DO UPDATE SET tokens = usage_days.tokens + EXCLUDED.tokens
-                """,
-                (staff_id, day, tokens),
-            )
+            for key, limit in limits.items():
+                if conn.execute(counted, (key, day, amount, limit)).fetchone() is None:
+                    conn.rollback()
+                    return False
             conn.commit()
+        return True
 
     def _open(self, staff_id: uuid.UUID) -> uuid.UUID:
         with self._pool.connection() as conn:

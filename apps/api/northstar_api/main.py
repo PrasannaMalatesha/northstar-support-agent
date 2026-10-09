@@ -92,7 +92,14 @@ def create_app(
     store.ensure_schema()
     seed_staff(store)
     identity = Identity(store, clock, settings.token_secret)
-    cases = CaseStore(pool, clock, settings.request_limit, settings.daily_token_budget)
+    cases = CaseStore(
+        pool,
+        clock,
+        settings.request_limit,
+        settings.daily_token_budget,
+        settings.chat_turns_per_customer,
+        settings.chat_turns_per_day,
+    )
     cases.ensure_schema()
 
     @asynccontextmanager
