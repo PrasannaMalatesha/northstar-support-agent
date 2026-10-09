@@ -97,8 +97,9 @@ def create_app(
         clock,
         settings.request_limit,
         settings.daily_token_budget,
-        settings.chat_turns_per_customer,
-        settings.chat_turns_per_day,
+        chat_turns_per_customer=settings.chat_turns_per_customer,
+        chat_turns_per_day=settings.chat_turns_per_day,
+        turn_seconds=settings.turn_deadline_seconds,
     )
     cases.ensure_schema()
 

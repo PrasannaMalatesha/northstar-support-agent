@@ -22,7 +22,7 @@ from northstar.identity.service import staff_id_for
 from northstar.language import is_spanish, to_english, to_spanish
 from northstar.memory import graph_for
 from northstar.photo import describe
-from northstar.agent_model import handbook_reply
+from northstar.agent_model import handbook_reply, turn_deadline
 from northstar.handbook import ABSTAIN_TEXT, Draft, guard_draft
 from northstar import online
 from northstar.online import record_edit, record_judge
@@ -179,6 +179,7 @@ class CaseStore:
         token_budget: int = 20_000,
         chat_turns_per_customer: int = 10,
         chat_turns_per_day: int = 500,
+        turn_seconds: float = 45,
     ) -> None:
         self._pool = pool
         self._clock = clock
@@ -186,6 +187,7 @@ class CaseStore:
         self._token_budget = token_budget
         self._chat_turns_per_customer = chat_turns_per_customer
         self._chat_turns_per_day = chat_turns_per_day
+        self._turn_seconds = turn_seconds
 
     def ensure_schema(self) -> None:
         with self._pool.connection() as conn:
@@ -368,6 +370,13 @@ class CaseStore:
         *,
         case_id: uuid.UUID | None = None,
         chat_customer: uuid.UUID | None = None,
+    ) -> dict:
+        # Each turn has a deadline. Optional model steps are skipped when it is close (R36).
+        with turn_deadline(self._clock, self._turn_seconds):
+            return self._ask(staff_id, question, photo, case_id, chat_customer)
+
+    def _ask(
+        self, staff_id: uuid.UUID, question: str, photo: str | None, case_id: uuid.UUID | None, chat_customer: uuid.UUID | None
     ) -> dict:
         case_id = case_id or self._open(staff_id)
         if self._status(case_id) != "Open":
