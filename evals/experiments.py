@@ -1,8 +1,13 @@
 """The golden dataset and the offline experiments, in LangSmith.
 
     uv run python -m evals.experiments sync
+    uv run python -m evals.experiments run --split dev --no-upload
     uv run python -m evals.experiments run --split test --repetitions 3
     uv run python -m evals.experiments promote <run_id> --decision answer --sections REF-CATEGORY
+
+A run costs LangSmith traces, and the month has a fixed allowance. One repetition is the default;
+three are for the release run on test. --no-upload is a local check that uploads nothing.
+--router adds the router experiment, for when routing changed.
 
 An experiment is a dataset, a target, and evaluators:
 https://docs.langchain.com/langsmith/evaluate-complex-agent
@@ -250,7 +255,16 @@ def correct(inputs: dict, outputs: dict, reference_outputs: dict) -> bool:
     return outputs["route"] == reference_outputs["route"]
 
 
-E2E_EVALUATORS = [label_match, citation_valid, status_correct, reply_language, photo_verdict, answer_correct]
+def code_scores(inputs: dict, outputs: dict, reference_outputs: dict) -> list[dict]:
+    """Every code check of a row from one evaluator, so a row adds one evaluator trace, not five.
+
+    The scores keep their own names. https://docs.langchain.com/langsmith/multiple-scores
+    """
+    checks = (label_match, citation_valid, status_correct, reply_language, photo_verdict)
+    return [check(inputs, outputs, reference_outputs) for check in checks]
+
+
+E2E_EVALUATORS = [code_scores, answer_correct]
 
 
 # Commands -----------------------------------------------------------------
@@ -274,7 +288,31 @@ def _misses(results) -> list[str]:
     return sorted(set(missed))
 
 
-def run(client, split: str, repetitions: int, tag: str, judge: bool = True, version: str | None = None) -> str:
+def _evaluate(client, target, upload: bool, **kwargs):
+    """One experiment. Without upload, LangSmith gets no experiment, no feedback, and no trace."""
+    if upload:
+        return client.evaluate(target, upload_results=True, **kwargs)
+    from langsmith import tracing_context
+
+    # upload_results=False still posts the LangChain model runs inside the target and the evaluators
+    # (langsmith 0.14.4), so a local check also turns tracing off around both.
+    def untraced(inputs: dict) -> dict:
+        with tracing_context(enabled=False):
+            return target(inputs)
+
+    return client.evaluate(untraced, upload_results=False, disable_evaluator_tracing=True, **kwargs)
+
+
+def run(
+    client,
+    split: str,
+    repetitions: int = 1,
+    tag: str = "slice1",
+    judge: bool = True,
+    version: str | None = None,
+    upload: bool = True,
+    router: bool = False,
+) -> str:
     if judge and split == "test" and not judges_may_score_test(Path("results/judge_calibration.md").read_text()):
         raise SystemExit("the judge is not calibrated for the test split")
     data = list(client.list_examples(dataset_name=E2E, splits=[split], as_of=tag))
@@ -282,12 +320,15 @@ def run(client, split: str, repetitions: int, tag: str, judge: bool = True, vers
         data = [example for example in data if example.metadata.get("version") == version]
     evaluators = E2E_EVALUATORS if judge else [e for e in E2E_EVALUATORS if e is not answer_correct]
     judged = "with the quiz judge" if judge else "code checks only, no judge"
-    lines = [f"## {split} split, dataset tag {tag}, {len(data)} cases, {repetitions} repetition(s), {judged}", ""]
+    uploaded = "" if upload else ", not uploaded"
+    lines = [f"## {split} split, dataset tag {tag}, {len(data)} cases, {repetitions} repetition(s), {judged}{uploaded}", ""]
     desk = Desk()
     try:
         for name, target, concurrency in (("v0", v0, 4), ("v1", desk, 1)):
-            results = client.evaluate(
+            results = _evaluate(
+                client,
                 target,
+                upload,
                 data=data,
                 evaluators=evaluators,
                 experiment_prefix=f"northstar-{name}-{split}",
@@ -300,10 +341,12 @@ def run(client, split: str, repetitions: int, tag: str, judge: bool = True, vers
             lines.append("")
     finally:
         desk.close()
-    routed = client.evaluate(route, data=INTENT, evaluators=[correct], experiment_prefix="northstar-router")
-    lines += [f"### router: `{routed.experiment_name}`", "", f"Mean scores: {_means(routed)}", "", "Misses:"]
-    lines += [f"- {miss}" for miss in _misses(routed)] or ["- none"]
-    return "\n".join(lines) + "\n"
+    if router:
+        routed = _evaluate(client, route, upload, data=INTENT, evaluators=[correct], experiment_prefix="northstar-router")
+        lines += [f"### router: `{routed.experiment_name}`", "", f"Mean scores: {_means(routed)}", "", "Misses:"]
+        lines += [f"- {miss}" for miss in _misses(routed)] or ["- none"]
+        lines.append("")
+    return "\n".join(lines)
 
 
 def promote(client, run_id: str, decision: str, sections: list[str], split: str, status: str | None) -> str:
@@ -352,10 +395,12 @@ def main(argv: list[str] | None = None) -> None:
     commands.add_parser("sync")
     ran = commands.add_parser("run")
     ran.add_argument("--split", default="test", choices=("train_judge", "dev", "test"))
-    ran.add_argument("--repetitions", type=int, default=1)
+    ran.add_argument("--repetitions", type=int, default=1, help="3 for the release run on test")
     ran.add_argument("--tag", default="slice1")
     ran.add_argument("--no-judge", action="store_true", help="code checks only, when the judge model is unavailable")
     ran.add_argument("--version", help="only the examples added under this version, for example slice3-photo")
+    ran.add_argument("--no-upload", action="store_true", help="a local check: nothing is uploaded to LangSmith, no results file")
+    ran.add_argument("--router", action="store_true", help="also run the router experiment, when routing changed")
     promoted = commands.add_parser("promote")
     promoted.add_argument("run_id")
     promoted.add_argument("--decision", required=True)
@@ -367,9 +412,20 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "sync":
         sync(client)
     elif args.command == "run":
-        report = run(client, args.split, args.repetitions, args.tag, judge=not args.no_judge, version=args.version)
+        report = run(
+            client,
+            args.split,
+            args.repetitions,
+            args.tag,
+            judge=not args.no_judge,
+            version=args.version,
+            upload=not args.no_upload,
+            router=args.router,
+        )
         print(report)
-        Path(f"results/langsmith_{args.split}{'_' + args.version if args.version else ''}.md").write_text("# LangSmith experiments\n\n" + report)
+        # A local check names experiments that LangSmith never saw, so it leaves the results files alone.
+        if not args.no_upload:
+            Path(f"results/langsmith_{args.split}{'_' + args.version if args.version else ''}.md").write_text("# LangSmith experiments\n\n" + report)
     else:
         sections = [section for section in args.sections.split(",") if section]
         print(promote(client, args.run_id, args.decision, sections, args.split, args.status))
