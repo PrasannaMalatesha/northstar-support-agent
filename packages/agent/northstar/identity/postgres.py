@@ -139,7 +139,7 @@ class PostgresIdentityStore:
             conn.execute(
                 """
                 TRUNCATE case_messages, cases, audit_log, refresh_tokens,
-                    login_attempts, staff_users
+                    login_attempts, staff_users, daily_limits
                 RESTART IDENTITY CASCADE
                 """
             )
