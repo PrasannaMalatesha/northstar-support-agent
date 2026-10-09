@@ -12,11 +12,19 @@ type ChatView = { status: string; messages: { role: string; name?: string; text:
 // What the chat offers beside the agent (R35). After replies that did not help: "talk_to_person" with live
 // chat on (issue #141), else "leave_message". "leave_message" also when the line turned the customer away.
 // `live` is the customer's open live chat request (issue #138), null when there is none.
+// "idle" means the customer went quiet: writing again brings the person back (issue #142).
 type ChatState = {
   offer: string | null;
   live_enabled: boolean;
-  live: { status: "waiting" | "offered" | "active"; specialist: string | null } | null;
+  live: { status: "waiting" | "offered" | "active" | "idle"; specialist: string | null } | null;
 };
+
+function liveNote(live: NonNullable<ChatState["live"]>): string {
+  if (live.status === "active") {
+    return `${live.specialist} joined the chat.`;
+  }
+  return live.status === "idle" ? "Your chat with a person is paused. Write to carry on." : "Waiting for a person.";
+}
 
 function speaker(message: ChatView["messages"][number]): string {
   if (message.role === "user") {
@@ -205,11 +213,7 @@ export default async function ChatPage({ searchParams }: { searchParams: Promise
     <main>
       <h1>Northstar support chat</h1>
       {view.status ? <p role="status">{view.status}</p> : null}
-      {state?.live ? (
-        <p role="status">
-          {state.live.status === "active" ? `${state.live.specialist} joined the chat.` : "Waiting for a person."}
-        </p>
-      ) : null}
+      {state?.live ? <p role="status">{liveNote(state.live)}</p> : null}
       {error && ERRORS[error] ? <p role="alert">{ERRORS[error]}</p> : null}
       <section aria-label="Conversation">
         {view.messages.length === 0 ? <p>Ask about returns, shipping, warranty, or your orders.</p> : null}
@@ -259,7 +263,7 @@ export default async function ChatPage({ searchParams }: { searchParams: Promise
           <button type="submit">Talk to a person</button>
         </form>
       ) : null}
-      {state?.live && state.live.status !== "active" ? (
+      {state?.live && (state.live.status === "waiting" || state.live.status === "offered") ? (
         <form action={leaveLineAction}>
           <button type="submit">Leave the line</button>
         </form>

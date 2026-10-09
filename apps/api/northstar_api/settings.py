@@ -36,5 +36,11 @@ class Settings(BaseSettings):
     longest_wait_minutes: float = 20
     wait_history_days: int = 7
     wait_history_chats: int = 5
+    # Quiet customer in a live chat (issue #142): minutes after the specialist's last message with no
+    # answer before "Are you still there?", before the live chat is idle and the slot is free, and
+    # before it closes.
+    quiet_nudge_minutes: float = Field(default=2, gt=0)
+    quiet_idle_minutes: float = Field(default=3, gt=0)
+    quiet_close_minutes: float = Field(default=15, gt=0)
     # Google single sign-on is on when this is set (issue #78). The same variable the console reads.
     google_client_id: str = Field(default="", validation_alias=AliasChoices("AUTH_GOOGLE_ID", "google_client_id"))

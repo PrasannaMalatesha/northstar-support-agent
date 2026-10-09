@@ -42,6 +42,17 @@ LINE_REFUSED_TEXT = "No specialist can join soon. Leave a message, and a special
 OFFERED_TEXT = "You are next in line. A specialist is about to join the chat."
 # The wait is shown as a range around the estimate (R40).
 WAIT_RANGE = (0.7, 1.5)
+STILL_THERE_TEXT = "Are you still there?"
+# The last word in a live chat (issue #142): the customer's message, or the specialist's message or
+# action turn, which carry the specialist's id. Agent turns do not count.
+_LAST_WORD = """
+    CROSS JOIN LATERAL (
+        SELECT staff_id, created_at FROM case_messages
+        WHERE case_id = r.case_id AND (role = 'user' OR staff_id IS NOT NULL)
+        ORDER BY id DESC
+        LIMIT 1
+    ) last
+"""
 # Turns that did not help the customer. Enough of them in a row and the chat offers a person (R35).
 FAILED_DECISIONS = ("ask_clarification", "abstain", "lookup_failed")
 UNBOUND_ORDER_TEXT = "Pick a customer first. No order was read."
@@ -188,6 +199,12 @@ ALTER TABLE specialist_availability ADD COLUMN IF NOT EXISTS missed_in_a_row int
 ALTER TABLE specialist_availability ADD COLUMN IF NOT EXISTS auto_away_at timestamptz;
 -- The customer's last chat refresh while in the line (issue #140).
 ALTER TABLE live_chat_requests ADD COLUMN IF NOT EXISTS customer_seen_at timestamptz;
+-- Quiet customers (issue #142). An idle live chat frees the specialist's slot and stays open until
+-- it closes, so it still counts as the case's one open request. A customer back from idle with no
+-- free slot goes to the front of the line: a set returned_at puts the request ahead of the rest.
+CREATE UNIQUE INDEX IF NOT EXISTS live_chat_requests_one_open_or_idle_per_case
+ON live_chat_requests (case_id) WHERE status IN ('waiting', 'offered', 'active', 'idle');
+ALTER TABLE live_chat_requests ADD COLUMN IF NOT EXISTS returned_at timestamptz;
 """
 
 
@@ -251,6 +268,7 @@ class CaseStore:
         longest_wait_minutes: float = 20,
         wait_history_days: int = 7,
         wait_history_chats: int = 5,
+        quiet_minutes: tuple[float, float, float] = (2, 3, 15),
     ) -> None:
         self._pool = pool
         self._clock = clock
@@ -269,6 +287,8 @@ class CaseStore:
         self._longest_wait = longest_wait_minutes
         self._wait_history_days = wait_history_days
         self._wait_history_chats = wait_history_chats
+        # Minutes of customer quiet before the nudge, idle, and close (R44).
+        self._nudge, self._idle, self._close = (timedelta(minutes=m) for m in quiet_minutes)
 
     def ensure_schema(self) -> None:
         with self._pool.connection() as conn:
@@ -967,11 +987,14 @@ class CaseStore:
     def chat(self, customer_id: uuid.UUID) -> dict:
         case_id = self._chat_case(customer_id)
         if self._live_chats:
+            self._quiet()
             self._refreshed(case_id)
         self._notice_expired()
         return self._chat_view(case_id)
 
     def chat_ask(self, customer_id: uuid.UUID, question: str) -> dict:
+        if self._live_chats:
+            self._quiet()
         case_id = self._chat_case(customer_id)
         if self._live_chats and self._held(case_id):
             # A specialist holds this chat, or an escalation waits for one. The agent is quiet: no model call,
@@ -982,6 +1005,8 @@ class CaseStore:
                     (case_id, screen(question.strip()), self._clock.now()),
                 )
                 conn.commit()
+            # A customer back from idle returns to their specialist or to the front of the line.
+            self._quiet()
             return self._chat_view(case_id)
         case_id = self._writable(customer_id, case_id)
         # Limits are per customer, so one customer cannot use up the chat for everyone.
@@ -1039,6 +1064,8 @@ class CaseStore:
             status = "A person on our team is reviewing your request. Nothing is approved yet."
         elif row["status"] == "Escalated":
             status = f"A specialist will follow up with you. {COME_BACK_TEXT}"
+        elif self._live_chats and self._still_there(case_id):
+            status = STILL_THERE_TEXT
         elif ticket:
             status = f"Our team approved your request. Reference {ticket}."
         elif row["rejection_reason"]:
@@ -1126,7 +1153,8 @@ class CaseStore:
     def _failing(self, case_id: uuid.UUID) -> bool:
         """The case is open and its last agent turns all failed. One turn that helped resets the count.
 
-        Not while the case is in the line or in a live chat: a person is already on the way (issue #138).
+        Not while the case is in the line or in a live chat, idle included: a person is already on the way
+        (issues #138 and #142).
         """
         with self._pool.connection() as conn:
             rows = conn.execute(
@@ -1135,7 +1163,7 @@ class CaseStore:
                 WHERE m.case_id = %s AND m.role = 'assistant' AND c.status = 'Open'
                   AND NOT EXISTS (
                       SELECT 1 FROM live_chat_requests r
-                      WHERE r.case_id = c.id AND r.status IN ('waiting', 'offered', 'active')
+                      WHERE r.case_id = c.id AND r.status IN ('waiting', 'offered', 'active', 'idle')
                   )
                 ORDER BY m.id DESC
                 LIMIT %s
@@ -1297,21 +1325,22 @@ class CaseStore:
         return joined
 
     def _join(self, case_id: uuid.UUID, customer_id: uuid.UUID, reason: str) -> bool:
-        """Join at the back of the line: escalated requests go behind other escalated ones only (R42).
+        """Join at the back of the line: escalated requests go behind other escalated ones only (R42), and
+        every request goes behind customers back from idle (issue #142).
 
         A free slot takes the request at once. Otherwise the estimate must be under the cap. With too
         little history there is no number, and the request joins.
         """
         with self._pool.connection() as conn:
             if conn.execute(
-                "SELECT 1 FROM live_chat_requests WHERE case_id = %s AND status IN ('waiting', 'offered', 'active')",
+                "SELECT 1 FROM live_chat_requests WHERE case_id = %s AND status IN ('waiting', 'offered', 'active', 'idle')",
                 (case_id,),
             ).fetchone():
                 return True
             ahead = conn.execute(
                 """
                 SELECT count(*) AS n FROM live_chat_requests
-                WHERE status = 'waiting' AND (reason = 'escalated' OR %s <> 'escalated')
+                WHERE status = 'waiting' AND (returned_at IS NOT NULL OR reason = 'escalated' OR %s <> 'escalated')
                 """,
                 (reason,),
             ).fetchone()["n"]
@@ -1397,7 +1426,8 @@ class CaseStore:
                 SELECT me.status, (
                     SELECT count(*) FROM live_chat_requests o
                     WHERE o.status = 'waiting'
-                      AND (o.reason <> 'escalated', o.queued_at, o.id) <= (me.reason <> 'escalated', me.queued_at, me.id)
+                      AND (o.returned_at IS NULL, o.reason <> 'escalated', o.queued_at, o.id)
+                          <= (me.returned_at IS NULL, me.reason <> 'escalated', me.queued_at, me.id)
                 ) AS place
                 FROM live_chat_requests me
                 WHERE me.case_id = %s AND me.status IN ('waiting', 'offered')
@@ -1432,7 +1462,7 @@ class CaseStore:
                 WHERE r.case_id = %s AND c.status = 'Open'
                   AND NOT EXISTS (
                       SELECT 1 FROM live_chat_requests o
-                      WHERE o.case_id = r.case_id AND o.status IN ('waiting', 'offered', 'active')
+                      WHERE o.case_id = r.case_id AND o.status IN ('waiting', 'offered', 'active', 'idle')
                   )
                 ORDER BY r.queued_at DESC, r.id DESC
                 LIMIT 1
@@ -1491,6 +1521,7 @@ class CaseStore:
 
     def live_state(self, customer_id: uuid.UUID) -> dict | None:
         """The open request on the customer's chat. The specialist's first name shows once they join."""
+        self._quiet()
         self._notice_expired()
         case_id = self._chat_case(customer_id)
         self._refreshed(case_id)
@@ -1500,7 +1531,7 @@ class CaseStore:
                 SELECT r.status, split_part(staff_users.name, ' ', 1) AS name
                 FROM live_chat_requests r
                 LEFT JOIN staff_users ON staff_users.id = r.staff_id
-                WHERE r.case_id = %s AND r.status IN ('waiting', 'offered', 'active')
+                WHERE r.case_id = %s AND r.status IN ('waiting', 'offered', 'active', 'idle')
                 """,
                 (case_id,),
             ).fetchone()
@@ -1511,11 +1542,13 @@ class CaseStore:
     def live(self, staff_id: uuid.UUID) -> dict:
         """A specialist's state, offers, and live chats. A live chat shows the conversation as the customer sees it.
 
+        An idle live chat is listed with `idle` set: the customer went quiet, so it does not take a slot (R44).
         The desk reads this every few seconds, so a read is also the desk's check-in (issue #139).
         """
         back = self._check_in(staff_id)
         if self._expire() or back:
             self._assign()
+        self._quiet()
         with self._pool.connection() as conn:
             state = conn.execute(
                 "SELECT state, auto_away_at FROM specialist_availability WHERE staff_id = %s",
@@ -1526,7 +1559,7 @@ class CaseStore:
                 SELECT r.id, r.case_id, r.status, customers.name AS customer
                 FROM live_chat_requests r
                 JOIN customers ON customers.id = r.customer_id
-                WHERE r.staff_id = %s AND r.status IN ('offered', 'active')
+                WHERE r.staff_id = %s AND r.status IN ('offered', 'active', 'idle')
                 ORDER BY r.queued_at, r.id
                 """,
                 (staff_id,),
@@ -1538,7 +1571,7 @@ class CaseStore:
             "offers": [
                 {"id": str(row["id"]), "customer": row["customer"]} for row in rows if row["status"] == "offered"
             ],
-            "chats": [self._live_chat(row) for row in rows if row["status"] == "active"],
+            "chats": [self._live_chat(row) for row in rows if row["status"] in ("active", "idle")],
         }
 
     def _live_chat(self, row) -> dict:
@@ -1549,6 +1582,7 @@ class CaseStore:
             "id": str(row["id"]),
             "case_id": str(row["case_id"]),
             "customer": row["customer"],
+            "idle": row["status"] == "idle",
             "messages": view["messages"],
             "status": view["status"],
             # The agent's handoff when its escalation joined the line, else empty (issue #141).
@@ -1647,8 +1681,7 @@ class CaseStore:
             ).fetchone()
         if live is None:
             raise NotYours()
-        if self._status(live["case_id"]) == "Waiting for approval":
-            # As on the desk, a case waiting for a lead does not close. The lead decides first.
+        if _waits_for_lead(self._status(live["case_id"])):
             raise ProposalWaiting()
         packet = self._manual_packet(live["case_id"], note) if status == "Escalated" else ""
         now = self._clock.now()
@@ -1676,7 +1709,8 @@ class CaseStore:
         self._assign()
 
     def _held(self, case_id: uuid.UUID) -> bool:
-        """A specialist holds this chat case in a live chat, or the agent's escalation waits in the line for one.
+        """A specialist holds this chat case in a live chat, or held it until the customer went quiet, or the
+        agent's escalation waits in the line for one.
 
         Either way the agent has handed over: an escalated chat takes no agent turn or proposal (R30).
         """
@@ -1685,12 +1719,118 @@ class CaseStore:
                 conn.execute(
                     """
                     SELECT 1 FROM live_chat_requests
-                    WHERE case_id = %s AND (status = 'active' OR (reason = 'escalated' AND status IN ('waiting', 'offered')))
+                    WHERE case_id = %s
+                      AND (status IN ('active', 'idle') OR (reason = 'escalated' AND status IN ('waiting', 'offered')))
                     """,
                     (case_id,),
                 ).fetchone()
                 is not None
             )
+
+    # Quiet customers (R44, issue #142). The clock runs from the specialist's last message, and only
+    # while the customer has not answered it. Timers apply when a chat, a live view, or the line is
+    # read. There is no scheduler.
+
+    def _quiet(self) -> None:
+        """Idle the live chats quiet past the idle time, freeing the slot, and close those quiet past the close time.
+
+        A chat whose case waits for a lead is not closed until the lead decides. A customer who wrote during
+        idle comes back. Each request row is locked with SKIP LOCKED, so two
+        reads at once change it once.
+        """
+        now = self._clock.now()
+        changed, back = False, []
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT r.id, r.case_id, r.status, r.staff_id, cases.status AS case_status,
+                       last.staff_id AS last_by, last.created_at
+                FROM live_chat_requests r
+                JOIN cases ON cases.id = r.case_id
+                {_LAST_WORD}
+                WHERE r.status IN ('active', 'idle')
+                  AND ((last.staff_id IS NOT NULL AND last.created_at <= %s) OR (r.status = 'idle' AND last.staff_id IS NULL))
+                FOR UPDATE OF r SKIP LOCKED
+                """,
+                (now - min(self._idle, self._close),),
+            ).fetchall()
+            for row in rows:
+                if row["last_by"] is None:
+                    back.append(row)
+                elif now - row["created_at"] >= self._close and not _waits_for_lead(row["case_status"]):
+                    # Closed like a resolved chat, with the conversation kept. While a proposal waits, the chat
+                    # only goes idle, and it closes once the lead has decided.
+                    conn.execute("UPDATE live_chat_requests SET status = 'ended', ended_at = %s WHERE id = %s", (now, row["id"]))
+                    conn.execute("UPDATE cases SET status = 'Resolved' WHERE id = %s AND status = 'Open'", (row["case_id"],))
+                    _audit(conn, row["staff_id"], "live_chat_closed", now)
+                    changed = True
+                elif now - row["created_at"] >= self._idle and row["status"] == "active":
+                    conn.execute("UPDATE live_chat_requests SET status = 'idle' WHERE id = %s", (row["id"],))
+                    _audit(conn, row["staff_id"], "live_chat_idle", now)
+                    changed = True
+            conn.commit()
+        for row in back:
+            self._come_back(row["id"], row["staff_id"])
+        if changed or back:
+            # A slot is free, or a customer is back in the line.
+            self._assign()
+
+    def _come_back(self, request_id: uuid.UUID, staff_id: uuid.UUID) -> None:
+        """Back to the same specialist when they are available with a free slot, otherwise to the front of the line."""
+        now = self._clock.now()
+        with self._pool.connection() as conn:
+            # The specialist's row first, as in _offer_next, and the slot counted in a new statement after the lock.
+            # Available means the desk checked in recently, as for offers (issue #139).
+            available = conn.execute(
+                """
+                SELECT capacity FROM specialist_availability
+                WHERE staff_id = %s AND state = 'available' AND last_seen >= %s
+                FOR UPDATE
+                """,
+                (staff_id, now - self._check_in_window),
+            ).fetchone()
+            busy = conn.execute(
+                "SELECT count(*) AS n FROM live_chat_requests WHERE staff_id = %s AND status IN ('offered', 'active')",
+                (staff_id,),
+            ).fetchone()["n"]
+            if available is not None and busy < available["capacity"]:
+                moved = conn.execute(
+                    """
+                    UPDATE live_chat_requests SET status = 'active', customer_seen_at = %s
+                    WHERE id = %s AND status = 'idle'
+                    RETURNING id
+                    """,
+                    (now, request_id),
+                ).fetchone()
+            else:
+                # The customer just wrote, so the line's sweep does not count them as gone. Back in the line,
+                # the request starts a new round of offers.
+                moved = conn.execute(
+                    """
+                    UPDATE live_chat_requests
+                    SET status = 'waiting', staff_id = NULL, returned_at = %s, customer_seen_at = %s, offers = 0, missed_by = '{}'
+                    WHERE id = %s AND status = 'idle'
+                    RETURNING id
+                    """,
+                    (now, now, request_id),
+                ).fetchone()
+            if moved is not None:
+                _audit(conn, staff_id, "live_chat_returned", now)
+            conn.commit()
+
+    def _still_there(self, case_id: uuid.UUID) -> bool:
+        """The specialist had the last word in this live chat at least the nudge time ago."""
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                f"""
+                SELECT 1 FROM live_chat_requests r
+                {_LAST_WORD}
+                WHERE r.case_id = %s AND r.status IN ('active', 'idle')
+                  AND last.staff_id IS NOT NULL AND last.created_at <= %s
+                """,
+                (case_id, self._clock.now() - self._nudge),
+            ).fetchone()
+        return row is not None
 
     def _notice_expired(self) -> None:
         """Expired offers are noticed whenever the line is read, so no scheduler runs (ADR 0001)."""
@@ -1778,7 +1918,8 @@ class CaseStore:
     def _offer_next(self) -> bool:
         """Offer the next waiting request to the available specialist with the most spare capacity.
 
-        The line is escalated requests first, then oldest first (R42).
+        The line is escalated requests first, then oldest first (R42). A customer back from idle goes
+        ahead of both (issue #142).
 
         One transaction (ADR 0001). The available specialists' rows are locked first, always in the same
         order, so two runs never deadlock, and a run that waits on them then sees the request, the free
@@ -1816,7 +1957,7 @@ class CaseStore:
                 """
                 SELECT id, missed_by FROM live_chat_requests
                 WHERE status = 'waiting' AND NOT missed_by @> %s
-                ORDER BY reason <> 'escalated', queued_at, id
+                ORDER BY returned_at IS NULL, reason <> 'escalated', queued_at, id
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
                 """,
@@ -2106,6 +2247,11 @@ def _to_inbox(conn, case_ids: list) -> None:
 def _audit(conn, staff_id: uuid.UUID | None, event: str, at: datetime) -> None:
     """An audit event in the caller's transaction, so it is recorded only with the change it describes."""
     conn.execute("INSERT INTO audit_log (staff_id, event, created_at) VALUES (%s, %s, %s)", (staff_id, event, at))
+
+
+def _waits_for_lead(case_status: str) -> bool:
+    """As on the desk, a case waiting for a lead does not close. The lead decides first (R45)."""
+    return case_status == "Waiting for approval"
 
 
 def _plain(decision: str, text: str) -> Draft:
