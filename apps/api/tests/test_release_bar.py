@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import psycopg
 from evals.labeled import CASES, matches, registry_ids
-from evals.release_bar import bad_citation, gates, missing_citation, online_checks
+from evals.release_bar import GATES, TOKEN_CAP, bad_citation, gates, missing_citation, online_checks, record
 from northstar.online import record_judge, safety_code
 from northstar.handbook import answer
 
@@ -26,6 +26,7 @@ def _row(**over) -> dict:
         "bad_citation": False,
         "ticket": False,
         "seconds": 0.01,
+        "tokens": 0,
     }
     row.update(over)
     return row
@@ -41,6 +42,38 @@ def test_a_miss_on_each_gate_is_reported():
     assert "latency" in gates([_row(seconds=11)])
     assert "token cap" in gates([_row(citations=["A", "B", "C", "D", "E"])])
     assert gates([_row()]) == []
+
+
+def test_english_rows_keep_10_seconds_and_spanish_turns_have_their_own_20():
+    english = [_row(seconds=9) for _ in range(19)] + [_row(seconds=30)]  # the slowest is past p95 of 20
+    assert gates(english) == []
+    assert gates([_row(seconds=10)]) == ["latency"]
+    spanish = [_row(language="es", seconds=16) for _ in range(5)]
+    assert gates([_row()] + spanish) == []
+    assert gates([_row()] + spanish + [_row(language="es", seconds=21)]) == ["spanish latency"]
+    # Spanish rows are dev cases: they never count toward action correct or the English latency.
+    assert gates([_row()] + [_row(language="es", passed=False, seconds=19) for _ in range(9)]) == []
+    assert gates([_row(language="es")]) == ["no rows"]
+
+
+def test_the_token_cap_reads_the_tokens_each_turn_recorded():
+    assert gates([_row(tokens=TOKEN_CAP)]) == []
+    assert gates([_row(tokens=TOKEN_CAP + 1)]) == ["token cap"]
+    assert gates([_row(), _row(language="es", tokens=TOKEN_CAP + 1)]) == ["token cap"]
+
+
+def test_the_results_record_names_the_commit_and_every_gate():
+    commit = "a" * 40
+    rows = [_row(seconds=2.5, tokens=900), _row(language="es", seconds=15, tokens=2400)]
+    passed = record(rows, commit)
+    assert passed["commit"] == commit
+    assert passed["rows"] == 2
+    assert list(passed["gates"]) == list(GATES)
+    assert all(passed["gates"].values())
+    assert passed["measured"] == {"action_correct": 1.0, "p95_seconds_en": 2.5, "p95_seconds_es": 15, "max_tokens": 2400}
+    failed = record(rows + [_row(seconds=12)], commit)
+    assert [gate for gate, ok in failed["gates"].items() if not ok] == ["latency"]
+    assert not any(record([], commit)["gates"].values())
 
 
 def test_a_citation_must_be_in_the_registry_and_a_policy_answer_must_cite_one():
@@ -107,6 +140,7 @@ def test_the_held_out_set_meets_the_release_bar(client, clock):
                 "bad_citation": bad_citation(citations, legal),
                 "ticket": False,
                 "seconds": time.perf_counter() - started,
+                "tokens": 0,  # pytest calls no model
             }
         )
 
@@ -150,6 +184,7 @@ def test_the_held_out_set_meets_the_release_bar(client, clock):
                 "bad_citation": bad_citation(citations, legal),
                 "ticket": body["ticket_id"] is not None,
                 "seconds": seconds,
+                "tokens": 0,  # pytest calls no model
             }
         )
 

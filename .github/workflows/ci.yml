@@ -1,4 +1,5 @@
 # The release bar is the API test. The axe scan is the console job.
+# A PR into uat also needs the release bar's results file for its code (release-bar job).
 # Either miss fails this workflow, so a push to uat does not deploy.
 name: CI
 
@@ -97,6 +98,20 @@ jobs:
         env:
           CI: "true"
           DATABASE_URL: postgresql://northstar:northstar@localhost:5432/northstar
+
+  release-bar:
+    # The release bar runs locally (CI has no keys) and commits results/release_bar.json.
+    # A PR into uat must carry a passing file for the code it promotes. Other PRs skip this job.
+    name: Release bar results
+    if: github.event_name == 'pull_request' && github.base_ref == 'uat'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Check the results file
+        run: python3 evals/release_check.py "${{ github.event.pull_request.head.sha }}"
 
   deploy:
     name: Deploy

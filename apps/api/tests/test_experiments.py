@@ -1,14 +1,18 @@
 """The LangSmith dataset rows, evaluators, and experiment runs, checked without a network call."""
 
 import ast
+import json
+import subprocess
 import uuid
 from datetime import datetime, timezone
 
 import langsmith
-from langchain_core.language_models.fake_chat_models import FakeListChatModel
+import pytest
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+from langchain_core.messages import AIMessage
 from langsmith import Client, schemas
 
-from evals import experiments
+from evals import experiments, release_bar
 from evals.experiments import (
     E2E_EVALUATORS,
     INTENT_CASES,
@@ -19,7 +23,9 @@ from evals.experiments import (
     e2e_example,
     intent_example,
     label_match,
+    measured_commit,
     reference,
+    release,
     route,
     run,
     status_correct,
@@ -67,13 +73,21 @@ def test_the_router_rows_carry_hand_labels_and_the_latest_message_decides():
 CODE_SCORES = ["label_match", "citation_valid", "status_correct", "reply_language", "photo_verdict"]
 
 
+FAKE_TOKENS = 120
+
+
 class FakeDesk:
-    """v1 without the app: a scripted LangChain model gives one Spanish reply with a photo line."""
+    """v1 without the app: a scripted LangChain model gives one Spanish reply with a photo line.
+
+    The model reports its usage like a real one, and the turn is metered like the real desk's.
+    """
 
     def __call__(self, inputs: dict) -> dict:
-        model = FakeListChatModel(responses=["Tienes 30 días. Photo: visible damage."])
-        reply = model.invoke(inputs["question"]).content
-        return {"decision": "answer", "citations": ["REF-CATEGORY"], "response": reply, "status": "Open"}
+        usage = {"input_tokens": 100, "output_tokens": 20, "total_tokens": FAKE_TOKENS}
+        reply = AIMessage("Tienes 30 días. Photo: visible damage.", usage_metadata=usage, response_metadata={"model_name": "fake"})
+        with experiments._meter() as used:
+            text = GenericFakeChatModel(messages=iter([reply])).invoke(inputs["question"]).content
+        return {"decision": "answer", "citations": ["REF-CATEGORY"], "response": text, "status": "Open", "ticket": False, **used}
 
     def close(self) -> None:
         pass
@@ -150,7 +164,7 @@ def test_a_local_run_sends_nothing_and_reports_the_same_score_names(monkeypatch)
     monkeypatch.setattr(experiments, "Desk", FakeDesk)
     rows = [e2e_example(CASES[0], "slice1"), e2e_example(SPANISH_CASES[0], "slice3-es"), e2e_example(PHOTO_CASES[0], "slice3-photo")]
     client = OfflineClient([_example(row) for row in rows])
-    report = run(client, "dev", judge=False, upload=False)
+    report, _ = run(client, "dev", judge=False, upload=False)
     assert client.sent == []
     assert "3 cases, 1 repetition(s), code checks only, no judge, not uploaded" in report
     assert sorted(_means(report, "v1")) == sorted(CODE_SCORES)
@@ -185,7 +199,7 @@ def test_the_router_experiment_runs_only_when_asked(monkeypatch):
     run(client, "dev", judge=False)
     assert [experiment["experiment_prefix"] for experiment in client.experiments] == ["northstar-v0-dev", "northstar-v1-dev"]
     client = Recorder()
-    report = run(client, "dev", judge=False, router=True)
+    report, _ = run(client, "dev", judge=False, router=True)
     assert client.experiments[-1]["experiment_prefix"] == "northstar-router"
     assert "### router: `fake`" in report
 
@@ -193,10 +207,76 @@ def test_the_router_experiment_runs_only_when_asked(monkeypatch):
 def test_the_command_line_defaults_to_one_repetition_without_the_router(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(langsmith, "Client", Recorder)
-    monkeypatch.setattr(experiments, "run", lambda *args, **kwargs: calls.append((args[1:], kwargs)) or "report\n")
+    monkeypatch.setattr(experiments, "run", lambda *args, **kwargs: calls.append((args[1:], kwargs)) or ("report\n", []))
     monkeypatch.chdir(tmp_path)  # a local check writes no results file; a write here would fail
     experiments.main(["run", "--split", "dev", "--no-upload"])
     experiments.main(["run", "--split", "test", "--repetitions", "3", "--router", "--no-upload"])
     assert calls[0] == (("dev", 1, "slice1"), {"judge": True, "version": None, "upload": False, "router": False})
     assert calls[1] == (("test", 3, "slice1"), {"judge": True, "version": None, "upload": False, "router": True})
     assert not (tmp_path / "results").exists()
+
+
+def test_each_row_records_its_seconds_and_the_tokens_its_models_reported(monkeypatch):
+    monkeypatch.setattr(experiments, "Desk", FakeDesk)
+    rows = [e2e_example(CASES[0], "slice1"), e2e_example(SPANISH_CASES[0], "slice3-es")]
+    client = OfflineClient([_example(row) for row in rows])
+    _, gate_rows = run(client, "dev", judge=False, upload=False)
+    # The release bar reads the live desk's rows only, v0 is a baseline.
+    assert [row["language"] for row in gate_rows] == ["en", "es"]
+    assert all(row["tokens"] == FAKE_TOKENS and 0 <= row["seconds"] < 5 for row in gate_rows)
+    assert gate_rows[0]["passed"] is True and gate_rows[0]["ticket"] is False
+    # v0 is metered too. Its handbook answer calls no chat model.
+    outputs = v0({"question": "What is your favorite color?"})
+    assert outputs["tokens"] == 0 and outputs["seconds"] >= 0
+
+
+def test_the_release_run_adds_the_spanish_turns_and_records_the_gates(monkeypatch):
+    monkeypatch.setattr(experiments, "Desk", FakeDesk)
+    test_case = next(case for case in CASES if case["split"] == "test" and case["decision"] == "answer")
+    rows = [e2e_example(test_case, "slice1"), e2e_example(SPANISH_CASES[0], "slice3-es")]
+    client = OfflineClient([_example(row) for row in rows])
+    commit = "c" * 40
+    report, bar = release(client, commit, judge=False, upload=False)
+    assert client.sent == []
+    assert bar["commit"] == commit and bar["uploaded"] is False
+    # The offline client returns both rows for test, so v1 ran 2 cases and the Spanish turns 1, three times each.
+    assert bar["rows"] == 3 * 2 + 3 * 1
+    assert set(bar["gates"]) == set(release_bar.GATES)
+    assert bar["measured"]["max_tokens"] == FAKE_TOKENS
+    assert bar["measured"]["p95_seconds_es"] is not None
+    assert "3 repetition(s)" in report and "### v1 Spanish turns:" in report
+
+
+def test_the_release_command_writes_the_results_file(monkeypatch, tmp_path):
+    calls = []
+    bar = {"commit": "d" * 40, "gates": {"latency": True}}
+    monkeypatch.setattr(langsmith, "Client", Recorder)
+    monkeypatch.setattr(experiments, "measured_commit", lambda: "d" * 40)
+    monkeypatch.setattr(experiments, "release", lambda *args, **kwargs: calls.append((args[1:], kwargs)) or ("report", bar))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "results").mkdir()
+    experiments.main(["release", "--no-upload"])
+    assert calls == [(("d" * 40, "slice1"), {"judge": True, "upload": False})]
+    assert json.loads((tmp_path / "results/release_bar.json").read_text()) == bar
+    assert not (tmp_path / "results/langsmith_test.md").exists()
+
+
+def _git(repo, *args: str) -> str:
+    quiet = ["-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"]
+    return subprocess.run(["git", *quiet, *args], cwd=repo, check=True, capture_output=True, text=True).stdout
+
+
+def test_a_release_run_names_its_commit_and_refuses_uncommitted_code(monkeypatch, tmp_path):
+    _git(tmp_path, "init", "-q")
+    (tmp_path / "results").mkdir()
+    (tmp_path / "app.py").write_text("one\n")
+    (tmp_path / "results/old.md").write_text("old\n")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "First.")
+    monkeypatch.chdir(tmp_path)
+    head = _git(tmp_path, "rev-parse", "HEAD").strip()
+    (tmp_path / "results/old.md").write_text("new\n")  # an earlier results file is not code
+    assert measured_commit() == head
+    (tmp_path / "app.py").write_text("two\n")
+    with pytest.raises(SystemExit, match="app.py"):
+        measured_commit()
