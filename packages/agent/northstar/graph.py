@@ -78,7 +78,11 @@ AGENT_RECURSION_LIMIT = 50
 
 def _decide(question: str, draft_fn: Callable[[str], Draft], name: str) -> Draft:
     # https://docs.langchain.com/oss/python/langchain/agents
+    from northstar.agent_model import attempts_left
+
     if os.environ.get("PYTEST_CURRENT_TEST") or not os.environ.get("GOOGLE_API_KEY"):
+        return draft_fn(question)
+    if not attempts_left(1):  # the turn's deadline is close: the desk decides without a model
         return draft_fn(question)
     return _agent_draft(question, draft_fn, name)
 
@@ -149,7 +153,7 @@ def _middleware(held: dict) -> list:
         ToolRetryMiddleware,
     )
 
-    from northstar.agent_model import _fallback_model
+    from northstar.agent_model import _fallback_model, attempts_left
     from northstar.privacy import detector
 
     def pii(kind: str, strategy: str, find=None) -> PIIMiddleware:
@@ -168,6 +172,11 @@ def _middleware(held: dict) -> list:
         return "Lookup failed. Do not fill in facts."
 
     fallback = _fallback_model()
+    models = 1 if fallback is None else 2
+    # Three tries per model, or only the tries that fit before the turn's deadline, shared by both models.
+    tries = attempts_left(3 * models)
+    if tries < models:
+        fallback, models = None, 1
     return [
         pii("secret", "block", detector("secret")),
         pii("email", "redact"),
@@ -176,7 +185,7 @@ def _middleware(held: dict) -> list:
         ModelCallLimitMiddleware(run_limit=3, exit_behavior="end"),
         ToolCallLimitMiddleware(tool_name="desk", run_limit=1),
         *([ModelFallbackMiddleware(fallback)] if fallback is not None else []),
-        ModelRetryMiddleware(max_retries=2, on_failure="error"),
+        ModelRetryMiddleware(max_retries=max(tries // models - 1, 0), on_failure="error"),
         ToolErrorMiddleware(on_error=failed),
         ToolRetryMiddleware(max_retries=1, tools=["desk"], on_failure="error"),
     ]

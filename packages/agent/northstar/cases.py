@@ -20,7 +20,7 @@ from northstar.identity.service import staff_id_for
 from northstar.language import is_spanish, to_english, to_spanish
 from northstar.memory import graph_for
 from northstar.photo import describe
-from northstar.agent_model import handbook_reply
+from northstar.agent_model import handbook_reply, turn_deadline
 from northstar.handbook import ABSTAIN_TEXT, Draft, guard_draft
 from northstar import online
 from northstar.online import record_edit, record_judge
@@ -160,11 +160,14 @@ class AmountOutOfBounds(Exception):
 
 
 class CaseStore:
-    def __init__(self, pool, clock: Clock, request_limit: int = 60, token_budget: int = 20_000) -> None:
+    def __init__(
+        self, pool, clock: Clock, request_limit: int = 60, token_budget: int = 20_000, turn_seconds: float = 45
+    ) -> None:
         self._pool = pool
         self._clock = clock
         self._request_limit = request_limit
         self._token_budget = token_budget
+        self._turn_seconds = turn_seconds
         self._requests: dict[tuple[uuid.UUID, object], int] = {}
 
     def ensure_schema(self) -> None:
@@ -348,6 +351,13 @@ class CaseStore:
         *,
         case_id: uuid.UUID | None = None,
         limit_key: object = None,
+    ) -> dict:
+        # Each turn has a deadline. Optional model steps are skipped when it is close (R36).
+        with turn_deadline(self._clock, self._turn_seconds):
+            return self._ask(staff_id, question, photo, case_id, limit_key)
+
+    def _ask(
+        self, staff_id: uuid.UUID, question: str, photo: str | None, case_id: uuid.UUID | None, limit_key: object
     ) -> dict:
         case_id = case_id or self._open(staff_id)
         if self._status(case_id) != "Open":
