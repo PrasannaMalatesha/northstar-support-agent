@@ -33,21 +33,22 @@ class Handoff:
     owner: str
     sections: tuple[str, ...] = ()
     tried: tuple[str, ...] = ()
+    # The questions and replies before a left message, so the packet stands alone.
+    recent: tuple[str, ...] = ()
 
     @property
     def text(self) -> str:
         sections = ", ".join(dict.fromkeys((*self.sections, self.section)))
-        return "\n".join(
-            (
-                f"Asked: {self.asked}",
-                f"Handbook: {self.handbook} ({self.section})",
-                f"Missing: {self.missing}",
-                f"Order: {self.order_id or 'none'}",
-                f"Sections read: {sections}",
-                f"Tried: {'; '.join(self.tried) if self.tried else 'Nothing yet.'}",
-                f"Owner: {self.owner}",
-            )
+        lines = (
+            f"Asked: {self.asked}",
+            f"Handbook: {self.handbook} ({self.section})",
+            f"Missing: {self.missing}",
+            f"Order: {self.order_id or 'none'}",
+            f"Sections read: {sections}",
+            f"Tried: {'; '.join(self.tried) if self.tried else 'Nothing yet.'}",
+            f"Owner: {self.owner}",
         )
+        return "\n".join((*lines, "Recent turns:", *self.recent) if self.recent else lines)
 
 
 def _order_id(question: str) -> str | None:
@@ -96,4 +97,20 @@ def manual_handoff(question: str, sections: tuple[str, ...], tried: tuple[str, .
         "support lead",
         sections,
         tried,
+    )
+
+
+def left_message(message: str, tried: tuple[str, ...], recent: tuple[str, ...]) -> Handoff:
+    """The packet for a left message: the customer's words and the turns that did not help (R35)."""
+    order_id = _order_id(message) or _order_id(" ".join(reversed(recent)))
+    return Handoff(
+        "ESC-WHEN",
+        _asked(message, order_id),
+        order_id,
+        "Escalate when the handbook does not cover the question.",
+        "The agent's recent replies did not help. The customer left this message for a specialist.",
+        "specialist",
+        (),
+        tried,
+        recent,
     )

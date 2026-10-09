@@ -15,5 +15,10 @@ class Settings(BaseSettings):
     chat_turns_per_day: int = 500
     # Seconds per agent turn. Optional model steps are skipped when too little time is left (R36).
     turn_deadline_seconds: float = 45
+    # Agent turns in a row that end in a clarification, an abstain, or a failed lookup before the
+    # customer chat offers a person (R35).
+    failed_turns_before_offer: int = Field(default=3, ge=1)
+    # Live chat with a specialist. Off by default; with it off the chat behaves as before.
+    live_agents_enabled: bool = False
     # Google single sign-on is on when this is set (issue #78). The same variable the console reads.
     google_client_id: str = Field(default="", validation_alias=AliasChoices("AUTH_GOOGLE_ID", "google_client_id"))
