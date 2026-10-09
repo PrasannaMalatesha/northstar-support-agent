@@ -3,16 +3,9 @@ import { getToken } from "next-auth/jwt";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { Refresh } from "../refresh";
 import { apiUrl, sameSite } from "../same-site";
-
-async function accessToken(): Promise<string | null> {
-  const cookieHeader = (await cookies()).toString();
-  const token = await getToken({
-    req: new Request("http://localhost", { headers: { cookie: cookieHeader } }),
-    secret: process.env.AUTH_SECRET,
-  });
-  return typeof token?.accessToken === "string" ? token.accessToken : null;
-}
+import { accessToken } from "./access-token";
 
 async function bindAction(formData: FormData) {
   "use server";
@@ -193,6 +186,49 @@ async function replyAction(formData: FormData) {
   redirect(sent.ok ? "/desk?inbox=sent" : "/desk?inbox=unsent");
 }
 
+async function availabilityAction(formData: FormData) {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/desk");
+  }
+  const access = await accessToken();
+  if (!access) {
+    redirect("/login");
+  }
+  await fetch(`${apiUrl}/presence`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${access}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ state: String(formData.get("state") ?? "") }),
+  });
+  redirect("/desk");
+}
+
+async function acceptAction(formData: FormData) {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/desk");
+  }
+  const access = await accessToken();
+  if (!access) {
+    redirect("/login");
+  }
+  const id = String(formData.get("id") ?? "");
+  const accepted = /^[0-9a-f-]{36}$/.test(id)
+    ? await fetch(`${apiUrl}/live/${id}/accept`, { method: "POST", headers: { Authorization: `Bearer ${access}` } })
+    : null;
+  redirect(accepted?.ok ? `/desk/live/${id}` : "/desk?live=gone");
+}
+
+// Shown after a live chat action sends the specialist back to the desk.
+const LIVE_NOTES: Record<string, string> = {
+  gone: "That live chat is no longer yours.",
+  resolved: "Live chat resolved.",
+  escalated: "Live chat escalated. It is in the escalations inbox.",
+};
+
 const INBOX_NOTES: Record<string, string> = {
   taken: "Another specialist picked this up first.",
   gone: "That case is no longer in the inbox.",
@@ -225,7 +261,7 @@ async function logoutAction() {
 export default async function DeskPage({
   searchParams,
 }: {
-  searchParams: Promise<{ ticket?: string; case?: string; inbox?: string }>;
+  searchParams: Promise<{ ticket?: string; case?: string; inbox?: string; live?: string }>;
 }) {
   const params = await searchParams;
   const ticket = params.ticket;
@@ -309,6 +345,24 @@ export default async function DeskPage({
       );
   const inboxNote = params.inbox ? INBOX_NOTES[params.inbox] : undefined;
 
+  // Live chats (issue #138). The API answers a specialist, and only while live chat is on.
+  const live =
+    session.user.role === "specialist" && !viewing
+      ? await fetch(`${apiUrl}/live`, {
+          headers: { Authorization: `Bearer ${access}` },
+          cache: "no-store",
+        }).then(async (liveResponse) =>
+          liveResponse.ok
+            ? ((await liveResponse.json()) as {
+                state: "available" | "away";
+                offers: { id: string; customer: string }[];
+                chats: { id: string; customer: string }[];
+              })
+            : null,
+        )
+      : null;
+  const liveNote = params.live ? LIVE_NOTES[params.live] : undefined;
+
   const current = (await response.json()) as {
     status: string;
     stale: boolean;
@@ -387,6 +441,39 @@ export default async function DeskPage({
               </form>
             </article>
           ))}
+        </section>
+      ) : null}
+      {live ? (
+        <section>
+          <h2>Live chats</h2>
+          {liveNote ? <p role="status">{liveNote}</p> : null}
+          <form action={availabilityAction}>
+            <p>
+              You are {live.state === "available" ? "available for live chats" : "away"}.{" "}
+              <input type="hidden" name="state" value={live.state === "available" ? "away" : "available"} />
+              <button type="submit">{live.state === "available" ? "Set Away" : "Set Available"}</button>
+            </p>
+          </form>
+          {live.offers.length === 0 && live.chats.length === 0 ? <p>No live chat is offered to you.</p> : null}
+          {live.offers.map((offer) => (
+            <article key={offer.id}>
+              <p>{offer.customer} asked to talk to a person.</p>
+              <form action={acceptAction}>
+                <input type="hidden" name="id" value={offer.id} />
+                <button type="submit">Accept</button>
+              </form>
+            </article>
+          ))}
+          {live.chats.length > 0 ? (
+            <ul>
+              {live.chats.map((chat) => (
+                <li key={chat.id}>
+                  <a href={`/desk/live/${chat.id}`}>Live chat with {chat.customer}</a>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {live.state === "available" || live.offers.length > 0 || live.chats.length > 0 ? <Refresh /> : null}
         </section>
       ) : null}
       {!viewing ? (

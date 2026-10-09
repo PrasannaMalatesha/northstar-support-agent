@@ -152,6 +152,28 @@ CREATE TABLE IF NOT EXISTS daily_limits (
 );
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS assigned_to uuid REFERENCES staff_users (id);
 ALTER TABLE case_messages ADD COLUMN IF NOT EXISTS staff_id uuid REFERENCES staff_users (id);
+-- Live chat (issue #138, ADR 0001). The line is rows in live_chat_requests. A specialist is
+-- available or away, and holds at most `capacity` offered and active live chats.
+CREATE TABLE IF NOT EXISTS specialist_availability (
+    staff_id uuid PRIMARY KEY REFERENCES staff_users (id),
+    state text NOT NULL,
+    capacity integer NOT NULL DEFAULT 2,
+    last_seen timestamptz NOT NULL
+);
+CREATE TABLE IF NOT EXISTS live_chat_requests (
+    id uuid PRIMARY KEY,
+    case_id uuid NOT NULL REFERENCES cases (id),
+    customer_id uuid NOT NULL REFERENCES customers (id),
+    reason text NOT NULL,
+    status text NOT NULL,
+    staff_id uuid REFERENCES staff_users (id),
+    queued_at timestamptz NOT NULL,
+    offered_at timestamptz,
+    accepted_at timestamptz,
+    ended_at timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS live_chat_requests_one_open_per_case
+ON live_chat_requests (case_id) WHERE status IN ('waiting', 'offered', 'active');
 """
 
 
@@ -184,7 +206,7 @@ class AlreadyPickedUp(Exception):
 
 
 class NotYours(Exception):
-    """Only the specialist who picked up an escalated chat case replies on it."""
+    """Only the specialist who picked up an escalated chat case replies on it. The same for a live chat."""
 
 
 class NoOffer(Exception):
@@ -202,6 +224,7 @@ class CaseStore:
         chat_turns_per_day: int = 500,
         turn_seconds: float = 45,
         failed_turns_before_offer: int = 3,
+        live_chats: bool = False,
     ) -> None:
         self._pool = pool
         self._clock = clock
@@ -211,6 +234,7 @@ class CaseStore:
         self._chat_turns_per_day = chat_turns_per_day
         self._turn_seconds = turn_seconds
         self._failed_turns = failed_turns_before_offer
+        self._live_chats = live_chats
 
     def ensure_schema(self) -> None:
         with self._pool.connection() as conn:
@@ -884,28 +908,47 @@ class CaseStore:
 
     def chat_ask(self, customer_id: uuid.UUID, question: str) -> dict:
         case_id = self._chat_case(customer_id)
-        status = self._status(case_id)
-        if status == "Escalated":
-            # The escalated case is a specialist's now. A new message starts a new case.
-            case_id = self._new_chat_case(customer_id)
-        elif status != "Open":
-            raise CaseClosed()
+        if self._live_chats and self._held(case_id):
+            # A specialist holds this chat. The agent is quiet: no model call, no limit or budget charge (R46).
+            with self._pool.connection() as conn:
+                conn.execute(
+                    "INSERT INTO case_messages (case_id, role, body, created_at) VALUES (%s, 'user', %s, %s)",
+                    (case_id, screen(question.strip()), self._clock.now()),
+                )
+                conn.commit()
+            return self._chat_view(case_id)
+        case_id = self._writable(customer_id, case_id)
         # Limits are per customer, so one customer cannot use up the chat for everyone.
         self.ask(staff_id_for(CHAT_STAFF_EMAIL), question, case_id=case_id, chat_customer=customer_id)
         return self._chat_view(case_id)
 
+    def _writable(self, customer_id: uuid.UUID, case_id: uuid.UUID) -> uuid.UUID:
+        """The chat case a new message or live chat request goes on.
+
+        An escalated case is a specialist's now, and a resolved one is closed. Either starts a new case.
+        """
+        status = self._status(case_id)
+        if status in ("Escalated", "Resolved"):
+            return self._new_chat_case(customer_id)
+        if status != "Open":
+            raise CaseClosed()
+        return case_id
+
     def _chat_case(self, customer_id: uuid.UUID) -> uuid.UUID:
-        """The customer's latest chat case, bound to them, or a new one once the last is resolved."""
+        """The customer's latest chat case, bound to them, or a new one.
+
+        A resolved case is still shown, so the customer reads how their live chat ended.
+        """
         chat_staff = staff_id_for(CHAT_STAFF_EMAIL)
         with self._pool.connection() as conn:
             row = conn.execute(
                 """
-                SELECT id, status FROM cases WHERE staff_id = %s AND customer_id = %s
+                SELECT id FROM cases WHERE staff_id = %s AND customer_id = %s
                 ORDER BY created_at DESC, id DESC LIMIT 1
                 """,
                 (chat_staff, customer_id),
             ).fetchone()
-            if row is not None and row["status"] != "Resolved":
+            if row is not None:
                 return row["id"]
         return self._new_chat_case(customer_id)
 
@@ -931,6 +974,8 @@ class CaseStore:
             status = f"Our team approved your request. Reference {ticket}."
         elif row["rejection_reason"]:
             status = "Our team could not approve that request."
+        elif row["status"] == "Resolved":
+            status = "This chat is closed. Write again to start a new one."
         else:
             status = ""
         messages, spanish = [], False
@@ -989,12 +1034,19 @@ class CaseStore:
         return self._chat_view(case_id)
 
     def _failing(self, case_id: uuid.UUID) -> bool:
-        """The case is open and its last agent turns all failed. One turn that helped resets the count."""
+        """The case is open and its last agent turns all failed. One turn that helped resets the count.
+
+        Not while the case is in the line or in a live chat: a person is already on the way (issue #138).
+        """
         with self._pool.connection() as conn:
             rows = conn.execute(
                 """
                 SELECT m.decision FROM case_messages m JOIN cases c ON c.id = m.case_id
                 WHERE m.case_id = %s AND m.role = 'assistant' AND c.status = 'Open'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM live_chat_requests r
+                      WHERE r.case_id = c.id AND r.status IN ('waiting', 'offered', 'active')
+                  )
                 ORDER BY m.id DESC
                 LIMIT %s
                 """,
@@ -1119,6 +1171,223 @@ class CaseStore:
             conn.commit()
         if saved is None:
             raise NotYours()
+
+    # Live chat (issue #138, ADR 0001): the line is rows in live_chat_requests. One function makes offers.
+
+    def set_availability(self, staff_id: uuid.UUID, state: str) -> None:
+        with self._pool.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO specialist_availability (staff_id, state, last_seen) VALUES (%s, %s, %s)
+                ON CONFLICT (staff_id) DO UPDATE SET state = EXCLUDED.state, last_seen = EXCLUDED.last_seen
+                """,
+                (staff_id, state, self._clock.now()),
+            )
+            conn.commit()
+        if state == "available":
+            self._assign()
+
+    def request_live(self, customer_id: uuid.UUID) -> None:
+        """Put the customer's chat in the line. Asking again while a request is open changes nothing."""
+        case_id = self._writable(customer_id, self._chat_case(customer_id))
+        now = self._clock.now()
+        with self._pool.connection() as conn:
+            queued = conn.execute(
+                """
+                INSERT INTO live_chat_requests (id, case_id, customer_id, reason, status, queued_at)
+                VALUES (%s, %s, %s, 'requested', 'waiting', %s)
+                ON CONFLICT DO NOTHING
+                RETURNING id
+                """,
+                (uuid.uuid4(), case_id, customer_id, now),
+            ).fetchone()
+            if queued is not None:
+                _audit(conn, None, "live_chat_requested", now)
+            conn.commit()
+        self._assign()
+
+    def live_state(self, customer_id: uuid.UUID) -> dict | None:
+        """The open request on the customer's chat. The specialist's first name shows once they join."""
+        case_id = self._chat_case(customer_id)
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT r.status, split_part(staff_users.name, ' ', 1) AS name
+                FROM live_chat_requests r
+                LEFT JOIN staff_users ON staff_users.id = r.staff_id
+                WHERE r.case_id = %s AND r.status IN ('waiting', 'offered', 'active')
+                """,
+                (case_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {"status": row["status"], "specialist": row["name"] if row["status"] == "active" else None}
+
+    def live(self, staff_id: uuid.UUID) -> dict:
+        """A specialist's state, offers, and live chats. A live chat shows the conversation as the customer sees it."""
+        with self._pool.connection() as conn:
+            state = conn.execute(
+                "SELECT state FROM specialist_availability WHERE staff_id = %s",
+                (staff_id,),
+            ).fetchone()
+            rows = conn.execute(
+                """
+                SELECT r.id, r.case_id, r.status, customers.name AS customer
+                FROM live_chat_requests r
+                JOIN customers ON customers.id = r.customer_id
+                WHERE r.staff_id = %s AND r.status IN ('offered', 'active')
+                ORDER BY r.queued_at, r.id
+                """,
+                (staff_id,),
+            ).fetchall()
+        return {
+            "state": "away" if state is None else state["state"],
+            "offers": [
+                {"id": str(row["id"]), "customer": row["customer"]} for row in rows if row["status"] == "offered"
+            ],
+            "chats": [
+                {
+                    "id": str(row["id"]),
+                    "case_id": str(row["case_id"]),
+                    "customer": row["customer"],
+                    "messages": self._chat_view(row["case_id"])["messages"],
+                }
+                for row in rows
+                if row["status"] == "active"
+            ],
+        }
+
+    def accept(self, staff_id: uuid.UUID, request_id: uuid.UUID) -> None:
+        now = self._clock.now()
+        with self._pool.connection() as conn:
+            accepted = conn.execute(
+                """
+                UPDATE live_chat_requests SET status = 'active', accepted_at = %s
+                WHERE id = %s AND status = 'offered' AND staff_id = %s
+                RETURNING id
+                """,
+                (now, request_id, staff_id),
+            ).fetchone()
+            if accepted is None:
+                raise NotYours()
+            _audit(conn, staff_id, "live_chat_accepted", now)
+            conn.commit()
+
+    def live_message(self, staff_id: uuid.UUID, request_id: uuid.UUID, text: str) -> None:
+        """A specialist's message in their own live chat: screened, saved as theirs, and audited (R46)."""
+        now = self._clock.now()
+        with self._pool.connection() as conn:
+            saved = conn.execute(
+                """
+                INSERT INTO case_messages (case_id, role, body, staff_id, created_at)
+                SELECT case_id, 'specialist', %s, %s, %s FROM live_chat_requests
+                WHERE id = %s AND status = 'active' AND staff_id = %s
+                RETURNING id
+                """,
+                (screen(text.strip()), staff_id, now, request_id, staff_id),
+            ).fetchone()
+            if saved is None:
+                raise NotYours()
+            _audit(conn, staff_id, "live_chat_message", now)
+            conn.commit()
+
+    def end_live(self, staff_id: uuid.UUID, request_id: uuid.UUID, status: str, note: str = "") -> None:
+        """End a live chat as Resolved, or as Escalated with a handoff, which puts it in the escalations inbox."""
+        with self._pool.connection() as conn:
+            live = conn.execute(
+                "SELECT case_id FROM live_chat_requests WHERE id = %s AND status = 'active' AND staff_id = %s",
+                (request_id, staff_id),
+            ).fetchone()
+        if live is None:
+            raise NotYours()
+        packet = self._manual_packet(live["case_id"], note) if status == "Escalated" else ""
+        now = self._clock.now()
+        with self._pool.connection() as conn:
+            ended = conn.execute(
+                """
+                UPDATE live_chat_requests SET status = 'ended', ended_at = %s
+                WHERE id = %s AND status = 'active' AND staff_id = %s
+                RETURNING case_id
+                """,
+                (now, request_id, staff_id),
+            ).fetchone()
+            if ended is None:
+                raise NotYours()
+            if status == "Escalated":
+                conn.execute(
+                    "UPDATE cases SET status = 'Escalated', draft_text = %s, handoff_text = %s WHERE id = %s",
+                    (packet, packet, ended["case_id"]),
+                )
+            else:
+                conn.execute("UPDATE cases SET status = 'Resolved' WHERE id = %s", (ended["case_id"],))
+            _audit(conn, staff_id, "live_chat_ended", now)
+            conn.commit()
+        # A slot is free.
+        self._assign()
+
+    def _held(self, case_id: uuid.UUID) -> bool:
+        """A specialist holds this chat case in a live chat."""
+        with self._pool.connection() as conn:
+            return (
+                conn.execute(
+                    "SELECT 1 FROM live_chat_requests WHERE case_id = %s AND status = 'active'",
+                    (case_id,),
+                ).fetchone()
+                is not None
+            )
+
+    def _assign(self) -> None:
+        """Make offers until no request waits or no available specialist has a free slot."""
+        while self._offer_next():
+            pass
+
+    def _offer_next(self) -> bool:
+        """Offer the oldest waiting request to the available specialist with the most spare capacity.
+
+        One transaction (ADR 0001). The available specialists' rows are locked first, always in the same
+        order, so two runs never deadlock, and a run that waits on them then sees the request, the free
+        slot, or the specialist that made it wait. The request is claimed with SKIP LOCKED, and live chats
+        are counted only under the locks, so two offers never both take a specialist's last slot.
+        """
+        now = self._clock.now()
+        with self._pool.connection() as conn:
+            locked = conn.execute(
+                "SELECT staff_id FROM specialist_availability WHERE state = 'available' ORDER BY staff_id FOR UPDATE"
+            ).fetchall()
+            if not locked:
+                return False
+            request = conn.execute(
+                """
+                SELECT id FROM live_chat_requests WHERE status = 'waiting'
+                ORDER BY queued_at, id
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+                """
+            ).fetchone()
+            if request is None:
+                return False
+            # A new statement after the locks, so the count includes every offer committed before them.
+            chosen = conn.execute(
+                """
+                SELECT a.staff_id FROM specialist_availability a
+                LEFT JOIN live_chat_requests r ON r.staff_id = a.staff_id AND r.status IN ('offered', 'active')
+                WHERE a.staff_id = ANY(%s)
+                GROUP BY a.staff_id, a.capacity
+                HAVING count(r.id) < a.capacity
+                ORDER BY a.capacity - count(r.id) DESC, a.staff_id
+                LIMIT 1
+                """,
+                ([row["staff_id"] for row in locked],),
+            ).fetchone()
+            if chosen is None:
+                return False
+            conn.execute(
+                "UPDATE live_chat_requests SET status = 'offered', staff_id = %s, offered_at = %s WHERE id = %s",
+                (chosen["staff_id"], now, request["id"]),
+            )
+            _audit(conn, chosen["staff_id"], "live_chat_offered", now)
+            conn.commit()
+        return True
 
     def _resume(self, case_id: uuid.UUID, decision: str) -> None:
         resume_turn(graph_for(self._pool.conninfo), str(case_id), decision)
@@ -1357,6 +1626,11 @@ def _message(row) -> dict:
 
 def _iso(moment: datetime) -> str:
     return moment.isoformat()
+
+
+def _audit(conn, staff_id: uuid.UUID | None, event: str, at: datetime) -> None:
+    """An audit event in the caller's transaction, so it is recorded only with the change it describes."""
+    conn.execute("INSERT INTO audit_log (staff_id, event, created_at) VALUES (%s, %s, %s)", (staff_id, event, at))
 
 
 def _plain(decision: str, text: str) -> Draft:
