@@ -210,3 +210,65 @@ test("three replies that did not help offer to leave a message, which reaches th
   await expect(page.getByText("Hi Jon, the canvas tote is a popular gift.")).toBeVisible();
   await noViolations(page);
 });
+
+test("a customer talks to a specialist in a live chat, and the specialist resolves the case", async ({ page, browser }) => {
+  // Three browsers: the customer, the specialist, and a lead who reads the outcome.
+  const customer = page;
+  const specialistContext = await browser.newContext();
+  const leadContext = await browser.newContext();
+  const specialist = await specialistContext.newPage();
+  const lead = await leadContext.newPage();
+
+  // Jon Hale: Mira's chat waits for a lead after the refund test above. Asking for a person starts a new case.
+  await customer.goto("/chat");
+  await customer.getByLabel("Order id").fill("NS-1002");
+  await customer.getByLabel("Email").fill("jon.hale@northstar.example");
+  await customer.getByRole("button", { name: "Start chat" }).click();
+  await customer.getByRole("button", { name: "Talk to a person" }).click();
+  await expect(customer.getByText("Waiting for a person.")).toBeVisible();
+  await expect(customer.getByRole("button", { name: "Talk to a person" })).toHaveCount(0);
+  await noViolations(customer);
+
+  await signIn(specialist, "specialist@northstar.example", "northstar-specialist");
+  await expect(specialist.getByRole("heading", { name: "Live chats" })).toBeVisible();
+  await noViolations(specialist);
+  await tabTo(specialist, "Set Available");
+  await specialist.keyboard.press("Enter");
+  const offer = specialist.getByRole("article").filter({ hasText: "Jon Hale asked to talk to a person." });
+  await expect(offer).toBeVisible();
+  await noViolations(specialist);
+  await offer.getByRole("button", { name: "Accept" }).click();
+  await expect(specialist.getByRole("heading", { name: "Live chat with Jon Hale" })).toBeVisible();
+  await noViolations(specialist);
+  await tabTo(specialist, "text");
+  await specialist.keyboard.type("Hi Jon, this is Avery. How can I help?");
+  await tabTo(specialist, "Send");
+  await specialist.keyboard.press("Enter");
+  await expect(specialist.getByText("Hi Jon, this is Avery. How can I help?")).toBeVisible();
+
+  // The customer chat refreshes every 3 seconds while the live chat is open.
+  await expect(customer.getByText("Avery joined the chat.")).toBeVisible({ timeout: 10_000 });
+  await expect(customer.getByText("Hi Jon, this is Avery. How can I help?")).toBeVisible();
+  await noViolations(customer);
+  await customer.getByLabel("Your message", { exact: true }).fill("The strap on my canvas tote broke.");
+  await customer.getByRole("button", { name: "Send" }).click();
+  await expect(specialist.getByText("The strap on my canvas tote broke.")).toBeVisible({ timeout: 10_000 });
+
+  const caseLine = await specialist.getByText(/^Case [0-9a-f-]{36}\./).textContent();
+  const caseId = caseLine?.match(/[0-9a-f-]{36}/)?.[0];
+  await specialist.getByRole("button", { name: "Resolve" }).click();
+  await expect(specialist.getByText("Live chat resolved.")).toBeVisible();
+  await noViolations(specialist);
+  await expect(customer.getByText("This chat is closed. Write again to start a new one.")).toBeVisible({ timeout: 10_000 });
+  await noViolations(customer);
+
+  await signIn(lead, "lead@northstar.example", "northstar-lead");
+  await lead.goto(`/desk?case=${caseId}`);
+  await expect(lead.getByText(/Reading case/)).toBeVisible();
+  await expect(lead.getByText("Resolved", { exact: true })).toBeVisible();
+  await expect(lead.getByText("Hi Jon, this is Avery. How can I help?")).toBeVisible();
+  await noViolations(lead);
+
+  await specialistContext.close();
+  await leadContext.close();
+});

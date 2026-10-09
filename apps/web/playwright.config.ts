@@ -22,7 +22,8 @@ export default defineConfig({
       url: "http://127.0.0.1:8010/health",
       timeout: 120_000,
       reuseExistingServer: false,
-      env: { ...env, DATABASE_URL: databaseUrl },
+      // Live chat is on here, so the suite covers it and every older screen with it on (issue #138).
+      env: { ...env, DATABASE_URL: databaseUrl, LIVE_AGENTS_ENABLED: "true" },
     },
     {
       command: "npm run dev -- --hostname 127.0.0.1 --port 3100",

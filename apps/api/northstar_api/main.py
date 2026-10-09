@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from contextlib import asynccontextmanager
+from typing import Literal
 
 from northstar.cases import (
     AlreadyPickedUp,
@@ -82,6 +83,15 @@ class ReplyBody(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
 
 
+class AvailabilityBody(BaseModel):
+    state: Literal["available", "away"]
+
+
+class EscalateLiveBody(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    note: str = Field(min_length=1, max_length=2000)
+
+
 def create_app(
     settings: Settings | None = None,
     clock: Clock | None = None,
@@ -111,6 +121,7 @@ def create_app(
         chat_turns_per_day=settings.chat_turns_per_day,
         turn_seconds=settings.turn_deadline_seconds,
         failed_turns_before_offer=settings.failed_turns_before_offer,
+        live_chats=settings.live_agents_enabled,
     )
     cases.ensure_schema()
 
@@ -263,8 +274,9 @@ def create_app(
 
     @app.get("/chat/state")
     def chat_state(customer_id=Depends(customer_from_token)) -> dict:
-        # What the chat offers beside the agent (R35). `live` stays null until live chat is built.
-        return {"offer": cases.chat_offer(customer_id), "live_enabled": settings.live_agents_enabled, "live": None}
+        # What the chat offers beside the agent (R35), and the customer's live chat request (issue #138).
+        live = cases.live_state(customer_id) if settings.live_agents_enabled else None
+        return {"offer": cases.chat_offer(customer_id), "live_enabled": settings.live_agents_enabled, "live": live}
 
     @app.post("/chat/leave-message")
     def leave_message(body: ReplyBody, customer_id=Depends(customer_from_token)) -> dict:
@@ -382,7 +394,7 @@ def create_app(
     def require_specialist(staff=Depends(staff_from_token)):
         # Leads approve. Specialists talk to customers.
         if staff.role != "specialist":
-            raise HTTPException(status_code=403, detail="A specialist works the escalations inbox.")
+            raise HTTPException(status_code=403, detail="Specialists talk to customers. Leads approve.")
         return staff
 
     @app.post("/inbox/{case_id}/pick-up")
@@ -404,6 +416,66 @@ def create_app(
             raise HTTPException(status_code=403, detail="Pick up this chat case before replying.") from exc
         identity.audit(staff.id, "escalation_reply", clock.now())
         return {"case_id": case_id}
+
+    # Live chat (issue #138). With the setting off, no live chat route exists.
+
+    if settings.live_agents_enabled:
+
+        @app.post("/chat/live")
+        def request_live_chat(customer_id=Depends(customer_from_token)) -> dict:
+            try:
+                cases.request_live(customer_id)
+            except CaseClosed as exc:
+                raise HTTPException(status_code=409, detail="A person on our team is reviewing your request.") from exc
+            return {"live": cases.live_state(customer_id)}
+
+        @app.post("/chat/renew")
+        def renew_chat(customer_id=Depends(customer_from_token)) -> dict:
+            # The chat is not signed out while the customer waits for or talks to a specialist (R47).
+            if cases.live_state(customer_id) is None:
+                raise HTTPException(status_code=409, detail="No live chat is open.")
+            return {"chat_token": identity.chat_token(customer_id)}
+
+        @app.post("/presence")
+        def set_presence(body: AvailabilityBody, staff=Depends(require_specialist)) -> dict:
+            cases.set_availability(staff.id, body.state)
+            return {"state": body.state}
+
+        @app.get("/live")
+        def my_live_chats(staff=Depends(require_specialist)) -> dict:
+            return cases.live(staff.id)
+
+        @app.post("/live/{request_id}/accept")
+        def accept_live_chat(request_id: uuid.UUID, staff=Depends(require_specialist)) -> dict:
+            try:
+                cases.accept(staff.id, request_id)
+            except NotYours as exc:
+                raise HTTPException(status_code=403, detail="This offer is not yours.") from exc
+            return {"id": str(request_id)}
+
+        @app.post("/live/{request_id}/messages")
+        def post_live_message(request_id: uuid.UUID, body: ReplyBody, staff=Depends(require_specialist)) -> dict:
+            try:
+                cases.live_message(staff.id, request_id, body.text)
+            except NotYours as exc:
+                raise HTTPException(status_code=403, detail="This live chat is not yours.") from exc
+            return {"id": str(request_id)}
+
+        @app.post("/live/{request_id}/resolve")
+        def resolve_live_chat(request_id: uuid.UUID, staff=Depends(require_specialist)) -> dict:
+            try:
+                cases.end_live(staff.id, request_id, "Resolved")
+            except NotYours as exc:
+                raise HTTPException(status_code=403, detail="This live chat is not yours.") from exc
+            return {"id": str(request_id)}
+
+        @app.post("/live/{request_id}/escalate")
+        def escalate_live_chat(request_id: uuid.UUID, body: EscalateLiveBody, staff=Depends(require_specialist)) -> dict:
+            try:
+                cases.end_live(staff.id, request_id, "Escalated", body.note)
+            except NotYours as exc:
+                raise HTTPException(status_code=403, detail="This live chat is not yours.") from exc
+            return {"id": str(request_id)}
 
     @app.post("/cases/current/customer")
     def bind_customer(body: BindBody, staff=Depends(staff_from_token)) -> dict:

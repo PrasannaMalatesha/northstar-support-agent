@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { Refresh } from "../refresh";
 import { apiUrl, sameSite } from "../same-site";
 
 // Customer chat (issue #79). The customer gives an order id and the email on that order.
@@ -9,7 +10,12 @@ const COOKIE = "northstar_chat";
 
 type ChatView = { status: string; messages: { role: string; name?: string; text: string }[] };
 // What the chat offers beside the agent (R35). "leave_message" after replies that did not help.
-type ChatState = { offer: string | null };
+// `live` is the customer's open live chat request (issue #138), null when there is none.
+type ChatState = {
+  offer: string | null;
+  live_enabled: boolean;
+  live: { status: "waiting" | "offered" | "active"; specialist: string | null } | null;
+};
 
 function speaker(message: ChatView["messages"][number]): string {
   if (message.role === "user") {
@@ -20,6 +26,16 @@ function speaker(message: ChatView["messages"][number]): string {
 
 async function chatToken(): Promise<string | null> {
   return (await cookies()).get(COOKIE)?.value ?? null;
+}
+
+async function keepToken(token: string) {
+  (await cookies()).set(COOKIE, token, {
+    httpOnly: true,
+    sameSite: "strict",
+    secure: process.env.NODE_ENV === "production",
+    path: "/chat",
+    maxAge: 30 * 60,
+  });
 }
 
 async function startAction(formData: FormData) {
@@ -39,14 +55,43 @@ async function startAction(formData: FormData) {
     redirect(started.status === 423 ? "/chat?error=locked" : "/chat?error=nomatch");
   }
   const body = (await started.json()) as { chat_token: string };
-  (await cookies()).set(COOKIE, body.chat_token, {
-    httpOnly: true,
-    sameSite: "strict",
-    secure: process.env.NODE_ENV === "production",
-    path: "/chat",
-    maxAge: 30 * 60,
-  });
+  await keepToken(body.chat_token);
   redirect("/chat");
+}
+
+async function liveAction() {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/chat");
+  }
+  const token = await chatToken();
+  if (!token) {
+    redirect("/chat");
+  }
+  const asked = await fetch(`${apiUrl}/chat/live`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!asked.ok) {
+    redirect(asked.status === 409 ? "/chat?error=waiting" : "/chat?error=nolive");
+  }
+  redirect("/chat");
+}
+
+// The chat is not signed out while the customer waits for or talks to a specialist (R47).
+async function renewAction() {
+  "use server";
+  const token = await chatToken();
+  if (!(await sameSite()) || !token) {
+    return;
+  }
+  const renewed = await fetch(`${apiUrl}/chat/renew`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (renewed.ok) {
+    await keepToken(((await renewed.json()) as { chat_token: string }).chat_token);
+  }
 }
 
 async function sendAction(formData: FormData) {
@@ -104,6 +149,7 @@ const ERRORS: Record<string, string> = {
   waiting: "Your request is with our team. You can write again once they reply.",
   unsent: "That message was not sent. Try again.",
   nooffer: "Leaving a message is offered after replies that did not help.",
+  nolive: "We could not ask for a person. Try again.",
 };
 
 export default async function ChatPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
@@ -143,6 +189,11 @@ export default async function ChatPage({ searchParams }: { searchParams: Promise
     <main>
       <h1>Northstar support chat</h1>
       {view.status ? <p role="status">{view.status}</p> : null}
+      {state?.live ? (
+        <p role="status">
+          {state.live.status === "active" ? `${state.live.specialist} joined the chat.` : "Waiting for a person."}
+        </p>
+      ) : null}
       {error && ERRORS[error] ? <p role="alert">{ERRORS[error]}</p> : null}
       <section aria-label="Conversation">
         {view.messages.length === 0 ? <p>Ask about returns, shipping, warranty, or your orders.</p> : null}
@@ -174,6 +225,12 @@ export default async function ChatPage({ searchParams }: { searchParams: Promise
         </label>
         <button type="submit">Send</button>
       </form>
+      {state?.live_enabled && !state.live ? (
+        <form action={liveAction}>
+          <button type="submit">Talk to a person</button>
+        </form>
+      ) : null}
+      {state?.live ? <Refresh renew={renewAction} /> : null}
       <form action={endAction}>
         <button type="submit">End chat</button>
       </form>
