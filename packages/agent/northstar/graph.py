@@ -68,6 +68,13 @@ def support_agent(state: TurnState, runtime: Runtime[TurnTools]) -> dict:
 
 LOOKUP_FAILED_TEXT = "The lookup failed. No facts were filled in. Try again."
 
+# Explicit step caps. The installed LangGraph defaults to 10007 supersteps, which is no cap at all.
+# Measured: the router takes 3 steps. Each middleware hook is its own agent step, so a normal agent turn
+# (two model calls, one desk call) needs a limit of 26, and the worst case run_limit=3 allows needs 43.
+# https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT
+TURN_RECURSION_LIMIT = 10
+AGENT_RECURSION_LIMIT = 50
+
 
 def _decide(question: str, draft_fn: Callable[[str], Draft], name: str) -> Draft:
     # https://docs.langchain.com/oss/python/langchain/agents
@@ -92,7 +99,7 @@ def _ask_agent(question: str, draft_fn: Callable[[str], Draft], name: str) -> Dr
     from langchain.agents import create_agent
     from langchain_core.tools import tool
 
-    from northstar.agent_model import _model
+    from northstar.agent_model import _agent_model
 
     held: dict[str, Draft] = {}
     asked = question
@@ -106,7 +113,7 @@ def _ask_agent(question: str, draft_fn: Callable[[str], Draft], name: str) -> Dr
         return draft.text
 
     create_agent(
-        _model(),
+        _agent_model(),
         [desk],
         system_prompt=(
             "Call the desk tool once with the specialist's question. "
@@ -114,7 +121,11 @@ def _ask_agent(question: str, draft_fn: Callable[[str], Draft], name: str) -> Dr
         ),
         name=name,
         middleware=_middleware(held),
-    ).invoke({"messages": [{"role": "user", "content": question}]})
+    ).invoke(
+        {"messages": [{"role": "user", "content": question}]},
+        # Set here, not inherited: the router's smaller cap would otherwise apply to this subgraph too.
+        {"recursion_limit": AGENT_RECURSION_LIMIT},
+    )
     if held.get("failed"):
         return Draft("lookup_failed", LOOKUP_FAILED_TEXT, (), {}, ())
     return held["draft"]
@@ -186,7 +197,7 @@ def _checkpointer_present() -> bool:
 def resume_turn(graph, thread_id: str, decision: str) -> None:
     config = {"configurable": {"thread_id": thread_id}}
     if graph.get_state(config).next:
-        graph.invoke(Command(resume=decision), config)
+        graph.invoke(Command(resume=decision), {**config, "recursion_limit": TURN_RECURSION_LIMIT})
 
 
 def _fields(draft: Draft) -> dict:
@@ -293,7 +304,9 @@ def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None 
     _load_local_env()
     graph = graph or GRAPH
     traced = os.environ.get("LANGSMITH_TRACING", "").lower() == "true" and not os.environ.get("PYTEST_CURRENT_TEST")
-    config = {} if thread_id is None else {"configurable": {"thread_id": thread_id}}
+    config: dict = {"recursion_limit": TURN_RECURSION_LIMIT}
+    if thread_id is not None:
+        config["configurable"] = {"thread_id": thread_id}
     run_id = None
     if traced:
         import langsmith
@@ -305,7 +318,7 @@ def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None 
         with langsmith.tracing_context(client=_scrubbed_client()):
             result = graph.invoke(_turn_input(question), config, context=tools)
     else:
-        result = graph.invoke(_turn_input(question), config or None, context=tools)
+        result = graph.invoke(_turn_input(question), config, context=tools)
     # A turn that pauses for approval stops before compile_followup writes followup.
     followup = result.get("followup") or result["text"]
     if traced and run_id is not None:

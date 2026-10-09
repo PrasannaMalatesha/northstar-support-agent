@@ -88,22 +88,39 @@ def _load_local_env() -> None:
         os.environ.setdefault("LANGCHAIN_CALLBACKS_BACKGROUND", "false")
 
 
+# Every model call gets at most 3 attempts of at most 20 s each, and exactly one layer retries.
+# google-genai counts `max_retries` as attempts including the first request (HttpRetryOptions.attempts).
+# https://docs.langchain.com/oss/python/langchain/middleware/built-in
+MODEL_TIMEOUT_SECONDS = 20
+DIRECT_ATTEMPTS = 3  # calls outside create_agent: the client retries
+AGENT_ATTEMPTS = 1  # calls inside create_agent: ModelRetryMiddleware retries instead
+
+
+def _gemini(name: str, attempts: int):
+    from langchain_google_genai import ChatGoogleGenerativeAI
+
+    return ChatGoogleGenerativeAI(
+        model=name,
+        google_api_key=os.environ["GOOGLE_API_KEY"],
+        temperature=0,
+        timeout=MODEL_TIMEOUT_SECONDS,
+        max_retries=attempts,
+    )
+
+
 def _fallback_model():
     """The second model for ModelFallbackMiddleware. None when AGENT_FALLBACK_MODEL is unset."""
     name = os.environ.get("AGENT_FALLBACK_MODEL")
-    if not name:
-        return None
-    from langchain_google_genai import ChatGoogleGenerativeAI
-
-    return ChatGoogleGenerativeAI(model=name, google_api_key=os.environ["GOOGLE_API_KEY"], temperature=0)
+    return _gemini(name, AGENT_ATTEMPTS) if name else None
 
 
 @lru_cache(maxsize=1)
 def _model():
-    from langchain_google_genai import ChatGoogleGenerativeAI
+    """For handbook wording, translation, and the photo check. Each falls back safely on failure."""
+    return _gemini(os.environ.get("AGENT_MODEL") or AGENT_MODEL_DEFAULT, DIRECT_ATTEMPTS)
 
-    return ChatGoogleGenerativeAI(
-        model=os.environ.get("AGENT_MODEL") or AGENT_MODEL_DEFAULT,
-        google_api_key=os.environ["GOOGLE_API_KEY"],
-        temperature=0,
-    )
+
+@lru_cache(maxsize=1)
+def _agent_model():
+    """For the create_agent subgraphs, whose ModelRetryMiddleware does the retrying."""
+    return _gemini(os.environ.get("AGENT_MODEL") or AGENT_MODEL_DEFAULT, AGENT_ATTEMPTS)
