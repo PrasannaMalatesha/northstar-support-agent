@@ -42,5 +42,8 @@ class Settings(BaseSettings):
     quiet_nudge_minutes: float = Field(default=2, gt=0)
     quiet_idle_minutes: float = Field(default=3, gt=0)
     quiet_close_minutes: float = Field(default=15, gt=0)
+    # A customer in a live chat who has waited this long for the specialist's reply is flagged to leads
+    # (issue #144, R49). The live chat is not reassigned.
+    quiet_specialist_minutes: float = Field(default=2, gt=0)
     # Google single sign-on is on when this is set (issue #78). The same variable the console reads.
     google_client_id: str = Field(default="", validation_alias=AliasChoices("AUTH_GOOGLE_ID", "google_client_id"))
