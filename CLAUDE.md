@@ -16,9 +16,9 @@ git checkout dev
 git pull origin dev
 ```
 
-## Stop point (2026-10-08, after slice 3)
+## Stop point (2026-10-08, after slice 3 and the end-to-end check)
 
-`dev`, `uat`, `prod`, and `main` hold the same tree (`a76d7e5`): PRs #117 (dev→uat), #118 (uat→prod), #119 (prod→main), CI green on each. Branch protection on all four: a PR, `Test API` and `Lint and build console`, admins included. No deploy hooks exist, so nothing deploys outside GitHub. `uv run pytest`: 183 passed. Browser suite (`npx playwright test` in `apps/web`): 3 passed with axe. **No open GitHub issues.**
+`dev`, `uat`, `prod`, and `main` hold the same tree: this stop point was merged into `dev` and promoted dev→uat→prod→main, CI green on each (the earlier round was #117 to #119, then #122 and #123 for the chat fix). Branch protection on all four: a PR, `Test API` and `Lint and build console`, admins included. No deploy hooks exist, so nothing deploys outside GitHub. `uv run pytest`: 185 passed. Browser suite (`npx playwright test` in `apps/web`, on a fresh `DATABASE_URL`): 3 passed with axe. **No open GitHub issues.**
 
 What exists now, beyond slices 1 and 2:
 - **LangSmith evals (#101):** `make evals-sync` writes `Northstar Support: E2E` (tags `slice1` 40, `slice2` 67, `edit-20261008-054354` 68, `slice3-es` 74, `slice3-photo` 77) and `Northstar Support: Intent Classifier` (14). `uv run python -m evals.experiments run --split test --repetitions 3` runs v0, v1 (the live desk), and the router; `--version <tag>` limits to one version's cases; results go to `results/langsmith_<split>[_<version>].md`. `promote <run_id> --decision ... --sections ...` adds a reviewed specialist edit under a new tag (one done: the surfboard-wax case).
@@ -26,6 +26,7 @@ What exists now, beyond slices 1 and 2:
 - **Fixes the experiments found:** policy questions that mention an order or start with "If" (#103); the masked support address (`PUBLISHED_EMAILS`, #105); "do you sell" now asks the catalog (#108).
 - **Slice 3:** #81 Spanish (`northstar/language.py`, #114); #80 damaged-item photo and the REF-DAMAGED rule (`northstar/photo.py`, seed order NS-1011, #112); #79 customer chat (`/chat`, order id plus order email, chat token audience `northstar-chat`, cases owned by the disabled `chat@northstar.example`, #113; decision in `prd.md`); #78 Google SSO (`POST /auth/sso`, role from `staff_users`, #115).
 - **Trace upload off the request (#116):** a turn no longer waits for LangSmith.
+- **End-to-end check (2026-10-08):** the whole demo script below was driven in a browser against fresh servers and a fresh database. Every step behaved as intended. It found one bug, fixed in #121: after an escalation the customer chat was locked for good, and a chat message sent while a request waited was dropped silently. Now the next message after an escalation starts a new chat case, and a waiting request gets a reason. The desk tool error that `ToolErrorMiddleware` catches is now logged: one turn in about 35 showed "The lookup failed" with no log, and it did not come back in 30+ retries.
 
 Waiting on Malatesha:
 - **Google SSO is off** until `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET` are in `.env` (redirect URI `http://localhost:3000/api/auth/callback/google`). A real Google sign-in has not been tried yet.
@@ -171,7 +172,7 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 
 ## Continue checklist
 
-1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (183 or more).
+1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (185 or more).
 2. Read the Stop point section above. Ask Malatesha what is next: the demo, turning on Google SSO, the LangSmith limit, or new work. Do not create tickets or promote branches unless asked.
 3. Every change: a `feature/*` branch from `origin/dev`, a PR into `dev`, merged only when CI is green.
 4. Rewrite the Stop point section before you stop.
