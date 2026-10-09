@@ -8,7 +8,7 @@ before. Three failed turns offer "Talk to a person", and a customer the line tur
 import pytest
 from northstar.cases import COME_BACK_TEXT, LINE_REFUSED_TEXT, OFFERED_TEXT, CaseStore
 from test_leave_message import OFF_TOPIC
-from test_live_chat import LIVE, MIRA, _avery, _chat, _customers, _db, _lead, _say
+from test_live_chat import JON, LIVE, MIRA, _avery, _chat, _customers, _db, _lead, _say
 from test_live_line import FEW, _busy, _history, _join, _status
 
 CHARGEBACK = "I will open a chargeback with my bank."
@@ -161,6 +161,31 @@ def test_an_escalation_that_leaves_the_line_goes_to_the_inbox(client, clock):
     # Back, the customer does not rejoin the line: a specialist follows up from the inbox.
     assert _status(client, other) == INBOX_STATUS
     assert _requests()[-1] == ("escalated", "abandoned")
+
+
+@pytest.mark.parametrize("client", [{"live_agents_enabled": True, "offers_before_leave_message": 1}], indirect=True)
+def test_an_escalation_no_specialist_accepts_goes_to_the_inbox(client, clock):
+    avery, lead = _avery(client), _lead(client)
+    client.post("/presence", headers=avery, json={"state": "available"})
+    mira = _chat(client)
+    _say(client, mira, CHARGEBACK)
+    [offer] = client.get("/live", headers=avery).json()["offers"]
+    assert client.post(f"/live/{offer['id']}/decline", headers=avery).status_code == 200
+    assert _requests() == [("escalated", "unanswered")]
+    assert _status(client, mira) == INBOX_STATUS
+    # The escalation is with the team already, so there is no message to leave.
+    assert _state(client, mira) == {"offer": None, "live_enabled": True, "live": None}
+    assert [item["customer"] for item in client.get("/inbox", headers=lead).json()] == ["Mira Shah"]
+
+    # An offer that expires is the same.
+    clock.advance(seconds=1)
+    jon = _chat(client, JON)
+    _say(client, jon, CHARGEBACK)
+    clock.advance(seconds=45)
+    client.get("/live", headers=avery)
+    assert _requests()[-1] == ("escalated", "unanswered")
+    assert _status(client, jon) == INBOX_STATUS
+    assert [item["customer"] for item in client.get("/inbox", headers=lead).json()] == ["Mira Shah", "Jon Hale"]
 
 
 @pytest.mark.parametrize("client", LIVE, indirect=True)

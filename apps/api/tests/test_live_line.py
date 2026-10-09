@@ -32,6 +32,12 @@ def _busy(client, clock, specialist, customers) -> list[dict]:
     return [_join(client, clock, body) for body in customers]
 
 
+def _held(client, specialist) -> None:
+    """The specialist accepts every offer. Live chats hold the slots for minutes; offers expire (issue #139)."""
+    for offer in client.get("/live", headers=specialist).json()["offers"]:
+        assert client.post(f"/live/{offer['id']}/accept", headers=specialist).status_code == 200
+
+
 def _status(client, chat) -> str:
     return client.get("/chat", headers=chat).json()["status"]
 
@@ -204,12 +210,15 @@ def test_a_chat_that_stops_refreshing_leaves_the_line_and_rejoins_at_the_back(cl
     customers = _customers(2)
     avery = _avery(client)
     _busy(client, clock, avery, customers)
+    _held(client, avery)
     mira, jon = _join(client, clock, MIRA), _join(client, clock, JON)
 
-    # Jon's chat refreshes. Mira's does not, and at 2 minutes she is out of the line.
+    # Jon's chat refreshes, and so does Avery's desk. Mira's does not, and at 2 minutes she is out of the line.
     clock.advance(minutes=1)
+    client.get("/live", headers=avery)
     assert _status(client, jon) == f"You are number 2 in line. {FEW}"
     clock.advance(seconds=58)
+    client.get("/live", headers=avery)
     assert _status(client, jon) == f"You are number 2 in line. {FEW}"
     clock.advance(seconds=1)
     assert _status(client, jon) == f"You are number 1 in line. {FEW}"
@@ -218,21 +227,24 @@ def test_a_chat_that_stops_refreshing_leaves_the_line_and_rejoins_at_the_back(cl
     # A freed slot skips her. Back, she joins at the back.
     assert _status(client, mira) == f"You are number 2 in line. {FEW}"
     assert _line()[2:] == ["abandoned", "waiting", "waiting"]
-    offer = client.get("/live", headers=avery).json()["offers"][0]["id"]
-    client.post(f"/live/{offer}/accept", headers=avery)
-    client.post(f"/live/{offer}/resolve", headers=avery)
+    held = client.get("/live", headers=avery).json()["chats"][0]["id"]
+    client.post(f"/live/{held}/resolve", headers=avery)
     assert _status(client, jon) == OFFERED_TEXT
     assert _status(client, mira) == f"You are number 1 in line. {FEW}"
 
 
 @pytest.mark.parametrize("client", [{"live_agents_enabled": True, "line_gone_minutes": 5}], indirect=True)
 def test_the_time_before_a_quiet_chat_leaves_the_line_is_a_setting(client, clock):
-    _busy(client, clock, _avery(client), _customers(2))
+    avery = _avery(client)
+    _busy(client, clock, avery, _customers(2))
+    _held(client, avery)
     _join(client, clock, MIRA)
     jon = _join(client, clock, JON)
     clock.advance(minutes=4)
+    client.get("/live", headers=avery)
     assert _status(client, jon) == f"You are number 2 in line. {FEW}"
     clock.advance(minutes=1)
+    client.get("/live", headers=avery)
     assert _status(client, jon) == f"You are number 1 in line. {FEW}"
 
 
