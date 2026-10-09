@@ -119,7 +119,7 @@ def test_the_average_chat_length_is_the_median_the_wait_estimate_uses(client, cl
 
 
 @pytest.mark.parametrize("client", LIVE, indirect=True)
-def test_an_alert_appears_for_a_request_offered_3_times_until_the_customer_leaves_a_message(client):
+def test_an_alert_appears_for_a_request_offered_3_times_until_a_specialist_picks_the_customer_up(client):
     _add_sam()
     _add_lee()
     chat, lead = _chat(client), _lead(client)
@@ -137,13 +137,49 @@ def test_an_alert_appears_for_a_request_offered_3_times_until_the_customer_leave
     client.post(f"/live/{_offer(client, holder)}/decline", headers=holder)
 
     view = _line(client, lead)
-    assert view["alerts"] == [{"kind": "unanswered", "case_id": case_id, "customer": "Mira Shah", "offers": 3}]
+    alert = {"kind": "unanswered", "case_id": case_id, "customer": "Mira Shah", "offers": 3, "inbox": False}
+    assert view["alerts"] == [alert]
     # The request left the line.
     assert view["line_length"] == 0
 
-    # Once the customer leaves a message, the escalations inbox holds it, and the alert is gone.
+    # A left message waits in the escalations inbox. The alert stands until a specialist picks it up.
     assert client.post("/chat/leave-message", headers=chat, json={"text": "Please call me."}).status_code == 200
+    assert _line(client, lead)["alerts"] == [alert | {"inbox": True}]
+    assert client.post(f"/inbox/{case_id}/pick-up", headers=specialists[0]).status_code == 200
     assert _line(client, lead)["alerts"] == []
+
+
+@pytest.mark.parametrize("client", [{"live_agents_enabled": True, "offers_before_leave_message": 1}], indirect=True)
+def test_an_escalation_no_specialist_accepts_raises_the_alert_from_the_inbox(client):
+    avery, lead = _avery(client), _lead(client)
+    client.post("/presence", headers=avery, json={"state": "available"})
+    chat = _chat(client)
+    # The agent's escalation joins the line (issue #141), and goes to the inbox when nobody accepts it.
+    _say(client, chat, "I will open a chargeback with my bank.")
+    case_id = _case()
+    client.post(f"/live/{_offer(client, avery)}/decline", headers=avery)
+
+    assert _line(client, lead)["alerts"] == [
+        {"kind": "unanswered", "case_id": case_id, "customer": "Mira Shah", "offers": 1, "inbox": True}
+    ]
+    assert client.post(f"/inbox/{case_id}/pick-up", headers=avery).status_code == 200
+    assert _line(client, lead)["alerts"] == []
+
+
+@pytest.mark.parametrize("client", [{"live_agents_enabled": True, "offers_before_leave_message": 1}], indirect=True)
+def test_asking_again_clears_the_alert(client, clock):
+    avery, lead = _avery(client), _lead(client)
+    client.post("/presence", headers=avery, json={"state": "available"})
+    chat = _chat(client)
+    client.post("/chat/live", headers=chat)
+    client.post(f"/live/{_offer(client, avery)}/decline", headers=avery)
+    assert [alert["kind"] for alert in _line(client, lead)["alerts"]] == ["unanswered"]
+
+    # The customer is in the line again, so the alert is gone.
+    clock.advance(seconds=1)
+    client.post("/chat/live", headers=chat)
+    view = _line(client, lead)
+    assert view["alerts"] == [] and view["line_length"] == 1
 
 
 @pytest.mark.parametrize("client", LIVE, indirect=True)

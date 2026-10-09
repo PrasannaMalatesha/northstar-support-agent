@@ -1993,10 +1993,11 @@ class CaseStore:
         every request not yet accepted, offered ones included. The average chat length is the median the
         wait estimate uses, None with too few live chats (R40). Timers apply on this read too.
 
-        Two alerts. A request no specialist accepted after the last offer, while the customer's chat still
-        offers to leave a message (issue #139). And a live chat whose customer has waited more than the
-        quiet specialist time for a reply: the customer had the last word, or nothing was said since the
-        specialist accepted. The wait starts at the later of the two.
+        Two alerts. A request no specialist accepted after the last offer (issue #139), until a person picks
+        the customer up: the chat offers to leave a message, or the case waits in the escalations inbox with
+        nobody on it (a left message, or an escalation, issue #141). Asking again clears it too. And a live
+        chat whose customer has waited more than the quiet specialist time for a reply: the customer had the
+        last word, or nothing was said since the specialist accepted. The wait starts at the later of the two.
         """
         self._sweep()
         self._notice_expired()
@@ -2016,11 +2017,12 @@ class CaseStore:
             ).fetchone()
             unanswered = conn.execute(
                 """
-                SELECT r.case_id, r.offers, customers.name AS customer
+                SELECT r.case_id, r.offers, customers.name AS customer, c.status = 'Escalated' AS inbox
                 FROM live_chat_requests r
                 JOIN cases c ON c.id = r.case_id
                 JOIN customers ON customers.id = r.customer_id
-                WHERE r.status = 'unanswered' AND c.status = 'Open'
+                WHERE r.status = 'unanswered'
+                  AND (c.status = 'Open' OR (c.status = 'Escalated' AND c.assigned_to IS NULL))
                   AND NOT EXISTS (
                       SELECT 1 FROM live_chat_requests o
                       WHERE o.case_id = r.case_id AND (o.queued_at, o.id) > (r.queued_at, r.id)
@@ -2054,7 +2056,13 @@ class CaseStore:
             "longest_wait_seconds": None if waiting["since"] is None else int((now - waiting["since"]).total_seconds()),
             "average_chat_minutes": None if chat_minutes is None else round(chat_minutes, 1),
             "alerts": [
-                {"kind": "unanswered", "case_id": str(row["case_id"]), "customer": row["customer"], "offers": row["offers"]}
+                {
+                    "kind": "unanswered",
+                    "case_id": str(row["case_id"]),
+                    "customer": row["customer"],
+                    "offers": row["offers"],
+                    "inbox": row["inbox"],
+                }
                 for row in unanswered
             ]
             + [

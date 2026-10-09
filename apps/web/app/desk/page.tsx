@@ -249,7 +249,7 @@ const LIVE_NOTES: Record<string, string> = {
 
 // The lead's view of the line (R49). Alerts are read-only: nothing is reassigned from here.
 type LineAlert =
-  | { kind: "unanswered"; case_id: string; customer: string; offers: number }
+  | { kind: "unanswered"; case_id: string; customer: string; offers: number; inbox: boolean }
   | { kind: "no_reply"; case_id: string; customer: string; specialist: string; waiting_seconds: number };
 
 function minutes(seconds: number): string {
@@ -516,7 +516,7 @@ export default async function DeskPage({
               {line.alerts.map((alert) => (
                 <li key={`${alert.kind}-${alert.case_id}`}>
                   {alert.kind === "unanswered"
-                    ? `${alert.customer}'s request was offered ${alert.offers} times, and nobody accepted. The chat offers to leave a message.`
+                    ? `${alert.customer}'s request was offered ${alert.offers} times, and nobody accepted. ${alert.inbox ? "It is in the escalations inbox." : "The chat offers to leave a message."}`
                     : `${alert.customer} has waited ${minutes(alert.waiting_seconds)} for ${alert.specialist}'s reply. The chat stays with ${alert.specialist}.`}{" "}
                   <a href={`/desk?case=${alert.case_id}`}>Open {alert.customer}&apos;s case</a>
                 </li>
