@@ -55,7 +55,8 @@ test("login, the case desk, and the waiting list pass axe and the keyboard", asy
   await page.keyboard.type("Please refund order NS-1001.");
   await tabTo(page, "Ask");
   await page.keyboard.press("Enter");
-  await expect(page.getByText("Waiting for approval")).toBeVisible();
+  // A live refund turn calls the model. Under load it can pass the default 5 s, as the photo test allows for.
+  await expect(page.getByText("Waiting for approval")).toBeVisible({ timeout: 30_000 });
 
   await tabTo(page, "Log out");
   await page.keyboard.press("Enter");
@@ -459,6 +460,70 @@ test("an escalation in the chat joins the line, and the specialist who accepts r
   await specialist.getByRole("button", { name: "Set Away" }).click();
   await expect(specialist.getByRole("button", { name: "Set Available" })).toBeVisible();
   await specialistContext.close();
+});
+
+test("the lead sees the line and an alert when a customer waits for a specialist's reply", async ({ page, browser }) => {
+  // Three browsers. The API flags a quiet specialist after 3 seconds here (playwright.config.ts).
+  const customer = page;
+  const specialistContext = await browser.newContext();
+  const leadContext = await browser.newContext();
+  const specialist = await specialistContext.newPage();
+  const lead = await leadContext.newPage();
+
+  await signIn(specialist, "specialist@northstar.example", "northstar-specialist");
+  const setAvailable = specialist.getByRole("button", { name: "Set Available" });
+  if (await setAvailable.count()) {
+    await setAvailable.click();
+  }
+  await expect(specialist.getByRole("button", { name: "Set Away" })).toBeVisible();
+
+  await signIn(lead, "lead@northstar.example", "northstar-lead");
+  const line = lead.locator("section").filter({ has: lead.getByRole("heading", { name: "Line", exact: true }) });
+  await expect(line.getByText("Specialists available: 1")).toBeVisible();
+  await expect(line.getByText("Customers in line: 0")).toBeVisible();
+  await expect(line.getByText("Longest wait: nobody is waiting")).toBeVisible();
+  await expect(line.getByText(/^Average chat length: /)).toBeVisible();
+  await expect(line.getByText("No alerts.")).toBeVisible();
+  await noViolations(lead);
+
+  // Jon Hale's live chat above is resolved, so asking for a person starts a new case.
+  await customer.goto("/chat");
+  await customer.getByLabel("Order id").fill("NS-1002");
+  await customer.getByLabel("Email").fill("jon.hale@northstar.example");
+  await customer.getByRole("button", { name: "Start chat" }).click();
+  await customer.getByRole("button", { name: "Talk to a person" }).click();
+  await expect(customer.getByText("Waiting for a person.")).toBeVisible();
+  // The lead's desk refreshes every 3 seconds. An offer not yet accepted is still in the line.
+  await expect(line.getByText("Customers in line: 1")).toBeVisible({ timeout: 10_000 });
+
+  const offer = specialist.getByRole("article").filter({ hasText: "Jon Hale asked to talk to a person." });
+  await offer.getByRole("button", { name: "Accept" }).click();
+  await expect(specialist.getByRole("heading", { name: "Live chat with Jon Hale" })).toBeVisible();
+
+  // Avery has not replied. The lead is alerted, and the live chat stays with Avery.
+  const alert = line.getByText(/^Jon Hale has waited less than a minute for Avery's reply\. The chat stays with Avery\./);
+  await expect(alert).toBeVisible({ timeout: 15_000 });
+  await expect(line.getByText("Customers in line: 0")).toBeVisible();
+  await noViolations(lead);
+  await tabTo(lead, "Open Jon Hale's case");
+  await lead.keyboard.press("Enter");
+  await expect(lead.getByText(/Reading case/)).toBeVisible();
+  await expect(lead.getByRole("heading", { name: "Line", exact: true })).toHaveCount(0);
+  await tabTo(lead, "Back to my desk");
+  await lead.keyboard.press("Enter");
+  await expect(alert).toBeVisible();
+  await expect(specialist.getByRole("heading", { name: "Live chat with Jon Hale" })).toBeVisible();
+
+  // Avery replies, and the alert goes away.
+  await specialist.getByLabel("Your reply").fill("Hi Jon, this is Avery. Sorry for the wait.");
+  await specialist.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(line.getByText("No alerts.")).toBeVisible({ timeout: 10_000 });
+  await noViolations(lead);
+  await specialist.getByRole("button", { name: "Resolve" }).click();
+  await expect(specialist.getByText("Live chat resolved.")).toBeVisible();
+
+  await specialistContext.close();
+  await leadContext.close();
 });
 
 test("a specialist declines a live chat offer, and the customer keeps waiting", async ({ page, browser }) => {

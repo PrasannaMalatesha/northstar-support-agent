@@ -133,6 +133,7 @@ def create_app(
         wait_history_days=settings.wait_history_days,
         wait_history_chats=settings.wait_history_chats,
         quiet_minutes=(settings.quiet_nudge_minutes, settings.quiet_idle_minutes, settings.quiet_close_minutes),
+        quiet_specialist_minutes=settings.quiet_specialist_minutes,
     )
     cases.ensure_schema()
 
@@ -463,6 +464,11 @@ def create_app(
         @app.get("/live")
         def my_live_chats(staff=Depends(require_specialist)) -> dict:
             return cases.live(staff.id)
+
+        @app.get("/line")
+        def lead_line(staff=Depends(require_lead)) -> dict:
+            # The lead's view of the line and its alerts (R49). Read-only: nothing is reassigned from here.
+            return cases.line()
 
         @app.post("/live/{request_id}/accept")
         def accept_live_chat(request_id: uuid.UUID, staff=Depends(require_specialist)) -> dict:

@@ -273,6 +273,7 @@ class CaseStore:
         wait_history_days: int = 7,
         wait_history_chats: int = 5,
         quiet_minutes: tuple[float, float, float] = (2, 3, 15),
+        quiet_specialist_minutes: float = 2,
     ) -> None:
         self._pool = pool
         self._clock = clock
@@ -293,6 +294,8 @@ class CaseStore:
         self._wait_history_chats = wait_history_chats
         # Minutes of customer quiet before the nudge, idle, and close (R44).
         self._nudge, self._idle, self._close = (timedelta(minutes=m) for m in quiet_minutes)
+        # A customer waiting longer than this for the specialist's reply is flagged to leads (R49).
+        self._quiet_specialist = timedelta(minutes=quiet_specialist_minutes)
 
     def ensure_schema(self) -> None:
         with self._pool.connection() as conn:
@@ -2019,6 +2022,99 @@ class CaseStore:
             _audit(conn, chosen["staff_id"], "live_chat_offered", now)
             conn.commit()
         return True
+
+    # The lead's view of the line (R49, issue #144). Read-only: nothing is reassigned from here.
+
+    def line(self) -> dict:
+        """Specialists available, the line's length and longest wait, the average chat length, and alerts.
+
+        Available is the rule offers use: Available, with a desk check-in inside the window. The line is
+        every request not yet accepted, offered ones included. The average chat length is the median the
+        wait estimate uses, None with too few live chats (R40). Timers apply on this read too.
+
+        Two alerts. A request no specialist accepted after the last offer (issue #139), until a person picks
+        the customer up: the chat offers to leave a message, or the case waits in the escalations inbox with
+        nobody on it (a left message, or an escalation, issue #141). Asking again clears it too. And a live
+        chat whose customer has waited more than the quiet specialist time for a reply: the customer had the
+        last word, or nothing was said since the specialist accepted. The wait starts at the later of the two.
+        """
+        self._sweep()
+        self._notice_expired()
+        self._quiet()
+        now = self._clock.now()
+        _, _, chat_minutes = self._line()
+        with self._pool.connection() as conn:
+            available = conn.execute(
+                "SELECT count(*) AS n FROM specialist_availability WHERE state = 'available' AND last_seen >= %s",
+                (now - self._check_in_window,),
+            ).fetchone()["n"]
+            waiting = conn.execute(
+                """
+                SELECT count(*) AS n, min(coalesce(returned_at, queued_at)) AS since
+                FROM live_chat_requests WHERE status IN ('waiting', 'offered')
+                """
+            ).fetchone()
+            unanswered = conn.execute(
+                """
+                SELECT r.case_id, r.offers, customers.name AS customer, c.status = 'Escalated' AS inbox
+                FROM live_chat_requests r
+                JOIN cases c ON c.id = r.case_id
+                JOIN customers ON customers.id = r.customer_id
+                WHERE r.status = 'unanswered'
+                  AND (c.status = 'Open' OR (c.status = 'Escalated' AND c.assigned_to IS NULL))
+                  AND NOT EXISTS (
+                      SELECT 1 FROM live_chat_requests o
+                      WHERE o.case_id = r.case_id AND (o.queued_at, o.id) > (r.queued_at, r.id)
+                  )
+                ORDER BY r.queued_at, r.id
+                """
+            ).fetchall()
+            # Action turns carry the specialist's id, so they count as the specialist's word (issue #143).
+            no_reply = conn.execute(
+                """
+                SELECT r.case_id, customers.name AS customer, split_part(staff_users.name, ' ', 1) AS specialist,
+                       greatest(last.created_at, r.accepted_at) AS since
+                FROM live_chat_requests r
+                JOIN customers ON customers.id = r.customer_id
+                JOIN staff_users ON staff_users.id = r.staff_id
+                LEFT JOIN LATERAL (
+                    SELECT staff_id, created_at FROM case_messages
+                    WHERE case_id = r.case_id AND (role = 'user' OR staff_id IS NOT NULL)
+                    ORDER BY id DESC
+                    LIMIT 1
+                ) last ON true
+                WHERE r.status = 'active' AND last.staff_id IS NULL
+                  AND greatest(last.created_at, r.accepted_at) < %s
+                ORDER BY since, r.queued_at, r.id
+                """,
+                (now - self._quiet_specialist,),
+            ).fetchall()
+        return {
+            "available": available,
+            "line_length": waiting["n"],
+            "longest_wait_seconds": None if waiting["since"] is None else int((now - waiting["since"]).total_seconds()),
+            "average_chat_minutes": None if chat_minutes is None else round(chat_minutes, 1),
+            "alerts": [
+                {
+                    "kind": "unanswered",
+                    "case_id": str(row["case_id"]),
+                    "customer": row["customer"],
+                    "offers": row["offers"],
+                    "inbox": row["inbox"],
+                }
+                for row in unanswered
+            ]
+            + [
+                {
+                    "kind": "no_reply",
+                    "case_id": str(row["case_id"]),
+                    "customer": row["customer"],
+                    "specialist": row["specialist"],
+                    "waiting_seconds": int((now - row["since"]).total_seconds()),
+                }
+                for row in no_reply
+            ],
+        }
 
     def _resume(self, case_id: uuid.UUID, decision: str) -> None:
         resume_turn(graph_for(self._pool.conninfo), str(case_id), decision)
