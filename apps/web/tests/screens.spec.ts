@@ -171,3 +171,42 @@ test("an escalated chat reaches the escalations inbox, and the specialist's repl
   await expect(page.getByText("Hi Jon, our payments team has your dispute. No refund is promised yet.")).toBeVisible();
   await noViolations(page);
 });
+
+test("three replies that did not help offer to leave a message, which reaches the escalations inbox", async ({ page }) => {
+  // Jon Hale again: after the escalation above, his next message starts a new chat case.
+  await page.goto("/chat");
+  await page.getByLabel("Order id").fill("NS-1002");
+  await page.getByLabel("Email").fill("jon.hale@northstar.example");
+  await page.getByRole("button", { name: "Start chat" }).click();
+  const offer = page.getByRole("heading", { name: "Leave a message for a specialist" });
+  for (const question of ["What is your favorite color?", "Tell me a joke.", "Who won the game last night?"]) {
+    await expect(offer).toHaveCount(0);
+    await page.getByLabel("Your message", { exact: true }).fill(question);
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByText(question)).toBeVisible({ timeout: 30_000 });
+  }
+  await expect(offer).toBeVisible();
+  await noViolations(page);
+
+  await tabTo(page, "message");
+  await page.keyboard.type("I would like a person to help me choose a gift.");
+  await tabTo(page, "Leave message");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Your message is with our team. A specialist will reply in this chat.")).toBeVisible();
+  await expect(page.getByText(/same order id and email to read the reply/)).toBeVisible();
+  await expect(offer).toHaveCount(0);
+  await noViolations(page);
+
+  await signIn(page, "specialist@northstar.example", "northstar-specialist");
+  const left = page.getByRole("article").filter({ hasText: "The customer left this message for a specialist." });
+  await expect(left.getByText(/Asked: I would like a person to help me choose a gift\./)).toBeVisible();
+  await noViolations(page);
+  await left.getByRole("button", { name: "Pick up" }).click();
+  await left.getByLabel("Reply to the customer").fill("Hi Jon, the canvas tote is a popular gift.");
+  await left.getByRole("button", { name: "Send reply" }).click();
+  await expect(page.getByText("Reply sent. The customer sees it in their chat.")).toBeVisible();
+
+  await page.goto("/chat");
+  await expect(page.getByText("Hi Jon, the canvas tote is a popular gift.")).toBeVisible();
+  await noViolations(page);
+});

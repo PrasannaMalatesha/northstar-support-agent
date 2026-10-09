@@ -9,6 +9,7 @@ from northstar.cases import (
     AmountOutOfBounds,
     CaseClosed,
     CaseStore,
+    NoOffer,
     NotInInbox,
     NotYours,
     ProposerCannotApprove,
@@ -109,6 +110,7 @@ def create_app(
         chat_turns_per_customer=settings.chat_turns_per_customer,
         chat_turns_per_day=settings.chat_turns_per_day,
         turn_seconds=settings.turn_deadline_seconds,
+        failed_turns_before_offer=settings.failed_turns_before_offer,
     )
     cases.ensure_schema()
 
@@ -258,6 +260,18 @@ def create_app(
             return cases.chat_ask(customer_id, body.question)
         except CaseClosed as exc:
             raise HTTPException(status_code=409, detail="A person on our team is reviewing your request.") from exc
+
+    @app.get("/chat/state")
+    def chat_state(customer_id=Depends(customer_from_token)) -> dict:
+        # What the chat offers beside the agent (R35). `live` stays null until live chat is built.
+        return {"offer": cases.chat_offer(customer_id), "live_enabled": settings.live_agents_enabled, "live": None}
+
+    @app.post("/chat/leave-message")
+    def leave_message(body: ReplyBody, customer_id=Depends(customer_from_token)) -> dict:
+        try:
+            return cases.leave_message(customer_id, body.text)
+        except NoOffer as exc:
+            raise HTTPException(status_code=409, detail="Leaving a message is offered after replies that did not help.") from exc
 
     @app.post("/cases/current/new")
     def new_case(staff=Depends(staff_from_token)) -> dict:

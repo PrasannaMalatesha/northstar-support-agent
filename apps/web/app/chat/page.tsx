@@ -8,6 +8,8 @@ import { apiUrl, sameSite } from "../same-site";
 const COOKIE = "northstar_chat";
 
 type ChatView = { status: string; messages: { role: string; name?: string; text: string }[] };
+// What the chat offers beside the agent (R35). "leave_message" after replies that did not help.
+type ChatState = { offer: string | null };
 
 function speaker(message: ChatView["messages"][number]): string {
   if (message.role === "user") {
@@ -67,6 +69,26 @@ async function sendAction(formData: FormData) {
   redirect("/chat");
 }
 
+async function leaveAction(formData: FormData) {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/chat");
+  }
+  const token = await chatToken();
+  if (!token) {
+    redirect("/chat");
+  }
+  const left = await fetch(`${apiUrl}/chat/leave-message`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ text: String(formData.get("message") ?? "") }),
+  });
+  if (!left.ok) {
+    redirect(left.status === 409 ? "/chat?error=nooffer" : "/chat?error=unsent");
+  }
+  redirect("/chat");
+}
+
 async function endAction() {
   "use server";
   if (!(await sameSite())) {
@@ -81,6 +103,7 @@ const ERRORS: Record<string, string> = {
   locked: "Too many tries. Try again later.",
   waiting: "Your request is with our team. You can write again once they reply.",
   unsent: "That message was not sent. Try again.",
+  nooffer: "Leaving a message is offered after replies that did not help.",
 };
 
 export default async function ChatPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
@@ -90,6 +113,10 @@ export default async function ChatPage({ searchParams }: { searchParams: Promise
     ? await fetch(`${apiUrl}/chat`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
     : null;
   const view = shown?.ok ? ((await shown.json()) as ChatView) : null;
+  const stated = view
+    ? await fetch(`${apiUrl}/chat/state`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
+    : null;
+  const state = stated?.ok ? ((await stated.json()) as ChatState) : null;
 
   if (!view) {
     return (
@@ -127,6 +154,19 @@ export default async function ChatPage({ searchParams }: { searchParams: Promise
           ))}
         </ol>
       </section>
+      {state?.offer === "leave_message" ? (
+        <section aria-labelledby="leave-message">
+          <h2 id="leave-message">Leave a message for a specialist</h2>
+          <p>These replies have not helped. Leave a message, and a specialist will reply in this chat.</p>
+          <form action={leaveAction}>
+            <label>
+              Message for a specialist
+              <textarea name="message" required maxLength={2000} />
+            </label>
+            <button type="submit">Leave message</button>
+          </form>
+        </section>
+      ) : null}
       <form action={sendAction}>
         <label>
           Your message

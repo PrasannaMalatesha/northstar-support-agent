@@ -15,7 +15,7 @@ from psycopg import sql
 
 from northstar.actions import FAMILIES, PROPOSALS, Order, Proposal, Reply, family_decisions, gated, order_id as _order_id
 from northstar.clock import Clock
-from northstar.escalate import handoff, manual_handoff
+from northstar.escalate import handoff, left_message, manual_handoff
 from northstar.graph import TurnTools, resume_turn, run_turn
 from northstar.identity.seed import CHAT_STAFF_EMAIL
 from northstar.identity.service import staff_id_for
@@ -38,6 +38,8 @@ REQUEST_LIMIT_TEXT = (
 )
 QUOTA_TEXT = "The daily quota is reached. This case is still here."
 COME_BACK_TEXT = "Come back to this chat with the same order id and email to read the reply."
+# Turns that did not help the customer. Enough of them in a row and the chat offers a person (R35).
+FAILED_DECISIONS = ("ask_clarification", "abstain", "lookup_failed")
 UNBOUND_ORDER_TEXT = "Pick a customer first. No order was read."
 SAFE_REPLY = (
     "I can't continue with that message. "
@@ -185,6 +187,10 @@ class NotYours(Exception):
     """Only the specialist who picked up an escalated chat case replies on it."""
 
 
+class NoOffer(Exception):
+    """The chat is not offering to leave a message: the agent's last turns helped, or the case is not open."""
+
+
 class CaseStore:
     def __init__(
         self,
@@ -195,6 +201,7 @@ class CaseStore:
         chat_turns_per_customer: int = 10,
         chat_turns_per_day: int = 500,
         turn_seconds: float = 45,
+        failed_turns_before_offer: int = 3,
     ) -> None:
         self._pool = pool
         self._clock = clock
@@ -203,6 +210,7 @@ class CaseStore:
         self._chat_turns_per_customer = chat_turns_per_customer
         self._chat_turns_per_day = chat_turns_per_day
         self._turn_seconds = turn_seconds
+        self._failed_turns = failed_turns_before_offer
 
     def ensure_schema(self) -> None:
         with self._pool.connection() as conn:
@@ -937,6 +945,81 @@ class CaseStore:
                 messages.append({"role": m["role"], "text": _for_customer(m["decision"], m["body"], spanish)})
         return {"status": status, "messages": messages}
 
+    def chat_offer(self, customer_id: uuid.UUID) -> str | None:
+        """What the chat offers beside the agent: "leave_message" after failed turns in a row, else None (R35)."""
+        return "leave_message" if self._failing(self._chat_case(customer_id)) else None
+
+    def leave_message(self, customer_id: uuid.UUID, text: str) -> dict:
+        """The customer's message for a specialist, while the offer stands.
+
+        The chat case becomes Escalated with a handoff that stands alone, so it lands in the
+        escalations inbox. The specialist's reply reaches this chat through the inbox (R38).
+        """
+        case_id = self._chat_case(customer_id)
+        if not self._failing(case_id):
+            raise NoOffer()
+        message = screen(text.strip())
+        packet = self._left_message_packet(case_id, message)
+        now = self._clock.now()
+        with self._pool.connection() as conn:
+            # The status check is in the update, so a message is left once even when two arrive together.
+            escalated = conn.execute(
+                """
+                UPDATE cases SET status = 'Escalated', draft_text = %s, handoff_text = %s
+                WHERE id = %s AND status = 'Open'
+                RETURNING id
+                """,
+                (packet, packet, case_id),
+            ).fetchone()
+            if escalated is None:
+                conn.rollback()
+                raise NoOffer()
+            conn.execute(
+                "INSERT INTO case_messages (case_id, role, body, created_at) VALUES (%s, 'user', %s, %s)",
+                (case_id, message, now),
+            )
+            conn.execute(
+                """
+                INSERT INTO case_messages (case_id, role, body, decision, created_at)
+                VALUES (%s, 'assistant', %s, 'left_message', %s)
+                """,
+                (case_id, _CHAT_TEXT["left_message"], now),
+            )
+            conn.commit()
+        return self._chat_view(case_id)
+
+    def _failing(self, case_id: uuid.UUID) -> bool:
+        """The case is open and its last agent turns all failed. One turn that helped resets the count."""
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT m.decision FROM case_messages m JOIN cases c ON c.id = m.case_id
+                WHERE m.case_id = %s AND m.role = 'assistant' AND c.status = 'Open'
+                ORDER BY m.id DESC
+                LIMIT %s
+                """,
+                (case_id, self._failed_turns),
+            ).fetchall()
+        return len(rows) == self._failed_turns and all(row["decision"] in FAILED_DECISIONS for row in rows)
+
+    def _left_message_packet(self, case_id: uuid.UUID, message: str) -> str:
+        """The handoff for a left message, with the questions and replies of the turns that failed."""
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT role, body FROM (
+                    SELECT id, role, body FROM case_messages
+                    WHERE case_id = %s AND role IN ('user', 'assistant')
+                    ORDER BY id DESC
+                    LIMIT %s
+                ) recent
+                ORDER BY id
+                """,
+                (case_id, 2 * self._failed_turns),
+            ).fetchall()
+        recent = tuple(f"{'Customer' if row['role'] == 'user' else 'Agent'}: {row['body']}" for row in rows)
+        return left_message(message, self._tried(case_id), recent).text
+
     def _chat_messages(self, case_id: uuid.UUID) -> list:
         """The case's messages, plus specialist replies on the customer's other chat cases.
 
@@ -1284,12 +1367,14 @@ _CHAT_TEXT = {
     "proposal": "Thanks. A person on our team will review this request. Nothing is approved yet.",
     "escalate": "A specialist will follow up with you about this.",
     "duplicate": "This request is already with our team.",
+    "left_message": "Your message is with our team. A specialist will reply in this chat.",
 }
 # The same fixed texts for a customer who wrote in Spanish (issue #81).
 _CHAT_TEXT_ES = {
     "proposal": "Gracias. Una persona de nuestro equipo revisará esta solicitud. Todavía no hay nada aprobado.",
     "escalate": "Un especialista se pondrá en contacto con usted sobre esto.",
     "duplicate": "Esta solicitud ya está con nuestro equipo.",
+    "left_message": "Su mensaje está con nuestro equipo. Un especialista responderá en este chat.",
 }
 
 
