@@ -100,15 +100,20 @@ def manual_handoff(question: str, sections: tuple[str, ...], tried: tuple[str, .
     )
 
 
-def left_message(message: str, tried: tuple[str, ...], recent: tuple[str, ...]) -> Handoff:
-    """The packet for a left message: the customer's words and the turns that did not help (R35)."""
+def left_message(
+    message: str,
+    tried: tuple[str, ...],
+    recent: tuple[str, ...],
+    why: str = "The agent's recent replies did not help.",
+) -> Handoff:
+    """The packet for a left message: the customer's words, why they left it, and the recent turns (R35)."""
     order_id = _order_id(message) or _order_id(" ".join(reversed(recent)))
     return Handoff(
         "ESC-WHEN",
         _asked(message, order_id),
         order_id,
         "Escalate when the handbook does not cover the question.",
-        "The agent's recent replies did not help. The customer left this message for a specialist.",
+        f"{why} The customer left this message for a specialist.",
         "specialist",
         (),
         tried,

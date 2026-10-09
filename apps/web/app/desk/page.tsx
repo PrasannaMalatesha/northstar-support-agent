@@ -222,9 +222,27 @@ async function acceptAction(formData: FormData) {
   redirect(accepted?.ok ? `/desk/live/${id}` : "/desk?live=gone");
 }
 
+// A declined offer goes to the next specialist, never back to this one (issue #139).
+async function declineAction(formData: FormData) {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/desk");
+  }
+  const access = await accessToken();
+  if (!access) {
+    redirect("/login");
+  }
+  const id = String(formData.get("id") ?? "");
+  const declined = /^[0-9a-f-]{36}$/.test(id)
+    ? await fetch(`${apiUrl}/live/${id}/decline`, { method: "POST", headers: { Authorization: `Bearer ${access}` } })
+    : null;
+  redirect(declined?.ok ? "/desk?live=declined" : "/desk?live=gone");
+}
+
 // Shown after a live chat action sends the specialist back to the desk.
 const LIVE_NOTES: Record<string, string> = {
   gone: "That live chat is no longer yours.",
+  declined: "Offer declined. It goes to the next specialist.",
   resolved: "Live chat resolved.",
   escalated: "Live chat escalated. It is in the escalations inbox.",
 };
@@ -355,6 +373,7 @@ export default async function DeskPage({
           liveResponse.ok
             ? ((await liveResponse.json()) as {
                 state: "available" | "away";
+                auto_away_at: string | null;
                 offers: { id: string; customer: string }[];
                 chats: { id: string; customer: string }[];
               })
@@ -454,6 +473,13 @@ export default async function DeskPage({
               <button type="submit">{live.state === "available" ? "Set Away" : "Set Available"}</button>
             </p>
           </form>
+          {live.auto_away_at ? (
+            <p role="status">
+              You were set to Away at{" "}
+              {new Date(live.auto_away_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })} because
+              offers went unanswered.
+            </p>
+          ) : null}
           {live.offers.length === 0 && live.chats.length === 0 ? <p>No live chat is offered to you.</p> : null}
           {live.offers.map((offer) => (
             <article key={offer.id}>
@@ -461,6 +487,10 @@ export default async function DeskPage({
               <form action={acceptAction}>
                 <input type="hidden" name="id" value={offer.id} />
                 <button type="submit">Accept</button>
+              </form>
+              <form action={declineAction}>
+                <input type="hidden" name="id" value={offer.id} />
+                <button type="submit">Decline</button>
               </form>
             </article>
           ))}
