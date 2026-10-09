@@ -21,5 +21,11 @@ class Settings(BaseSettings):
     # Live chat with a specialist (issue #138). Off by default: no live chat route or control,
     # and the chat behaves as before.
     live_agents_enabled: bool = False
+    # Quiet customer in a live chat (issue #142): minutes after the specialist's last message with no
+    # answer before "Are you still there?", before the live chat is idle and the slot is free, and
+    # before it closes.
+    quiet_nudge_minutes: float = Field(default=2, gt=0)
+    quiet_idle_minutes: float = Field(default=3, gt=0)
+    quiet_close_minutes: float = Field(default=15, gt=0)
     # Google single sign-on is on when this is set (issue #78). The same variable the console reads.
     google_client_id: str = Field(default="", validation_alias=AliasChoices("AUTH_GOOGLE_ID", "google_client_id"))

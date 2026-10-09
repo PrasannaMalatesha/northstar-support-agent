@@ -122,6 +122,7 @@ def create_app(
         turn_seconds=settings.turn_deadline_seconds,
         failed_turns_before_offer=settings.failed_turns_before_offer,
         live_chats=settings.live_agents_enabled,
+        quiet_minutes=(settings.quiet_nudge_minutes, settings.quiet_idle_minutes, settings.quiet_close_minutes),
     )
     cases.ensure_schema()
 

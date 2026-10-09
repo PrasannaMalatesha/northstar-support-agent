@@ -356,7 +356,7 @@ export default async function DeskPage({
             ? ((await liveResponse.json()) as {
                 state: "available" | "away";
                 offers: { id: string; customer: string }[];
-                chats: { id: string; customer: string }[];
+                chats: { id: string; customer: string; idle: boolean }[];
               })
             : null,
         )
@@ -464,14 +464,32 @@ export default async function DeskPage({
               </form>
             </article>
           ))}
-          {live.chats.length > 0 ? (
+          {live.chats.some((chat) => !chat.idle) ? (
             <ul>
-              {live.chats.map((chat) => (
-                <li key={chat.id}>
-                  <a href={`/desk/live/${chat.id}`}>Live chat with {chat.customer}</a>
-                </li>
-              ))}
+              {live.chats
+                .filter((chat) => !chat.idle)
+                .map((chat) => (
+                  <li key={chat.id}>
+                    <a href={`/desk/live/${chat.id}`}>Live chat with {chat.customer}</a>
+                  </li>
+                ))}
             </ul>
+          ) : null}
+          {/* Customers who went quiet (issue #142). An idle chat does not take a slot. */}
+          {live.chats.some((chat) => chat.idle) ? (
+            <>
+              <h3>Idle live chats</h3>
+              <p>These customers went quiet, so your slots are free. A chat comes back if the customer writes.</p>
+              <ul>
+                {live.chats
+                  .filter((chat) => chat.idle)
+                  .map((chat) => (
+                    <li key={chat.id}>
+                      <a href={`/desk/live/${chat.id}`}>Idle live chat with {chat.customer}</a>
+                    </li>
+                  ))}
+              </ul>
+            </>
           ) : null}
           {live.state === "available" || live.offers.length > 0 || live.chats.length > 0 ? <Refresh /> : null}
         </section>
