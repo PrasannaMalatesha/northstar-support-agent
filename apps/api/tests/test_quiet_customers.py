@@ -311,7 +311,8 @@ def test_the_offer_to_leave_a_message_stays_hidden_while_the_chat_is_idle(client
     chat, avery = _chat(client), _avery(client)
     for question in ("What is your favorite color?", "Tell me a joke.", "Who won the game last night?"):
         _say(client, chat, question)
-    assert client.get("/chat/state", headers=chat).json()["offer"] == "leave_message"
+    # With live chat on, three failed turns offer a person (issue #141).
+    assert client.get("/chat/state", headers=chat).json()["offer"] == "talk_to_person"
     _answered(client, chat, avery)
     clock.advance(minutes=4)
     assert _chats(client, avery) == [("Mira Shah", True)]
