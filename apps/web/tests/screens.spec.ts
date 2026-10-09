@@ -272,3 +272,77 @@ test("a customer talks to a specialist in a live chat, and the specialist resolv
   await specialistContext.close();
   await leadContext.close();
 });
+
+test("a specialist raises a refund in a live chat, and only a lead approves it", async ({ page, browser }) => {
+  const customer = page;
+  const specialistContext = await browser.newContext();
+  const leadContext = await browser.newContext();
+  const specialist = await specialistContext.newPage();
+  const lead = await leadContext.newPage();
+
+  // Jon Hale again: his live chat above is resolved, so asking for a person starts a new case.
+  await customer.goto("/chat");
+  await customer.getByLabel("Order id").fill("NS-1002");
+  await customer.getByLabel("Email").fill("jon.hale@northstar.example");
+  await customer.getByRole("button", { name: "Start chat" }).click();
+  await customer.getByRole("button", { name: "Talk to a person" }).click();
+
+  await signIn(specialist, "specialist@northstar.example", "northstar-specialist");
+  const setAvailable = specialist.getByRole("button", { name: "Set Available" });
+  if (await setAvailable.count()) {
+    await setAvailable.click();
+  }
+  const offer = specialist.getByRole("article").filter({ hasText: "Jon Hale asked to talk to a person." });
+  await offer.getByRole("button", { name: "Accept" }).click();
+  await expect(specialist.getByRole("heading", { name: "Live chat with Jon Hale" })).toBeVisible();
+  await expect(specialist.getByText("Spanish", { exact: true })).toHaveCount(0);
+
+  // The customer writes in Spanish. The specialist sees the label and replies in Spanish themselves.
+  await expect(customer.getByText("Avery joined the chat.")).toBeVisible({ timeout: 10_000 });
+  await customer.getByLabel("Your message", { exact: true }).fill("Hola, quiero un reembolso del pedido NS-1002.");
+  await customer.getByRole("button", { name: "Send" }).click();
+  await expect(specialist.getByText("Spanish", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await noViolations(specialist);
+  await specialist.getByLabel("Your reply").fill("Hola Jon, soy Avery. Pido el reembolso a un líder.");
+  await specialist.getByRole("button", { name: "Send", exact: true }).click();
+
+  await tabTo(specialist, "request");
+  await specialist.keyboard.type("Refund order NS-1002.");
+  await tabTo(specialist, "Raise action");
+  await specialist.keyboard.press("Enter");
+  await expect(specialist.getByText(/^The customer sees: .*Nothing is approved yet\.$/)).toBeVisible();
+  await expect(specialist.getByText("Refund order NS-1002.")).toBeVisible();
+  await noViolations(specialist);
+
+  // The customer sees that nothing is approved yet, the specialist's own words, and no amount or rule.
+  await expect(customer.getByText(/Nothing is approved yet/)).toBeVisible({ timeout: 10_000 });
+  await expect(customer.getByText("Hola Jon, soy Avery. Pido el reembolso a un líder.")).toBeVisible();
+  await expect(customer.getByText(/Refund order|cents|REF-/)).toHaveCount(0);
+  await noViolations(customer);
+
+  // The live chat does not end while the proposal waits for a lead.
+  await specialist.getByRole("button", { name: "Resolve" }).click();
+  await expect(specialist.getByText(/proposal on this live chat is waiting for a lead/)).toBeVisible();
+  await noViolations(specialist);
+
+  await signIn(lead, "lead@northstar.example", "northstar-lead");
+  const proposal = lead
+    .locator("section")
+    .filter({ has: lead.getByRole("heading", { name: "Waiting for approval" }) })
+    .getByRole("article")
+    .filter({ hasText: "NS-1002: " });
+  // The rule sets the amount: a full refund inside the window, a deny after it.
+  await expect(proposal.getByText(/^NS-1002: (approve_refund, 4800 cents|deny, 0 cents)/)).toBeVisible();
+  await expect(proposal.getByText(/^Cited: REF-/)).toBeVisible();
+  await noViolations(lead);
+  await proposal.getByRole("button", { name: "Approve" }).click();
+  await expect(lead.getByText(/^Ticket [0-9a-f-]{36}\.$/).first()).toBeVisible();
+
+  await expect(customer.getByText(/Our team approved your request\. Reference/)).toBeVisible({ timeout: 10_000 });
+  await expect(specialist.getByText(/^The customer sees: Our team approved your request/)).toBeVisible({ timeout: 10_000 });
+  await specialist.getByRole("button", { name: "Resolve" }).click();
+  await expect(specialist.getByText("Live chat resolved.")).toBeVisible();
+
+  await specialistContext.close();
+  await leadContext.close();
+});

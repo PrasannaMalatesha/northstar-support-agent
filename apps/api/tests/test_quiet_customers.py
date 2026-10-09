@@ -265,3 +265,31 @@ def test_many_reads_at_once_idle_a_chat_and_bring_the_customer_back_once(client,
     assert _events().count("live_chat_idle") == 1
     assert _events().count("live_chat_returned") == 1
     assert _chats(client, avery) == [("Mira Shah", False)]
+
+
+@pytest.mark.parametrize("client", LIVE, indirect=True)
+def test_a_quiet_chat_with_a_waiting_proposal_goes_idle_and_closes_only_after_the_lead_decides(client, clock):
+    chat, avery = _chat(client), _avery(client)
+    assert client.post("/chat/live", headers=chat).status_code == 200
+    client.post("/presence", headers=avery, json={"state": "available"})
+    offer = client.get("/live", headers=avery).json()["offers"][0]["id"]
+    client.post(f"/live/{offer}/accept", headers=avery)
+    # The specialist's action turn is her last word, so the quiet clock starts from it.
+    assert client.post(f"/live/{offer}/actions", headers=avery, json={"text": "Please refund order NS-1001."}).status_code == 200
+
+    # Quiet for 15 minutes while the proposal waits: the slot is free, but the chat does not close.
+    clock.advance(minutes=15)
+    avery, lead = _avery(client), _staff(client, "lead@northstar.example", "northstar-lead")
+    assert _state(client, chat) == {"status": "idle", "specialist": None}
+    assert _chats(client, avery) == [("Mira Shah", True)]
+    [proposal] = client.get("/approvals", headers=lead).json()
+    assert proposal["order_id"] == "NS-1001"
+    assert client.get(f"/cases/{proposal['case_id']}", headers=lead).json()["status"] == "Waiting for approval"
+    assert "live_chat_closed" not in _events()
+
+    # The lead decides, and the customer is still quiet, so the next read closes the live chat.
+    assert client.post(f"/approvals/{proposal['case_id']}/approve", headers=lead).status_code == 200
+    assert _state(client, chat) is None
+    assert client.get(f"/cases/{proposal['case_id']}", headers=lead).json()["status"] == "Resolved"
+    assert client.get("/chat", headers=chat).json()["status"].startswith("Our team approved your request.")
+    assert _events().count("live_chat_closed") == 1

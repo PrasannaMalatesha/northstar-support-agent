@@ -15,6 +15,7 @@ from northstar.cases import (
     NotYours,
     ProposerCannotApprove,
     ProposalNotWaiting,
+    ProposalWaiting,
 )
 from northstar.clock import Clock, SystemClock
 from northstar.photo import BadPhoto, checked
@@ -35,6 +36,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 _bearer = HTTPBearer(auto_error=False)
+_WAITING = "A proposal on this live chat is waiting for a lead."
 
 
 class LoginBody(BaseModel):
@@ -462,12 +464,25 @@ def create_app(
                 raise HTTPException(status_code=403, detail="This live chat is not yours.") from exc
             return {"id": str(request_id)}
 
+        @app.post("/live/{request_id}/actions")
+        def raise_live_action(request_id: uuid.UUID, body: ReplyBody, staff=Depends(require_specialist)) -> dict:
+            # The same turn and rules as the agent, as the specialist. A lead approves what it proposes (R45).
+            try:
+                cases.live_action(staff.id, request_id, body.text)
+            except NotYours as exc:
+                raise HTTPException(status_code=403, detail="This live chat is not yours.") from exc
+            except CaseClosed as exc:
+                raise HTTPException(status_code=409, detail=_WAITING) from exc
+            return {"id": str(request_id)}
+
         @app.post("/live/{request_id}/resolve")
         def resolve_live_chat(request_id: uuid.UUID, staff=Depends(require_specialist)) -> dict:
             try:
                 cases.end_live(staff.id, request_id, "Resolved")
             except NotYours as exc:
                 raise HTTPException(status_code=403, detail="This live chat is not yours.") from exc
+            except ProposalWaiting as exc:
+                raise HTTPException(status_code=409, detail=_WAITING) from exc
             return {"id": str(request_id)}
 
         @app.post("/live/{request_id}/escalate")
@@ -476,6 +491,8 @@ def create_app(
                 cases.end_live(staff.id, request_id, "Escalated", body.note)
             except NotYours as exc:
                 raise HTTPException(status_code=403, detail="This live chat is not yours.") from exc
+            except ProposalWaiting as exc:
+                raise HTTPException(status_code=409, detail=_WAITING) from exc
             return {"id": str(request_id)}
 
     @app.post("/cases/current/customer")

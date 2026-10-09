@@ -6,6 +6,7 @@ import { apiUrl, sameSite } from "../../../same-site";
 import { accessToken } from "../../access-token";
 
 // One live chat (issue #138): the conversation as the customer sees it, a reply form, and the ending.
+// The specialist also raises money actions here, and only they see those turns (issue #143).
 type LiveChat = {
   id: string;
   case_id: string;
@@ -13,16 +14,31 @@ type LiveChat = {
   // The customer went quiet, so the chat no longer takes a slot (issue #142).
   idle: boolean;
   messages: { role: string; name?: string; text: string }[];
+  // The status line the customer sees, such as "Nothing is approved yet".
+  status: string;
+  spanish: boolean;
 };
 
 const ID = /^[0-9a-f-]{36}$/;
 
+const SPEAKERS: Record<string, string> = {
+  user: "Customer",
+  action: "Your action, not shown to the customer",
+  desk: "Desk rules, not shown to the customer",
+};
+
 function speaker(message: LiveChat["messages"][number]): string {
-  if (message.role === "user") {
-    return "Customer";
+  if (message.role === "specialist") {
+    return `${message.name}, specialist`;
   }
-  return message.role === "specialist" ? `${message.name}, specialist` : "Agent";
+  return SPEAKERS[message.role] ?? "Agent";
 }
+
+const ERRORS: Record<string, string> = {
+  unsent: "That message was not sent. Try again.",
+  unraised: "That action was not raised. Try again.",
+  waiting: "A proposal on this live chat is waiting for a lead. The chat ends, or takes another action, once a lead decides.",
+};
 
 async function liveId(formData: FormData): Promise<{ id: string; access: string }> {
   const id = String(formData.get("id") ?? "");
@@ -47,6 +63,21 @@ async function sendAction(formData: FormData) {
   redirect(sent.ok ? `/desk/live/${id}` : `/desk/live/${id}?error=unsent`);
 }
 
+// A refund, cancel, exchange, address change, or warranty claim, decided by the agent's own rules. A lead approves it.
+async function raiseAction(formData: FormData) {
+  "use server";
+  const { id, access } = await liveId(formData);
+  const raised = await fetch(`${apiUrl}/live/${id}/actions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${access}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ text: String(formData.get("request") ?? "") }),
+  });
+  if (raised.status === 403) {
+    redirect("/desk?live=gone");
+  }
+  redirect(raised.ok ? `/desk/live/${id}` : `/desk/live/${id}?error=${raised.status === 409 ? "waiting" : "unraised"}`);
+}
+
 async function endAction(formData: FormData) {
   "use server";
   const { id, access } = await liveId(formData);
@@ -56,6 +87,9 @@ async function endAction(formData: FormData) {
     headers: { Authorization: `Bearer ${access}`, "Content-Type": "application/json" },
     body: escalate ? JSON.stringify({ note: String(formData.get("note") ?? "") }) : undefined,
   });
+  if (ended.status === 409) {
+    redirect(`/desk/live/${id}?error=waiting`);
+  }
   redirect(!ended.ok ? "/desk?live=gone" : escalate ? "/desk?live=escalated" : "/desk?live=resolved");
 }
 
@@ -95,7 +129,14 @@ export default async function LiveChatPage({
       <p className="quiet">
         Case {chat.case_id}. <a href="/desk">Back to my desk</a>
       </p>
-      {error ? <p role="alert">That message was not sent. Try again.</p> : null}
+      {chat.spanish ? (
+        <p>
+          <strong>Spanish</strong>. The customer writes in Spanish. Reply in Spanish yourself: nothing translates your
+          words.
+        </p>
+      ) : null}
+      {chat.status ? <p role="status">The customer sees: {chat.status}</p> : null}
+      {error ? <p role="alert">{ERRORS[error] ?? ERRORS.unsent}</p> : null}
       <section aria-label="Conversation">
         <ol>
           {chat.messages.map((message, index) => (
@@ -119,6 +160,25 @@ export default async function LiveChatPage({
               <textarea name="text" required maxLength={2000} />
             </label>
             <button type="submit">Send</button>
+          </form>
+          <form action={raiseAction}>
+            <input type="hidden" name="id" value={chat.id} />
+            <label>
+              Action for a lead
+              <input
+                name="request"
+                type="text"
+                required
+                maxLength={2000}
+                placeholder="Refund order NS-1001"
+                aria-describedby="action-help"
+              />
+            </label>
+            <p className="quiet" id="action-help">
+              The handbook rules set the amount, and a lead approves it. The customer sees only that nothing is
+              approved yet.
+            </p>
+            <button type="submit">Raise action</button>
           </form>
           <form action={endAction}>
             <input type="hidden" name="id" value={chat.id} />

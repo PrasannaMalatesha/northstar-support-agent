@@ -39,6 +39,16 @@ REQUEST_LIMIT_TEXT = (
 QUOTA_TEXT = "The daily quota is reached. This case is still here."
 COME_BACK_TEXT = "Come back to this chat with the same order id and email to read the reply."
 STILL_THERE_TEXT = "Are you still there?"
+# The last word in a live chat (issue #142): the customer's message, or the specialist's message or
+# action turn, which carry the specialist's id. Agent turns do not count.
+_LAST_WORD = """
+    CROSS JOIN LATERAL (
+        SELECT staff_id, created_at FROM case_messages
+        WHERE case_id = r.case_id AND (role = 'user' OR staff_id IS NOT NULL)
+        ORDER BY id DESC
+        LIMIT 1
+    ) last
+"""
 # Turns that did not help the customer. Enough of them in a row and the chat offers a person (R35).
 FAILED_DECISIONS = ("ask_clarification", "abstain", "lookup_failed")
 UNBOUND_ORDER_TEXT = "Pick a customer first. No order was read."
@@ -218,6 +228,10 @@ class NotYours(Exception):
 
 class NoOffer(Exception):
     """The chat is not offering to leave a message: the agent's last turns helped, or the case is not open."""
+
+
+class ProposalWaiting(Exception):
+    """A live chat does not end while its case waits for a lead. Ending it would drop the proposal (R45)."""
 
 
 class CaseStore:
@@ -427,13 +441,20 @@ class CaseStore:
         *,
         case_id: uuid.UUID | None = None,
         chat_customer: uuid.UUID | None = None,
+        staff_turn: bool = False,
     ) -> dict:
         # Each turn has a deadline. Optional model steps are skipped when it is close (R36).
         with turn_deadline(self._clock, self._turn_seconds):
-            return self._ask(staff_id, question, photo, case_id, chat_customer)
+            return self._ask(staff_id, question, photo, case_id, chat_customer, staff_id if staff_turn else None)
 
     def _ask(
-        self, staff_id: uuid.UUID, question: str, photo: str | None, case_id: uuid.UUID | None, chat_customer: uuid.UUID | None
+        self,
+        staff_id: uuid.UUID,
+        question: str,
+        photo: str | None,
+        case_id: uuid.UUID | None,
+        chat_customer: uuid.UUID | None,
+        by: uuid.UUID | None = None,
     ) -> dict:
         case_id = case_id or self._open(staff_id)
         if self._status(case_id) != "Open":
@@ -447,9 +468,9 @@ class CaseStore:
             key = f"chat:{chat_customer}"
             limits = {key: self._chat_turns_per_customer, "chat": self._chat_turns_per_day}
         if not self._take(now.date(), "requests", 1, limits):
-            return self._save(case_id, question, _plain("limit", REQUEST_LIMIT_TEXT), now)
+            return self._save(case_id, question, _plain("limit", REQUEST_LIMIT_TEXT), now, by)
         if has_secret(question):
-            return self._save(case_id, question, _plain("blocked", SECRET_REPLY), now)
+            return self._save(case_id, question, _plain("blocked", SECRET_REPLY), now, by)
         # A Spanish question is decided in English and answered in Spanish (issue #81).
         spanish = is_spanish(question)
         asked = to_english(screen(question)) if spanish else question
@@ -466,35 +487,36 @@ class CaseStore:
             # Through the graph, so the escalation has a LangGraph trace for the safety rule and the judge.
             fixed = Draft("escalate", text, (section,), {section: "strong"}, ())
             tools = TurnTools(refund=lambda _text: fixed, support=lambda _text: fixed)
-            return self._save(case_id, asked_with, reply(_noted(self._turn(case_id, asked, tools), note)), now)
+            return self._save(case_id, asked_with, reply(_noted(self._turn(case_id, asked, tools), note)), now, by)
         if _blocked(question) or _blocked(asked):
-            return self._save(case_id, asked_with, reply(_plain("safe", SAFE_REPLY)), now)
+            return self._save(case_id, asked_with, reply(_plain("safe", SAFE_REPLY)), now, by)
         tools = TurnTools(
             refund=lambda text: self._gated_draft(case_id, staff_id, text, now, note),
             support=lambda text: self._support_draft(case_id, key, text, now),
         )
-        return self._save(case_id, asked_with, reply(_noted(self._turn(case_id, asked, tools), note)), now)
+        return self._save(case_id, asked_with, reply(_noted(self._turn(case_id, asked, tools), note)), now, by)
 
     def _turn(self, case_id: uuid.UUID, question: str, tools: TurnTools) -> Draft:
         return run_turn(question, tools, graph=graph_for(self._pool.conninfo), thread_id=str(case_id))
 
-    def _save(self, case_id: uuid.UUID, question: str, draft: Draft, now: datetime) -> dict:
+    def _save(self, case_id: uuid.UUID, question: str, draft: Draft, now: datetime, by: uuid.UUID | None = None) -> dict:
+        """Save the question and the draft. `by` marks a specialist's turn on a chat case, which the customer does not see."""
         run_id = draft.run_id
         draft = guard_draft(draft)
         with self._pool.connection() as conn:
             conn.execute(
                 """
-                INSERT INTO case_messages (case_id, role, body, created_at)
-                VALUES (%s, 'user', %s, %s)
+                INSERT INTO case_messages (case_id, role, body, staff_id, created_at)
+                VALUES (%s, 'user', %s, %s, %s)
                 """,
-                (case_id, screen(question.strip()), now),
+                (case_id, screen(question.strip()), by, now),
             )
             conn.execute(
                 """
                 INSERT INTO case_messages
                     (case_id, role, body, decision, citations, strengths, steps, run_id,
-                     retrieved_sections, retrieved_scores, created_at)
-                VALUES (%s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     retrieved_sections, retrieved_scores, staff_id, created_at)
+                VALUES (%s, 'assistant', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     case_id,
@@ -506,6 +528,7 @@ class CaseStore:
                     run_id,
                     [section_id for section_id, _ in draft.retrieved],
                     [score for _, score in draft.retrieved],
+                    by,
                     now,
                 ),
             )
@@ -978,8 +1001,11 @@ class CaseStore:
             conn.commit()
         return case_id
 
-    def _chat_view(self, case_id: uuid.UUID) -> dict:
-        """What a customer may see: their own words and checked replies. No draft, amount, packet, or history."""
+    def _chat_view(self, case_id: uuid.UUID, staff: bool = False) -> dict:
+        """What a customer may see: their own words and checked replies. No draft, amount, packet, or history.
+
+        `staff` adds the specialist's action turns, for the specialist's own live chat page.
+        """
         row = self._case_row(case_id)
         ticket = self._ticket_id(case_id)
         if row["status"] == "Waiting for approval":
@@ -998,6 +1024,11 @@ class CaseStore:
             status = ""
         messages, spanish = [], False
         for m in self._chat_messages(case_id):
+            if m["role"] != "specialist" and m["staff_id"] is not None:
+                # A specialist's action turn (R45). The customer sees only the status, never the ask, amount, or rule.
+                if staff:
+                    messages.append({"role": "action" if m["role"] == "user" else "desk", "text": m["body"]})
+                continue
             if m["role"] == "user":
                 spanish = is_spanish(m["body"])
                 messages.append({"role": "user", "text": m["body"]})
@@ -1098,7 +1129,7 @@ class CaseStore:
         with self._pool.connection() as conn:
             return conn.execute(
                 """
-                SELECT m.role, m.body, m.decision, split_part(staff_users.name, ' ', 1) AS name
+                SELECT m.role, m.body, m.decision, m.staff_id, split_part(staff_users.name, ' ', 1) AS name
                 FROM case_messages m
                 JOIN cases c ON c.id = m.case_id
                 JOIN cases this ON this.id = %s
@@ -1268,17 +1299,22 @@ class CaseStore:
             "offers": [
                 {"id": str(row["id"]), "customer": row["customer"]} for row in rows if row["status"] == "offered"
             ],
-            "chats": [
-                {
-                    "id": str(row["id"]),
-                    "case_id": str(row["case_id"]),
-                    "customer": row["customer"],
-                    "idle": row["status"] == "idle",
-                    "messages": self._chat_view(row["case_id"])["messages"],
-                }
-                for row in rows
-                if row["status"] in ("active", "idle")
-            ],
+            "chats": [self._live_chat(row) for row in rows if row["status"] in ("active", "idle")],
+        }
+
+    def _live_chat(self, row) -> dict:
+        """One live chat for its specialist: the conversation, their action turns, and what the customer's status says."""
+        view = self._chat_view(row["case_id"], staff=True)
+        said = [m["text"] for m in view["messages"] if m["role"] == "user"]
+        return {
+            "id": str(row["id"]),
+            "case_id": str(row["case_id"]),
+            "customer": row["customer"],
+            "idle": row["status"] == "idle",
+            "messages": view["messages"],
+            "status": view["status"],
+            # The specialist replies in Spanish themselves. Nothing translates a person's words (R45).
+            "spanish": bool(said) and is_spanish(said[-1]),
         }
 
     def accept(self, staff_id: uuid.UUID, request_id: uuid.UUID) -> None:
@@ -1315,6 +1351,22 @@ class CaseStore:
             _audit(conn, staff_id, "live_chat_message", now)
             conn.commit()
 
+    def live_action(self, staff_id: uuid.UUID, request_id: uuid.UUID, text: str) -> None:
+        """A refund, cancel, exchange, address change, or warranty claim raised in the specialist's live chat (R45).
+
+        The agent's own turn, run as the specialist: the handbook rule and the amount come from code, the
+        duplicate guard and the specialist's request limit apply, and the specialist is the proposer, so only
+        a lead approves. The turn is saved as theirs, so the customer sees only that nothing is approved yet.
+        """
+        with self._pool.connection() as conn:
+            live = conn.execute(
+                "SELECT case_id FROM live_chat_requests WHERE id = %s AND status = 'active' AND staff_id = %s",
+                (request_id, staff_id),
+            ).fetchone()
+        if live is None:
+            raise NotYours()
+        self.ask(staff_id, text, case_id=live["case_id"], staff_turn=True)
+
     def end_live(self, staff_id: uuid.UUID, request_id: uuid.UUID, status: str, note: str = "") -> None:
         """End a live chat as Resolved, or as Escalated with a handoff, which puts it in the escalations inbox."""
         with self._pool.connection() as conn:
@@ -1324,6 +1376,8 @@ class CaseStore:
             ).fetchone()
         if live is None:
             raise NotYours()
+        if _waits_for_lead(self._status(live["case_id"])):
+            raise ProposalWaiting()
         packet = self._manual_packet(live["case_id"], note) if status == "Escalated" else ""
         now = self._clock.now()
         with self._pool.connection() as conn:
@@ -1367,33 +1421,32 @@ class CaseStore:
     def _quiet(self) -> None:
         """Idle the live chats quiet past the idle time, freeing the slot, and close those quiet past the close time.
 
-        A customer who wrote during idle comes back. Each request row is locked with SKIP LOCKED, so two
+        A chat whose case waits for a lead is not closed until the lead decides. A customer who wrote during
+        idle comes back. Each request row is locked with SKIP LOCKED, so two
         reads at once change it once.
         """
         now = self._clock.now()
         changed, back = False, []
         with self._pool.connection() as conn:
             rows = conn.execute(
-                """
-                SELECT r.id, r.case_id, r.status, r.staff_id, last.role, last.created_at
+                f"""
+                SELECT r.id, r.case_id, r.status, r.staff_id, cases.status AS case_status,
+                       last.staff_id AS last_by, last.created_at
                 FROM live_chat_requests r
-                CROSS JOIN LATERAL (
-                    SELECT role, created_at FROM case_messages
-                    WHERE case_id = r.case_id AND role IN ('user', 'specialist')
-                    ORDER BY id DESC
-                    LIMIT 1
-                ) last
+                JOIN cases ON cases.id = r.case_id
+                {_LAST_WORD}
                 WHERE r.status IN ('active', 'idle')
-                  AND ((last.role = 'specialist' AND last.created_at <= %s) OR (r.status = 'idle' AND last.role = 'user'))
+                  AND ((last.staff_id IS NOT NULL AND last.created_at <= %s) OR (r.status = 'idle' AND last.staff_id IS NULL))
                 FOR UPDATE OF r SKIP LOCKED
                 """,
                 (now - min(self._idle, self._close),),
             ).fetchall()
             for row in rows:
-                if row["role"] == "user":
+                if row["last_by"] is None:
                     back.append(row)
-                elif now - row["created_at"] >= self._close:
-                    # Closed like a resolved chat, with the conversation kept. A proposal still waits for its lead.
+                elif now - row["created_at"] >= self._close and not _waits_for_lead(row["case_status"]):
+                    # Closed like a resolved chat, with the conversation kept. While a proposal waits, the chat
+                    # only goes idle, and it closes once the lead has decided.
                     conn.execute("UPDATE live_chat_requests SET status = 'ended', ended_at = %s WHERE id = %s", (now, row["id"]))
                     conn.execute("UPDATE cases SET status = 'Resolved' WHERE id = %s AND status = 'Open'", (row["case_id"],))
                     _audit(conn, row["staff_id"], "live_chat_closed", now)
@@ -1444,16 +1497,11 @@ class CaseStore:
         """The specialist had the last word in this live chat at least the nudge time ago."""
         with self._pool.connection() as conn:
             row = conn.execute(
-                """
+                f"""
                 SELECT 1 FROM live_chat_requests r
-                CROSS JOIN LATERAL (
-                    SELECT role, created_at FROM case_messages
-                    WHERE case_id = r.case_id AND role IN ('user', 'specialist')
-                    ORDER BY id DESC
-                    LIMIT 1
-                ) last
+                {_LAST_WORD}
                 WHERE r.case_id = %s AND r.status IN ('active', 'idle')
-                  AND last.role = 'specialist' AND last.created_at <= %s
+                  AND last.staff_id IS NOT NULL AND last.created_at <= %s
                 """,
                 (case_id, self._clock.now() - self._nudge),
             ).fetchone()
@@ -1756,6 +1804,11 @@ def _iso(moment: datetime) -> str:
 def _audit(conn, staff_id: uuid.UUID | None, event: str, at: datetime) -> None:
     """An audit event in the caller's transaction, so it is recorded only with the change it describes."""
     conn.execute("INSERT INTO audit_log (staff_id, event, created_at) VALUES (%s, %s, %s)", (staff_id, event, at))
+
+
+def _waits_for_lead(case_status: str) -> bool:
+    """As on the desk, a case waiting for a lead does not close. The lead decides first (R45)."""
+    return case_status == "Waiting for approval"
 
 
 def _plain(decision: str, text: str) -> Draft:
