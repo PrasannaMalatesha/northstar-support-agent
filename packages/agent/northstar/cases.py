@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from psycopg import sql
 
@@ -174,6 +174,14 @@ CREATE TABLE IF NOT EXISTS live_chat_requests (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS live_chat_requests_one_open_per_case
 ON live_chat_requests (case_id) WHERE status IN ('waiting', 'offered', 'active');
+-- Offers that move on (issue #139). An offer expires; who declined it or let it expire is not offered it
+-- again. After the last offer the request is 'unanswered' and leaves the line. Missed offers in a row
+-- set a specialist to away, and auto_away_at tells them when.
+ALTER TABLE live_chat_requests ADD COLUMN IF NOT EXISTS offers integer NOT NULL DEFAULT 0;
+ALTER TABLE live_chat_requests ADD COLUMN IF NOT EXISTS missed_by uuid[] NOT NULL DEFAULT '{}';
+ALTER TABLE live_chat_requests ADD COLUMN IF NOT EXISTS offer_expires_at timestamptz;
+ALTER TABLE specialist_availability ADD COLUMN IF NOT EXISTS missed_in_a_row integer NOT NULL DEFAULT 0;
+ALTER TABLE specialist_availability ADD COLUMN IF NOT EXISTS auto_away_at timestamptz;
 """
 
 
@@ -225,6 +233,10 @@ class CaseStore:
         turn_seconds: float = 45,
         failed_turns_before_offer: int = 3,
         live_chats: bool = False,
+        offer_seconds: float = 45,
+        offers_before_message: int = 3,
+        missed_offers_before_away: int = 2,
+        check_in_seconds: float = 60,
     ) -> None:
         self._pool = pool
         self._clock = clock
@@ -235,6 +247,10 @@ class CaseStore:
         self._turn_seconds = turn_seconds
         self._failed_turns = failed_turns_before_offer
         self._live_chats = live_chats
+        self._offer_window = timedelta(seconds=offer_seconds)
+        self._offers_before_message = offers_before_message
+        self._missed_before_away = missed_offers_before_away
+        self._check_in_window = timedelta(seconds=check_in_seconds)
 
     def ensure_schema(self) -> None:
         with self._pool.connection() as conn:
@@ -904,6 +920,7 @@ class CaseStore:
         return None if row is None else row["id"]
 
     def chat(self, customer_id: uuid.UUID) -> dict:
+        self._notice_expired()
         return self._chat_view(self._chat_case(customer_id))
 
     def chat_ask(self, customer_id: uuid.UUID, question: str) -> dict:
@@ -976,6 +993,8 @@ class CaseStore:
             status = "Our team could not approve that request."
         elif row["status"] == "Resolved":
             status = "This chat is closed. Write again to start a new one."
+        elif self._unanswered(case_id):
+            status = "No specialist could take your chat just now."
         else:
             status = ""
         messages, spanish = [], False
@@ -991,8 +1010,14 @@ class CaseStore:
         return {"status": status, "messages": messages}
 
     def chat_offer(self, customer_id: uuid.UUID) -> str | None:
-        """What the chat offers beside the agent: "leave_message" after failed turns in a row, else None (R35)."""
-        return "leave_message" if self._failing(self._chat_case(customer_id)) else None
+        """What the chat offers beside the agent, else None.
+
+        "leave_message" after failed turns in a row (R35), or after the last offer of a live chat
+        went unanswered (issue #139).
+        """
+        self._notice_expired()
+        case_id = self._chat_case(customer_id)
+        return "leave_message" if self._failing(case_id) or self._unanswered(case_id) else None
 
     def leave_message(self, customer_id: uuid.UUID, text: str) -> dict:
         """The customer's message for a specialist, while the offer stands.
@@ -1001,10 +1026,11 @@ class CaseStore:
         escalations inbox. The specialist's reply reaches this chat through the inbox (R38).
         """
         case_id = self._chat_case(customer_id)
-        if not self._failing(case_id):
+        unanswered = self._unanswered(case_id)
+        if not unanswered and not self._failing(case_id):
             raise NoOffer()
         message = screen(text.strip())
-        packet = self._left_message_packet(case_id, message)
+        packet = self._left_message_packet(case_id, message, unanswered)
         now = self._clock.now()
         with self._pool.connection() as conn:
             # The status check is in the update, so a message is left once even when two arrive together.
@@ -1054,8 +1080,30 @@ class CaseStore:
             ).fetchall()
         return len(rows) == self._failed_turns and all(row["decision"] in FAILED_DECISIONS for row in rows)
 
-    def _left_message_packet(self, case_id: uuid.UUID, message: str) -> str:
-        """The handoff for a left message, with the questions and replies of the turns that failed."""
+    def _unanswered(self, case_id: uuid.UUID) -> bool:
+        """The case is open, and its live chat request left the line after its last offer (issue #139).
+
+        Asking for a person again puts the case back in the line, and the offer to leave a message goes.
+        """
+        if not self._live_chats:
+            return False
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT 1 FROM live_chat_requests r JOIN cases c ON c.id = r.case_id
+                WHERE r.case_id = %s AND r.status = 'unanswered' AND c.status = 'Open'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM live_chat_requests o
+                      WHERE o.case_id = r.case_id AND o.status IN ('waiting', 'offered', 'active')
+                  )
+                LIMIT 1
+                """,
+                (case_id,),
+            ).fetchone()
+        return row is not None
+
+    def _left_message_packet(self, case_id: uuid.UUID, message: str, unanswered: bool = False) -> str:
+        """The handoff for a left message, with the questions and replies of the turns before it."""
         with self._pool.connection() as conn:
             rows = conn.execute(
                 """
@@ -1070,6 +1118,9 @@ class CaseStore:
                 (case_id, 2 * self._failed_turns),
             ).fetchall()
         recent = tuple(f"{'Customer' if row['role'] == 'user' else 'Agent'}: {row['body']}" for row in rows)
+        if unanswered:
+            why = f"The customer asked for a person, and no specialist accepted after {self._offers_before_message} offers."
+            return left_message(message, self._tried(case_id), recent, why).text
         return left_message(message, self._tried(case_id), recent).text
 
     def _chat_messages(self, case_id: uuid.UUID) -> list:
@@ -1175,11 +1226,13 @@ class CaseStore:
     # Live chat (issue #138, ADR 0001): the line is rows in live_chat_requests. One function makes offers.
 
     def set_availability(self, staff_id: uuid.UUID, state: str) -> None:
+        """The specialist's own choice. It clears missed offers and the note that they were set to away."""
         with self._pool.connection() as conn:
             conn.execute(
                 """
                 INSERT INTO specialist_availability (staff_id, state, last_seen) VALUES (%s, %s, %s)
-                ON CONFLICT (staff_id) DO UPDATE SET state = EXCLUDED.state, last_seen = EXCLUDED.last_seen
+                ON CONFLICT (staff_id) DO UPDATE SET state = EXCLUDED.state, last_seen = EXCLUDED.last_seen,
+                    missed_in_a_row = 0, auto_away_at = NULL
                 """,
                 (staff_id, state, self._clock.now()),
             )
@@ -1208,6 +1261,7 @@ class CaseStore:
 
     def live_state(self, customer_id: uuid.UUID) -> dict | None:
         """The open request on the customer's chat. The specialist's first name shows once they join."""
+        self._notice_expired()
         case_id = self._chat_case(customer_id)
         with self._pool.connection() as conn:
             row = conn.execute(
@@ -1224,10 +1278,16 @@ class CaseStore:
         return {"status": row["status"], "specialist": row["name"] if row["status"] == "active" else None}
 
     def live(self, staff_id: uuid.UUID) -> dict:
-        """A specialist's state, offers, and live chats. A live chat shows the conversation as the customer sees it."""
+        """A specialist's state, offers, and live chats. A live chat shows the conversation as the customer sees it.
+
+        The desk reads this every few seconds, so a read is also the desk's check-in (issue #139).
+        """
+        back = self._check_in(staff_id)
+        if self._expire() or back:
+            self._assign()
         with self._pool.connection() as conn:
             state = conn.execute(
-                "SELECT state FROM specialist_availability WHERE staff_id = %s",
+                "SELECT state, auto_away_at FROM specialist_availability WHERE staff_id = %s",
                 (staff_id,),
             ).fetchone()
             rows = conn.execute(
@@ -1242,6 +1302,8 @@ class CaseStore:
             ).fetchall()
         return {
             "state": "away" if state is None else state["state"],
+            # When missed offers set the specialist to away, until they choose a state themselves.
+            "auto_away_at": _iso(state["auto_away_at"]) if state and state["auto_away_at"] else None,
             "offers": [
                 {"id": str(row["id"]), "customer": row["customer"]} for row in rows if row["status"] == "offered"
             ],
@@ -1258,20 +1320,49 @@ class CaseStore:
         }
 
     def accept(self, staff_id: uuid.UUID, request_id: uuid.UUID) -> None:
+        """Take an offer while it stands. It ends a run of missed offers."""
         now = self._clock.now()
         with self._pool.connection() as conn:
             accepted = conn.execute(
                 """
                 UPDATE live_chat_requests SET status = 'active', accepted_at = %s
-                WHERE id = %s AND status = 'offered' AND staff_id = %s
+                WHERE id = %s AND status = 'offered' AND staff_id = %s AND offer_expires_at > %s
                 RETURNING id
                 """,
-                (now, request_id, staff_id),
+                (now, request_id, staff_id, now),
             ).fetchone()
             if accepted is None:
                 raise NotYours()
+            conn.execute("UPDATE specialist_availability SET missed_in_a_row = 0 WHERE staff_id = %s", (staff_id,))
             _audit(conn, staff_id, "live_chat_accepted", now)
             conn.commit()
+
+    def decline(self, staff_id: uuid.UUID, request_id: uuid.UUID) -> None:
+        """Turn an offer down. The request goes to the next specialist, and never back to this one.
+
+        A decline is not a missed offer: the specialist is at the desk, so it ends a run of missed offers.
+        After the last offer, the request leaves the line and the customer may leave a message.
+        """
+        now = self._clock.now()
+        with self._pool.connection() as conn:
+            declined = conn.execute(
+                """
+                UPDATE live_chat_requests
+                SET status = CASE WHEN offers >= %s THEN 'unanswered' ELSE 'waiting' END,
+                    staff_id = NULL, offer_expires_at = NULL, missed_by = array_append(missed_by, %s)
+                WHERE id = %s AND status = 'offered' AND staff_id = %s AND offer_expires_at > %s
+                RETURNING status
+                """,
+                (self._offers_before_message, staff_id, request_id, staff_id, now),
+            ).fetchone()
+            if declined is None:
+                raise NotYours()
+            conn.execute("UPDATE specialist_availability SET missed_in_a_row = 0 WHERE staff_id = %s", (staff_id,))
+            _audit(conn, staff_id, "live_chat_declined", now)
+            if declined["status"] == "unanswered":
+                _audit(conn, None, "live_chat_unanswered", now)
+            conn.commit()
+        self._assign()
 
     def live_message(self, staff_id: uuid.UUID, request_id: uuid.UUID, text: str) -> None:
         """A specialist's message in their own live chat: screened, saved as theirs, and audited (R46)."""
@@ -1336,8 +1427,84 @@ class CaseStore:
                 is not None
             )
 
+    def _notice_expired(self) -> None:
+        """Expired offers are noticed whenever the line is read, so no scheduler runs (ADR 0001)."""
+        if self._live_chats and self._expire():
+            self._assign()
+
+    def _check_in(self, staff_id: uuid.UUID) -> bool:
+        """The desk checked in. True when it brings back an available specialist whose desk had gone quiet."""
+        now = self._clock.now()
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                """
+                WITH seen AS (
+                    SELECT staff_id, last_seen FROM specialist_availability WHERE staff_id = %s FOR UPDATE
+                )
+                UPDATE specialist_availability a SET last_seen = %s FROM seen
+                WHERE a.staff_id = seen.staff_id
+                RETURNING a.state, seen.last_seen
+                """,
+                (staff_id, now),
+            ).fetchone()
+            conn.commit()
+        return row is not None and row["state"] == "available" and row["last_seen"] < now - self._check_in_window
+
+    def _expire(self) -> bool:
+        """Offers past their window go back to the line, or leave it after the last offer (issue #139).
+
+        The specialist is not offered that request again, and missed offers in a row set them to away.
+        True when any offer expired.
+        """
+        now = self._clock.now()
+        with self._pool.connection() as conn:
+            expired = conn.execute(
+                """
+                WITH due AS (
+                    SELECT id, staff_id FROM live_chat_requests
+                    WHERE status = 'offered' AND offer_expires_at <= %s
+                    FOR UPDATE SKIP LOCKED
+                )
+                UPDATE live_chat_requests r
+                SET status = CASE WHEN r.offers >= %s THEN 'unanswered' ELSE 'waiting' END,
+                    staff_id = NULL, offer_expires_at = NULL, missed_by = array_append(r.missed_by, due.staff_id)
+                FROM due
+                WHERE r.id = due.id
+                RETURNING due.staff_id, r.status
+                """,
+                (now, self._offers_before_message),
+            ).fetchall()
+            for row in expired:
+                _audit(conn, row["staff_id"], "live_chat_expired", now)
+                if row["status"] == "unanswered":
+                    _audit(conn, None, "live_chat_unanswered", now)
+            # One specialist at a time and always in the same order, so two runs never deadlock.
+            for staff_id in sorted({row["staff_id"] for row in expired}):
+                seen = conn.execute(
+                    "SELECT state, missed_in_a_row FROM specialist_availability WHERE staff_id = %s FOR UPDATE",
+                    (staff_id,),
+                ).fetchone()
+                missed = seen["missed_in_a_row"] + sum(row["staff_id"] == staff_id for row in expired)
+                if seen["state"] == "available" and missed >= self._missed_before_away:
+                    conn.execute(
+                        """
+                        UPDATE specialist_availability SET state = 'away', missed_in_a_row = %s, auto_away_at = %s
+                        WHERE staff_id = %s
+                        """,
+                        (missed, now, staff_id),
+                    )
+                    _audit(conn, staff_id, "live_chat_auto_away", now)
+                else:
+                    conn.execute(
+                        "UPDATE specialist_availability SET missed_in_a_row = %s WHERE staff_id = %s",
+                        (missed, staff_id),
+                    )
+            conn.commit()
+        return bool(expired)
+
     def _assign(self) -> None:
-        """Make offers until no request waits or no available specialist has a free slot."""
+        """Make offers until no request waits or no available specialist has a free slot. Expired offers first."""
+        self._expire()
         while self._offer_next():
             pass
 
@@ -1346,44 +1513,59 @@ class CaseStore:
 
         One transaction (ADR 0001). The available specialists' rows are locked first, always in the same
         order, so two runs never deadlock, and a run that waits on them then sees the request, the free
-        slot, or the specialist that made it wait. The request is claimed with SKIP LOCKED, and live chats
-        are counted only under the locks, so two offers never both take a specialist's last slot.
+        slot, or the specialist that made it wait. Live chats are counted only under the locks, so two
+        offers never both take a specialist's last slot, and the request is claimed with SKIP LOCKED.
+        Available means the desk checked in recently, and nobody is offered a request they missed (issue #139).
         """
         now = self._clock.now()
         with self._pool.connection() as conn:
             locked = conn.execute(
-                "SELECT staff_id FROM specialist_availability WHERE state = 'available' ORDER BY staff_id FOR UPDATE"
+                """
+                SELECT staff_id FROM specialist_availability
+                WHERE state = 'available' AND last_seen >= %s
+                ORDER BY staff_id FOR UPDATE
+                """,
+                (now - self._check_in_window,),
             ).fetchall()
             if not locked:
                 return False
-            request = conn.execute(
-                """
-                SELECT id FROM live_chat_requests WHERE status = 'waiting'
-                ORDER BY queued_at, id
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED
-                """
-            ).fetchone()
-            if request is None:
-                return False
             # A new statement after the locks, so the count includes every offer committed before them.
-            chosen = conn.execute(
+            free = conn.execute(
                 """
-                SELECT a.staff_id FROM specialist_availability a
+                SELECT a.staff_id, a.capacity - count(r.id) AS spare FROM specialist_availability a
                 LEFT JOIN live_chat_requests r ON r.staff_id = a.staff_id AND r.status IN ('offered', 'active')
                 WHERE a.staff_id = ANY(%s)
                 GROUP BY a.staff_id, a.capacity
                 HAVING count(r.id) < a.capacity
-                ORDER BY a.capacity - count(r.id) DESC, a.staff_id
-                LIMIT 1
                 """,
                 ([row["staff_id"] for row in locked],),
-            ).fetchone()
-            if chosen is None:
+            ).fetchall()
+            if not free:
                 return False
+            # The oldest request that at least one of them has not missed.
+            request = conn.execute(
+                """
+                SELECT id, missed_by FROM live_chat_requests
+                WHERE status = 'waiting' AND NOT missed_by @> %s
+                ORDER BY queued_at, id
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+                """,
+                ([row["staff_id"] for row in free],),
+            ).fetchone()
+            if request is None:
+                return False
+            chosen = min(
+                (row for row in free if row["staff_id"] not in request["missed_by"]),
+                key=lambda row: (-row["spare"], row["staff_id"]),
+            )
             conn.execute(
-                "UPDATE live_chat_requests SET status = 'offered', staff_id = %s, offered_at = %s WHERE id = %s",
-                (chosen["staff_id"], now, request["id"]),
+                """
+                UPDATE live_chat_requests
+                SET status = 'offered', staff_id = %s, offered_at = %s, offer_expires_at = %s, offers = offers + 1
+                WHERE id = %s
+                """,
+                (chosen["staff_id"], now, now + self._offer_window, request["id"]),
             )
             _audit(conn, chosen["staff_id"], "live_chat_offered", now)
             conn.commit()

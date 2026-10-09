@@ -272,3 +272,35 @@ test("a customer talks to a specialist in a live chat, and the specialist resolv
   await specialistContext.close();
   await leadContext.close();
 });
+
+test("a specialist declines a live chat offer, and the customer keeps waiting", async ({ page, browser }) => {
+  const customer = page;
+  const specialistContext = await browser.newContext();
+  const specialist = await specialistContext.newPage();
+
+  // Jon Hale's last live chat was resolved above, so asking for a person starts a new case.
+  await customer.goto("/chat");
+  await customer.getByLabel("Order id").fill("NS-1002");
+  await customer.getByLabel("Email").fill("jon.hale@northstar.example");
+  await customer.getByRole("button", { name: "Start chat" }).click();
+  await customer.getByRole("button", { name: "Talk to a person" }).click();
+  await expect(customer.getByText("Waiting for a person.")).toBeVisible();
+
+  // Avery is still available from the test above, so the offer goes to Avery.
+  await signIn(specialist, "specialist@northstar.example", "northstar-specialist");
+  const offer = specialist.getByRole("article").filter({ hasText: "Jon Hale asked to talk to a person." });
+  await expect(offer).toBeVisible();
+  await expect(offer.getByRole("button", { name: "Decline" })).toBeVisible();
+  await noViolations(specialist);
+  await offer.getByRole("button", { name: "Decline" }).click();
+  await expect(specialist.getByText("Offer declined. It goes to the next specialist.")).toBeVisible();
+  await expect(offer).toHaveCount(0);
+  await noViolations(specialist);
+
+  // No other specialist is available, and Avery is not offered it again: the customer still waits.
+  await customer.reload();
+  await expect(customer.getByText("Waiting for a person.")).toBeVisible();
+  await expect(specialist.getByText("No live chat is offered to you.")).toBeVisible();
+
+  await specialistContext.close();
+});

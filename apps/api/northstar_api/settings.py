@@ -21,5 +21,12 @@ class Settings(BaseSettings):
     # Live chat with a specialist (issue #138). Off by default: no live chat route or control,
     # and the chat behaves as before.
     live_agents_enabled: bool = False
+    # Live chat offers (issue #139): seconds to accept an offer, offers before the customer may leave a
+    # message instead, missed offers in a row before a specialist is set to Away, and how recently a
+    # desk must have checked in for its specialist to get offers.
+    offer_accept_seconds: float = Field(default=45, gt=0)
+    offers_before_leave_message: int = Field(default=3, ge=1)
+    missed_offers_before_away: int = Field(default=2, ge=1)
+    desk_check_in_seconds: float = Field(default=60, gt=0)
     # Google single sign-on is on when this is set (issue #78). The same variable the console reads.
     google_client_id: str = Field(default="", validation_alias=AliasChoices("AUTH_GOOGLE_ID", "google_client_id"))

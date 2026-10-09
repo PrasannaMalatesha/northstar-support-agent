@@ -110,7 +110,7 @@ def test_with_the_setting_off_no_live_chat_route_works(client):
     assert client.post("/chat/renew", headers=chat).status_code == 404
     assert client.post("/presence", headers=avery, json={"state": "available"}).status_code == 404
     assert client.get("/live", headers=avery).status_code == 404
-    for action in ("accept", "messages", "resolve", "escalate"):
+    for action in ("accept", "decline", "messages", "resolve", "escalate"):
         assert client.post(f"/live/{uuid.uuid4()}/{action}", headers=avery, json={}).status_code == 404
 
 
@@ -125,7 +125,7 @@ def test_a_customer_talks_to_a_specialist_who_resolves_the_case(client, monkeypa
     assert client.post("/chat/live", headers=chat).status_code == 200
     assert len(_requests()) == 1
     assert _say(client, chat, "How long is the return window?")["messages"][-1]["role"] == "assistant"
-    assert client.get("/live", headers=avery).json() == {"state": "away", "offers": [], "chats": []}
+    assert client.get("/live", headers=avery).json() == {"state": "away", "auto_away_at": None, "offers": [], "chats": []}
 
     client.post("/presence", headers=avery, json={"state": "available"})
     live = client.get("/live", headers=avery).json()
@@ -237,15 +237,15 @@ def test_the_most_spare_capacity_gets_the_offer_and_an_ended_chat_frees_a_slot(c
 
     # Sam has two free slots and Avery one, so Sam gets the next request.
     client.post("/presence", headers=sam, json={"state": "available"})
-    clock.advance(minutes=1)
+    clock.advance(seconds=1)
     client.post("/chat/live", headers=jon)
     assert [offer["customer"] for offer in client.get("/live", headers=sam).json()["offers"]] == ["Jon Hale"]
 
     # Avery goes away: Sam takes the next request too, and the one after waits for a free slot.
     client.post("/presence", headers=avery, json={"state": "away"})
-    clock.advance(minutes=1)
+    clock.advance(seconds=1)
     client.post("/chat/live", headers=third)
-    clock.advance(minutes=1)
+    clock.advance(seconds=1)
     client.post("/chat/live", headers=fourth)
     assert [offer["customer"] for offer in client.get("/live", headers=sam).json()["offers"]] == ["Jon Hale", "Live Customer0"]
     assert client.get("/chat/state", headers=fourth).json()["live"]["status"] == "waiting"
