@@ -132,6 +132,7 @@ def create_app(
         longest_wait_minutes=settings.longest_wait_minutes,
         wait_history_days=settings.wait_history_days,
         wait_history_chats=settings.wait_history_chats,
+        quiet_minutes=(settings.quiet_nudge_minutes, settings.quiet_idle_minutes, settings.quiet_close_minutes),
     )
     cases.ensure_schema()
 

@@ -11,6 +11,8 @@ type LiveChat = {
   id: string;
   case_id: string;
   customer: string;
+  // The customer went quiet, so the chat no longer takes a slot (issue #142).
+  idle: boolean;
   messages: { role: string; name?: string; text: string }[];
   // The status line the customer sees, such as "Nothing is approved yet".
   status: string;
@@ -144,47 +146,57 @@ export default async function LiveChatPage({
           ))}
         </ol>
       </section>
-      <form action={sendAction}>
-        <input type="hidden" name="id" value={chat.id} />
-        <label>
-          Your reply
-          <textarea name="text" required maxLength={2000} />
-        </label>
-        <button type="submit">Send</button>
-      </form>
-      <form action={raiseAction}>
-        <input type="hidden" name="id" value={chat.id} />
-        <label>
-          Action for a lead
-          <input
-            name="request"
-            type="text"
-            required
-            maxLength={2000}
-            placeholder="Refund order NS-1001"
-            aria-describedby="action-help"
-          />
-        </label>
-        <p className="quiet" id="action-help">
-          The handbook rules set the amount, and a lead approves it. The customer sees only that nothing is approved yet.
+      {chat.idle ? (
+        <p role="status">
+          {chat.customer} went quiet, so this live chat is idle and your slot is free. It comes back to you if they
+          write while you have a slot, and it closes if they stay quiet.
         </p>
-        <button type="submit">Raise action</button>
-      </form>
-      <form action={endAction}>
-        <input type="hidden" name="id" value={chat.id} />
-        <button type="submit" name="outcome" value="resolve">
-          Resolve
-        </button>
-      </form>
-      <form action={endAction}>
-        <input type="hidden" name="id" value={chat.id} />
-        <input type="hidden" name="outcome" value="escalate" />
-        <label>
-          Handoff note
-          <textarea name="note" required maxLength={2000} />
-        </label>
-        <button type="submit">Escalate</button>
-      </form>
+      ) : (
+        <>
+          <form action={sendAction}>
+            <input type="hidden" name="id" value={chat.id} />
+            <label>
+              Your reply
+              <textarea name="text" required maxLength={2000} />
+            </label>
+            <button type="submit">Send</button>
+          </form>
+          <form action={raiseAction}>
+            <input type="hidden" name="id" value={chat.id} />
+            <label>
+              Action for a lead
+              <input
+                name="request"
+                type="text"
+                required
+                maxLength={2000}
+                placeholder="Refund order NS-1001"
+                aria-describedby="action-help"
+              />
+            </label>
+            <p className="quiet" id="action-help">
+              The handbook rules set the amount, and a lead approves it. The customer sees only that nothing is
+              approved yet.
+            </p>
+            <button type="submit">Raise action</button>
+          </form>
+          <form action={endAction}>
+            <input type="hidden" name="id" value={chat.id} />
+            <button type="submit" name="outcome" value="resolve">
+              Resolve
+            </button>
+          </form>
+          <form action={endAction}>
+            <input type="hidden" name="id" value={chat.id} />
+            <input type="hidden" name="outcome" value="escalate" />
+            <label>
+              Handoff note
+              <textarea name="note" required maxLength={2000} />
+            </label>
+            <button type="submit">Escalate</button>
+          </form>
+        </>
+      )}
       <Refresh />
     </main>
   );
