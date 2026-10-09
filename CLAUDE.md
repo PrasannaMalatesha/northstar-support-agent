@@ -73,7 +73,7 @@ Slice 2 (P1) is built and merged into `dev` (PRs #85 to #96). Every sub-issue of
 
 Slice 2 labeled desk cases are in `SLICE2_CASES` (`evals/labeled.py`), a new dataset version beside the frozen 40.
 
-Slice 3 ([#65](https://github.com/PrasannaMalatesha/northstar-support-agent/issues/65), sub-issues #78 to #81) is next only when Malatesha asks. Its rule is "after slice 2 is in use". #79 (customer chat) still has no `ready-for-agent` label: `prd.md` must first decide how a customer identifies themselves in the chat. Do not create more tickets unless asked.
+Slice 3 ([#65](https://github.com/PrasannaMalatesha/northstar-support-agent/issues/65), sub-issues #78 to #81) is done and closed. The update phase is spec #131 with tickets #132 to #145, built on the branch `feature/update-phase`. Do not create more tickets unless asked.
 
 Seed orders for demos (customer Mira Shah). Dates hold for the tests' fixed clock (2026-10-06) and a few days after:
 - **NS-1001**, wool coat, delivered: refund, exchange to L, defect inside the window.
