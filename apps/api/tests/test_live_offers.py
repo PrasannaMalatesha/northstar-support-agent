@@ -5,6 +5,7 @@ Expiry is noticed whenever the line is read, with no scheduler (ADR 0001), so th
 
 import pytest
 from conftest import TEST_URL
+from northstar.cases import LINE_REFUSED_TEXT
 from northstar.identity.postgres import PostgresIdentityStore
 from northstar.identity.service import hash_password, staff_id_for
 from psycopg.rows import dict_row
@@ -110,9 +111,9 @@ def test_after_three_offers_the_customer_is_offered_to_leave_a_message_which_rea
     chat = _chat(client)
     specialists = [_avery(client), _sam(client), _staff(client, LEE, "northstar-third")]
     _say(client, chat, "How long may apparel and footwear be returned?")
-    client.post("/chat/live", headers=chat)
     for staff in specialists:
         client.post("/presence", headers=staff, json={"state": "available"})
+    client.post("/chat/live", headers=chat)
 
     # First offer declined, second not accepted in time, third declined.
     first = _holder(client, specialists)
@@ -128,7 +129,7 @@ def test_after_three_offers_the_customer_is_offered_to_leave_a_message_which_rea
     assert all(_offers(client, staff) == [] for staff in specialists)
     assert _request()["status"] == "unanswered" and _request()["offers"] == 3
     assert client.get("/chat/state", headers=chat).json() == {"offer": "leave_message", "live_enabled": True, "live": None}
-    assert client.get("/chat", headers=chat).json()["status"] == "No specialist could take your chat just now."
+    assert client.get("/chat", headers=chat).json()["status"] == LINE_REFUSED_TEXT
     assert _live_events()[-2:] == ["live_chat_declined", "live_chat_unanswered"]
 
     left = client.post("/chat/leave-message", headers=chat, json={"text": "Please call me about my coat."})

@@ -128,6 +128,10 @@ def create_app(
         offers_before_message=settings.offers_before_leave_message,
         missed_offers_before_away=settings.missed_offers_before_away,
         check_in_seconds=settings.desk_check_in_seconds,
+        line_gone_minutes=settings.line_gone_minutes,
+        longest_wait_minutes=settings.longest_wait_minutes,
+        wait_history_days=settings.wait_history_days,
+        wait_history_chats=settings.wait_history_chats,
     )
     cases.ensure_schema()
 
@@ -433,7 +437,15 @@ def create_app(
                 cases.request_live(customer_id)
             except CaseClosed as exc:
                 raise HTTPException(status_code=409, detail="A person on our team is reviewing your request.") from exc
+            # Turned away, `live` is null and /chat/state offers to leave a message (R41).
             return {"live": cases.live_state(customer_id)}
+
+        @app.delete("/chat/live")
+        def leave_line(customer_id=Depends(customer_from_token)) -> dict:
+            # The customer can leave the line at any time and go back to the agent (issue #140).
+            if not cases.leave_line(customer_id):
+                raise HTTPException(status_code=409, detail="You are not waiting for a person.")
+            return {"live": None}
 
         @app.post("/chat/renew")
         def renew_chat(customer_id=Depends(customer_from_token)) -> dict:
