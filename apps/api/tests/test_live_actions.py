@@ -43,8 +43,9 @@ def _say(client, chat, question: str) -> dict:
 
 
 def _accepted(client, chat, specialist) -> str:
-    assert client.post("/chat/live", headers=chat).status_code == 200
+    # Available first: with nobody available, the line turns the customer away (issue #140).
     client.post("/presence", headers=specialist, json={"state": "available"})
+    assert client.post("/chat/live", headers=chat).status_code == 200
     offer = client.get("/live", headers=specialist).json()["offers"][0]["id"]
     assert client.post(f"/live/{offer}/accept", headers=specialist).status_code == 200
     return offer

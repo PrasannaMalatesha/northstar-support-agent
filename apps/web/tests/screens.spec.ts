@@ -328,6 +328,14 @@ test("a specialist raises a refund in a live chat, and only a lead approves it",
   const specialist = await specialistContext.newPage();
   const lead = await leadContext.newPage();
 
+  // Available first: with nobody available, the line turns the customer away.
+  await signIn(specialist, "specialist@northstar.example", "northstar-specialist");
+  const setAvailable = specialist.getByRole("button", { name: "Set Available" });
+  if (await setAvailable.count()) {
+    await setAvailable.click();
+  }
+  await expect(specialist.getByRole("button", { name: "Set Away" })).toBeVisible();
+
   // Jon Hale again: his live chat above is resolved, so asking for a person starts a new case.
   await customer.goto("/chat");
   await customer.getByLabel("Order id").fill("NS-1002");
@@ -335,11 +343,6 @@ test("a specialist raises a refund in a live chat, and only a lead approves it",
   await customer.getByRole("button", { name: "Start chat" }).click();
   await customer.getByRole("button", { name: "Talk to a person" }).click();
 
-  await signIn(specialist, "specialist@northstar.example", "northstar-specialist");
-  const setAvailable = specialist.getByRole("button", { name: "Set Available" });
-  if (await setAvailable.count()) {
-    await setAvailable.click();
-  }
   const offer = specialist.getByRole("article").filter({ hasText: "Jon Hale asked to talk to a person." });
   await offer.getByRole("button", { name: "Accept" }).click();
   await expect(specialist.getByRole("heading", { name: "Live chat with Jon Hale" })).toBeVisible();
