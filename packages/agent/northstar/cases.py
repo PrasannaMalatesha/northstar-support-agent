@@ -37,6 +37,7 @@ REQUEST_LIMIT_TEXT = (
     "This account has hit the request limit. The case is still here. Try again later."
 )
 QUOTA_TEXT = "The daily quota is reached. This case is still here."
+COME_BACK_TEXT = "Come back to this chat with the same order id and email to read the reply."
 UNBOUND_ORDER_TEXT = "Pick a customer first. No order was read."
 SAFE_REPLY = (
     "I can't continue with that message. "
@@ -147,6 +148,8 @@ CREATE TABLE IF NOT EXISTS daily_limits (
     tokens integer NOT NULL DEFAULT 0,
     PRIMARY KEY (limit_key, day)
 );
+ALTER TABLE cases ADD COLUMN IF NOT EXISTS assigned_to uuid REFERENCES staff_users (id);
+ALTER TABLE case_messages ADD COLUMN IF NOT EXISTS staff_id uuid REFERENCES staff_users (id);
 """
 
 
@@ -168,6 +171,18 @@ class AmountNotEditable(Exception):
 
 class AmountOutOfBounds(Exception):
     """The edited amount is above the order total."""
+
+
+class NotInInbox(Exception):
+    """The case is not escalated, so the escalations inbox does not hold it."""
+
+
+class AlreadyPickedUp(Exception):
+    """Another specialist picked up this escalated case first."""
+
+
+class NotYours(Exception):
+    """Only the specialist who picked up an escalated chat case replies on it."""
 
 
 class CaseStore:
@@ -903,7 +918,7 @@ class CaseStore:
         if row["status"] == "Waiting for approval":
             status = "A person on our team is reviewing your request. Nothing is approved yet."
         elif row["status"] == "Escalated":
-            status = "A specialist will follow up with you."
+            status = f"A specialist will follow up with you. {COME_BACK_TEXT}"
         elif ticket:
             status = f"Our team approved your request. Reference {ticket}."
         elif row["rejection_reason"]:
@@ -911,13 +926,116 @@ class CaseStore:
         else:
             status = ""
         messages, spanish = [], False
-        for m in self._messages(case_id):
+        for m in self._chat_messages(case_id):
             if m["role"] == "user":
                 spanish = is_spanish(m["body"])
                 messages.append({"role": "user", "text": m["body"]})
+            elif m["role"] == "specialist":
+                # A person's words, screened when saved. Never swapped for a fixed text.
+                messages.append({"role": "specialist", "name": m["name"], "text": m["body"]})
             else:
                 messages.append({"role": m["role"], "text": _for_customer(m["decision"], m["body"], spanish)})
         return {"status": status, "messages": messages}
+
+    def _chat_messages(self, case_id: uuid.UUID) -> list:
+        """The case's messages, plus specialist replies on the customer's other chat cases.
+
+        A customer who wrote again after an escalation is on a new case, and still sees the reply.
+        """
+        with self._pool.connection() as conn:
+            return conn.execute(
+                """
+                SELECT m.role, m.body, m.decision, split_part(staff_users.name, ' ', 1) AS name
+                FROM case_messages m
+                JOIN cases c ON c.id = m.case_id
+                JOIN cases this ON this.id = %s
+                LEFT JOIN staff_users ON staff_users.id = m.staff_id
+                WHERE m.case_id = this.id
+                   OR (m.role = 'specialist' AND c.customer_id = this.customer_id AND c.staff_id = this.staff_id)
+                ORDER BY m.id
+                """,
+                (case_id,),
+            ).fetchall()
+
+    # Escalations inbox (R38): every escalated case with its handoff, from the desk or the chat.
+    # A left message becomes an escalated chat case, so it lands here too.
+
+    def inbox(self, staff_id: uuid.UUID, lead: bool) -> list[dict]:
+        """Leads see every item. A specialist sees the items nobody picked up, and their own."""
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT cases.id, cases.staff_id = %s AS chat, cases.handoff_text, cases.created_at,
+                       cases.assigned_to, owner.name AS owner, customers.name AS customer
+                FROM cases
+                LEFT JOIN staff_users owner ON owner.id = cases.assigned_to
+                LEFT JOIN customers ON customers.id = cases.customer_id
+                WHERE cases.status = 'Escalated'
+                  AND (%s OR cases.assigned_to IS NULL OR cases.assigned_to = %s)
+                ORDER BY cases.created_at, cases.id
+                """,
+                (staff_id_for(CHAT_STAFF_EMAIL), lead, staff_id),
+            ).fetchall()
+            replies = conn.execute(
+                """
+                SELECT case_id, body, created_at FROM case_messages
+                WHERE role = 'specialist' AND case_id = ANY(%s)
+                ORDER BY id
+                """,
+                ([row["id"] for row in rows],),
+            ).fetchall()
+        return [
+            {
+                "case_id": str(row["id"]),
+                "source": "chat" if row["chat"] else "desk",
+                "customer": row["customer"],
+                "handoff": row["handoff_text"],
+                "opened_at": _iso(row["created_at"]),
+                "assigned_to": row["owner"],
+                "mine": row["assigned_to"] == staff_id,
+                "replies": [
+                    {"text": reply["body"], "created_at": _iso(reply["created_at"])}
+                    for reply in replies
+                    if reply["case_id"] == row["id"]
+                ],
+            }
+            for row in rows
+        ]
+
+    def pick_up(self, staff_id: uuid.UUID, case_id: uuid.UUID) -> None:
+        """Assign an escalated case to one specialist. The check is in the update, so only one can win."""
+        with self._pool.connection() as conn:
+            won = conn.execute(
+                """
+                UPDATE cases SET assigned_to = %s
+                WHERE id = %s AND status = 'Escalated' AND (assigned_to IS NULL OR assigned_to = %s)
+                RETURNING id
+                """,
+                (staff_id, case_id, staff_id),
+            ).fetchone()
+            conn.commit()
+        if won is None:
+            row = self._case_row(case_id)
+            raise AlreadyPickedUp() if row is not None and row["status"] == "Escalated" else NotInInbox()
+
+    def reply(self, staff_id: uuid.UUID, case_id: uuid.UUID, text: str) -> None:
+        """A specialist's reply on a chat case they picked up. It is screened and shown to the customer as written.
+
+        The case stays Escalated, so no agent turn or proposal follows on it (R30).
+        """
+        with self._pool.connection() as conn:
+            saved = conn.execute(
+                """
+                INSERT INTO case_messages (case_id, role, body, staff_id, created_at)
+                SELECT id, 'specialist', %s, %s, %s FROM cases
+                WHERE id = %s AND status = 'Escalated' AND assigned_to = %s AND staff_id = %s
+                RETURNING id
+                """,
+                (screen(text.strip()), staff_id, self._clock.now(), case_id, staff_id, staff_id_for(CHAT_STAFF_EMAIL)),
+            ).fetchone()
+            conn.commit()
+        if saved is None:
+            raise NotYours()
 
     def _resume(self, case_id: uuid.UUID, decision: str) -> None:
         resume_turn(graph_for(self._pool.conninfo), str(case_id), decision)

@@ -7,7 +7,14 @@ import { apiUrl, sameSite } from "../same-site";
 // The chat token lives in an httpOnly cookie, so browser code never reads it.
 const COOKIE = "northstar_chat";
 
-type ChatView = { status: string; messages: { role: string; text: string }[] };
+type ChatView = { status: string; messages: { role: string; name?: string; text: string }[] };
+
+function speaker(message: ChatView["messages"][number]): string {
+  if (message.role === "user") {
+    return "You";
+  }
+  return message.role === "specialist" ? `${message.name}, Northstar specialist` : "Northstar";
+}
 
 async function chatToken(): Promise<string | null> {
   return (await cookies()).get(COOKIE)?.value ?? null;
@@ -115,7 +122,7 @@ export default async function ChatPage({ searchParams }: { searchParams: Promise
         <ol>
           {view.messages.map((message, index) => (
             <li key={index}>
-              <strong>{message.role === "user" ? "You" : "Northstar"}:</strong> {message.text}
+              <strong>{speaker(message)}:</strong> {message.text}
             </li>
           ))}
         </ol>
