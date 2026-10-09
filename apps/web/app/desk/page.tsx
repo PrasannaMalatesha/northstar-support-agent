@@ -247,6 +247,16 @@ const LIVE_NOTES: Record<string, string> = {
   escalated: "Live chat escalated. It is in the escalations inbox.",
 };
 
+// The lead's view of the line (R49). Alerts are read-only: nothing is reassigned from here.
+type LineAlert =
+  | { kind: "unanswered"; case_id: string; customer: string; offers: number }
+  | { kind: "no_reply"; case_id: string; customer: string; specialist: string; waiting_seconds: number };
+
+function minutes(seconds: number): string {
+  const whole = Math.floor(seconds / 60);
+  return whole < 1 ? "less than a minute" : whole === 1 ? "1 minute" : `${whole} minutes`;
+}
+
 const INBOX_NOTES: Record<string, string> = {
   taken: "Another specialist picked this up first.",
   gone: "That case is no longer in the inbox.",
@@ -382,6 +392,25 @@ export default async function DeskPage({
       : null;
   const liveNote = params.live ? LIVE_NOTES[params.live] : undefined;
 
+  // The line (issue #144). The API answers a lead, and only while live chat is on.
+  const line =
+    session.user.role === "lead" && !viewing
+      ? await fetch(`${apiUrl}/line`, {
+          headers: { Authorization: `Bearer ${access}` },
+          cache: "no-store",
+        }).then(async (lineResponse) =>
+          lineResponse.ok
+            ? ((await lineResponse.json()) as {
+                available: number;
+                line_length: number;
+                longest_wait_seconds: number | null;
+                average_chat_minutes: number | null;
+                alerts: LineAlert[];
+              })
+            : null,
+        )
+      : null;
+
   const current = (await response.json()) as {
     status: string;
     stale: boolean;
@@ -460,6 +489,41 @@ export default async function DeskPage({
               </form>
             </article>
           ))}
+        </section>
+      ) : null}
+      {line ? (
+        <section>
+          <h2>Line</h2>
+          <ul>
+            <li>Specialists available: {line.available}</li>
+            <li>Customers in line: {line.line_length}</li>
+            <li>
+              Longest wait:{" "}
+              {line.longest_wait_seconds === null ? "nobody is waiting" : minutes(line.longest_wait_seconds)}
+            </li>
+            <li>
+              Average chat length:{" "}
+              {line.average_chat_minutes === null
+                ? "too few recent live chats to tell"
+                : minutes(line.average_chat_minutes * 60)}
+            </li>
+          </ul>
+          <h3>Alerts</h3>
+          {line.alerts.length === 0 ? (
+            <p>No alerts.</p>
+          ) : (
+            <ul>
+              {line.alerts.map((alert) => (
+                <li key={`${alert.kind}-${alert.case_id}`}>
+                  {alert.kind === "unanswered"
+                    ? `${alert.customer}'s request was offered ${alert.offers} times, and nobody accepted. The chat offers to leave a message.`
+                    : `${alert.customer} has waited ${minutes(alert.waiting_seconds)} for ${alert.specialist}'s reply. The chat stays with ${alert.specialist}.`}{" "}
+                  <a href={`/desk?case=${alert.case_id}`}>Open {alert.customer}&apos;s case</a>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Refresh />
         </section>
       ) : null}
       {live ? (

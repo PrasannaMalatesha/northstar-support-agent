@@ -23,7 +23,8 @@ export default defineConfig({
       timeout: 120_000,
       reuseExistingServer: false,
       // Live chat is on here, so the suite covers it and every older screen with it on (issue #138).
-      env: { ...env, DATABASE_URL: databaseUrl, LIVE_AGENTS_ENABLED: "true" },
+      // A quiet specialist is flagged to the lead after 3 seconds, not 2 minutes, so the lead's alert shows (issue #144).
+      env: { ...env, DATABASE_URL: databaseUrl, LIVE_AGENTS_ENABLED: "true", QUIET_SPECIALIST_MINUTES: "0.05" },
     },
     {
       command: "npm run dev -- --hostname 127.0.0.1 --port 3100",
