@@ -15,7 +15,7 @@ from psycopg import sql
 
 from northstar.actions import FAMILIES, PROPOSALS, Order, Proposal, Reply, family_decisions, gated, order_id as _order_id
 from northstar.clock import Clock
-from northstar.escalate import handoff, left_message, manual_handoff
+from northstar.escalate import asks_for_person, handoff, left_message, manual_handoff
 from northstar.graph import TurnTools, resume_turn, run_turn
 from northstar.identity.seed import CHAT_STAFF_EMAIL
 from northstar.identity.service import staff_id_for
@@ -25,7 +25,7 @@ from northstar.photo import describe
 from northstar.agent_model import handbook_reply, turn_deadline
 from northstar.handbook import ABSTAIN_TEXT, Draft, guard_draft
 from northstar import online
-from northstar.online import record_edit, record_judge
+from northstar.online import NO_HANDOFF, record_edit, record_judge
 from northstar.preferences import recall, remember, stated
 from northstar.retrieve import retrieved_answer
 from northstar.privacy import SECRET_REPLY, has_secret, screen
@@ -55,6 +55,10 @@ _LAST_WORD = """
 """
 # Turns that did not help the customer. Enough of them in a row and the chat offers a person (R35).
 FAILED_DECISIONS = ("ask_clarification", "abstain", "lookup_failed")
+# The customer asked for a person in their own words (R39). The chat offers one, and the customer decides.
+PERSON_REQUESTED = "person_requested"
+PERSON_TEXT = "A specialist can reply in this chat. Leave a message for them below."
+PERSON_TEXT_LIVE = "A specialist can join this chat. Choose Talk to a person below."
 UNBOUND_ORDER_TEXT = "Pick a customer first. No order was read."
 SAFE_REPLY = (
     "I can't continue with that message. "
@@ -530,6 +534,9 @@ class CaseStore:
         note = seen.line if seen else ("Photo: attached, but it could not be described." if photo else "")
         asked_with = f"{question}\n[Photo attached]" if photo else question
         self._remember_preferences(case_id, asked, now)
+        # A customer chat turn records why it handed over on its root run (issue #145). A desk turn does not:
+        # a specialist reads every desk draft, so a person is always there.
+        handover = (lambda decision: self._handover_reason(case_id, decision)) if chat_customer is not None else None
         escalated = handoff(asked, self._tried(case_id))
         if escalated is not None:
             section, text = escalated.section, escalated.text
@@ -538,17 +545,34 @@ class CaseStore:
             # Through the graph, so the escalation has a LangGraph trace for the safety rule and the judge.
             fixed = Draft("escalate", text, (section,), {section: "strong"}, ())
             tools = TurnTools(refund=lambda _text: fixed, support=lambda _text: fixed)
-            return self._save(case_id, asked_with, reply(_noted(self._turn(case_id, asked, tools), note)), now, by)
+            return self._save(case_id, asked_with, reply(_noted(self._turn(case_id, asked, tools, handover), note)), now, by)
         if _blocked(question) or _blocked(asked):
             return self._save(case_id, asked_with, reply(_plain("safe", SAFE_REPLY)), now, by)
+        if chat_customer is not None and asks_for_person(asked):
+            # The chat offers a person, as after failed turns (R35, R39). Through the graph, like an escalation,
+            # so the root run records the hand-over.
+            fixed = _plain(PERSON_REQUESTED, PERSON_TEXT_LIVE if self._live_chats else PERSON_TEXT)
+            tools = TurnTools(refund=lambda _text: fixed, support=lambda _text: fixed)
+            return self._save(case_id, asked_with, reply(self._turn(case_id, asked, tools, handover)), now, by)
         tools = TurnTools(
             refund=lambda text: self._gated_draft(case_id, staff_id, text, now, note),
             support=lambda text: self._support_draft(case_id, key, text, now),
         )
-        return self._save(case_id, asked_with, reply(_noted(self._turn(case_id, asked, tools), note)), now, by)
+        return self._save(case_id, asked_with, reply(_noted(self._turn(case_id, asked, tools, handover), note)), now, by)
 
-    def _turn(self, case_id: uuid.UUID, question: str, tools: TurnTools) -> Draft:
-        return run_turn(question, tools, graph=graph_for(self._pool.conninfo), thread_id=str(case_id))
+    def _turn(self, case_id: uuid.UUID, question: str, tools: TurnTools, handover=None) -> Draft:
+        return run_turn(question, tools, graph=graph_for(self._pool.conninfo), thread_id=str(case_id), handoff=handover)
+
+    def _handover_reason(self, case_id: uuid.UUID, decision: str) -> str:
+        """Why the agent handed this chat turn's customer to a person, or "none" (issue #145).
+
+        "escalated" for a handbook escalation. "requested" or "three_failures" when the chat offers a person
+        after this turn, which is not saved yet. A press of a chat button has no turn: the line row keeps its
+        reason, and a left message is its own decision on the case.
+        """
+        if decision == "escalate":
+            return "escalated"
+        return self._person_offer(case_id, decision) or NO_HANDOFF
 
     def _save(self, case_id: uuid.UUID, question: str, draft: Draft, now: datetime, by: uuid.UUID | None = None) -> dict:
         """Save the question and the draft. `by` marks a specialist's turn on a chat case, which the customer does not see."""
@@ -1104,12 +1128,12 @@ class CaseStore:
         """What the chat offers beside the agent, or None.
 
         "leave_message" when the line turned the customer away (R41) or no specialist accepted the last
-        offer of a live chat (issue #139). After failed turns in a row (R35): "talk_to_person" with live
-        chat on (issue #141), else "leave_message".
+        offer of a live chat (issue #139). After failed turns in a row (R35), or when the customer asked for a
+        person (R39): "talk_to_person" with live chat on (issue #141), else "leave_message".
         """
         if self._left_line(case_id) in ("refused", "unanswered"):
             return "leave_message"
-        if self._failing(case_id):
+        if self._person_offer(case_id):
             return "talk_to_person" if self._live_chats else "leave_message"
         return None
 
@@ -1124,7 +1148,7 @@ class CaseStore:
             raise NoOffer()
         unanswered = self._left_line(case_id) == "unanswered"
         message = screen(text.strip())
-        packet = self._left_message_packet(case_id, message, unanswered)
+        packet = self._left_message_packet(case_id, message, unanswered, self._person_offer(case_id) == "requested")
         now = self._clock.now()
         with self._pool.connection() as conn:
             # The status check is in the update, so a message is left once even when two arrive together.
@@ -1153,29 +1177,42 @@ class CaseStore:
             conn.commit()
         return self._chat_view(case_id)
 
-    def _failing(self, case_id: uuid.UUID) -> bool:
-        """The case is open and its last agent turns all failed. One turn that helped resets the count.
+    def _person_offer(self, case_id: uuid.UUID, latest: str | None = None) -> str | None:
+        """Why the open case offers a person after the agent's turns, or None.
 
-        Not while the case is in the line or in a live chat, idle included: a person is already on the way
-        (issues #138 and #142).
+        "requested" when the last turn was the customer asking for a person (R39). "three_failures" when the
+        last turns all failed (R35); one turn that helped resets the count. `latest` is the decision of a turn
+        not saved yet. Not while the case is in the line or in a live chat, idle included: a person is
+        already on the way (issues #138 and #142).
         """
         with self._pool.connection() as conn:
-            rows = conn.execute(
+            row = conn.execute(
                 """
-                SELECT m.decision FROM case_messages m JOIN cases c ON c.id = m.case_id
-                WHERE m.case_id = %s AND m.role = 'assistant' AND c.status = 'Open'
-                  AND NOT EXISTS (
-                      SELECT 1 FROM live_chat_requests r
-                      WHERE r.case_id = c.id AND r.status IN ('waiting', 'offered', 'active', 'idle')
-                  )
-                ORDER BY m.id DESC
-                LIMIT %s
+                SELECT c.status = 'Open' AND NOT EXISTS (
+                           SELECT 1 FROM live_chat_requests r
+                           WHERE r.case_id = c.id AND r.status IN ('waiting', 'offered', 'active', 'idle')
+                       ) AS free,
+                       ARRAY(
+                           SELECT m.decision FROM case_messages m
+                           WHERE m.case_id = c.id AND m.role = 'assistant'
+                           ORDER BY m.id DESC
+                           LIMIT %s
+                       ) AS decisions
+                FROM cases c WHERE c.id = %s
                 """,
-                (case_id, self._failed_turns),
-            ).fetchall()
-        return len(rows) == self._failed_turns and all(row["decision"] in FAILED_DECISIONS for row in rows)
+                (self._failed_turns, case_id),
+            ).fetchone()
+        if row is None or not row["free"]:
+            return None
+        recent = ([latest] if latest else []) + list(row["decisions"])
+        if recent[:1] == [PERSON_REQUESTED]:
+            return "requested"
+        recent = recent[: self._failed_turns]
+        if len(recent) == self._failed_turns and all(decision in FAILED_DECISIONS for decision in recent):
+            return "three_failures"
+        return None
 
-    def _left_message_packet(self, case_id: uuid.UUID, message: str, unanswered: bool = False) -> str:
+    def _left_message_packet(self, case_id: uuid.UUID, message: str, unanswered: bool = False, asked: bool = False) -> str:
         """The handoff for a left message, with the questions and replies of the turns before it."""
         with self._pool.connection() as conn:
             rows = conn.execute(
@@ -1194,6 +1231,8 @@ class CaseStore:
         if unanswered:
             why = f"The customer asked for a person, and no specialist accepted after {self._offers_before_message} offers."
             return left_message(message, self._tried(case_id), recent, why).text
+        if asked:
+            return left_message(message, self._tried(case_id), recent, "The customer asked for a person.").text
         return left_message(message, self._tried(case_id), recent).text
 
     def _chat_messages(self, case_id: uuid.UUID) -> list:

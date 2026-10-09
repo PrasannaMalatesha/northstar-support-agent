@@ -55,7 +55,8 @@ test("login, the case desk, and the waiting list pass axe and the keyboard", asy
   await page.keyboard.type("Please refund order NS-1001.");
   await tabTo(page, "Ask");
   await page.keyboard.press("Enter");
-  await expect(page.getByText("Waiting for approval")).toBeVisible();
+  // A live refund turn calls the model. Under load it can pass the default 5 s, as the photo test allows for.
+  await expect(page.getByText("Waiting for approval")).toBeVisible({ timeout: 30_000 });
 
   await tabTo(page, "Log out");
   await page.keyboard.press("Enter");
