@@ -21,6 +21,18 @@ _CONFLICT = re.compile(
     r"\b(website|site|web page|ad|advert|another agent|your agent|last agent|a rep|chat)\b[^.]*\b(said|says|told|promised)\b",
     re.IGNORECASE,
 )
+# A customer who asks for a person in their own words (R39), not only with the button.
+# "Can someone else pick up my order?" is not one: it needs talk, speak, or chat, or want or need.
+_PERSON = re.compile(
+    r"\b(talk|speak|chat) (to|with) (a |an )?(real |live )?(person|human|agent|representative|rep|someone|somebody|specialist)\b"
+    r"|\b(want|need) (a |an )?(real |live )?(person|human|representative)\b"
+    r"|\b(real|live) (person|human)\b",
+    re.IGNORECASE,
+)
+
+
+def asks_for_person(question: str) -> bool:
+    return _PERSON.search(question) is not None
 
 
 @dataclass(frozen=True)

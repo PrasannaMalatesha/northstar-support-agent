@@ -5,6 +5,7 @@ import json
 import subprocess
 import uuid
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import langsmith
 import pytest
@@ -31,14 +32,60 @@ from evals.experiments import (
     status_correct,
     v0,
 )
-from evals.labeled import CASES, PHOTO_CASES, SLICE2_CASES, SPANISH_CASES
+from evals.labeled import CASES, HANDOVER_CASES, PHOTO_CASES, SLICE2_CASES, SPANISH_CASES
 
 
 def test_every_case_becomes_one_example_with_a_stable_id():
     rows = [e2e_example(case, "slice1") for case in CASES] + [e2e_example(case, "slice2") for case in SLICE2_CASES]
-    assert len({row["id"] for row in rows}) == len(CASES) + len(SLICE2_CASES)
+    rows += [e2e_example(case, "update-handover") for case in HANDOVER_CASES]
+    assert len({row["id"] for row in rows}) == len(CASES) + len(SLICE2_CASES) + len(HANDOVER_CASES)
     assert _example_id("apparel-window") == e2e_example(CASES[0], "slice1")["id"]
     assert {row["split"] for row in rows} == {"train_judge", "dev", "test"}
+
+
+class Datasets:
+    """LangSmith datasets in memory: examples by dataset, and each version tag in order."""
+
+    def __init__(self) -> None:
+        self.examples: dict[str, list[dict]] = {}
+        self.tags: list[str] = []
+
+    def has_dataset(self, dataset_name: str) -> bool:
+        return dataset_name in self.examples
+
+    def create_dataset(self, name: str, description: str):
+        self.examples[name] = []
+        return SimpleNamespace(id=name)
+
+    def read_dataset(self, dataset_name: str):
+        return SimpleNamespace(id=dataset_name)
+
+    def list_examples(self, dataset_id: str) -> list:
+        return [SimpleNamespace(id=row["id"]) for row in self.examples[dataset_id]]
+
+    def create_examples(self, dataset_id: str, examples: list[dict]) -> None:
+        self.examples[dataset_id] += examples
+
+    def list_dataset_versions(self, dataset_id: str, limit: int):
+        return iter([SimpleNamespace(as_of=len(self.examples[dataset_id]))])
+
+    def update_dataset_tag(self, dataset_id: str, as_of, tag: str) -> None:
+        self.tags.append(tag)
+
+
+def test_sync_publishes_the_handover_cases_under_their_own_tag():
+    client = Datasets()
+    experiments.sync(client)
+    assert client.tags == ["slice1", "slice2", "slice3-es", "slice3-photo", "update-handover"]
+    handover = [row for row in client.examples[experiments.E2E] if row["metadata"]["version"] == "update-handover"]
+    assert [row["metadata"]["case_id"] for row in handover] == [case["id"] for case in HANDOVER_CASES]
+    assert all(row["inputs"]["channel"] == "chat" and row["split"] == "dev" for row in handover)
+    assert {row["outputs"]["decision"] for row in handover} == {"talk_to_person", "leave_message", "none"}
+    # The frozen 40 keep their splits.
+    first = client.examples[experiments.E2E][: len(CASES)]
+    assert [row["split"] for row in first] == [case["split"] for case in CASES]
+    experiments.sync(client)  # stable ids: a second sync adds nothing and tags nothing
+    assert len(client.tags) == 5
 
 
 def test_the_judge_reference_is_the_gold_rule_or_the_abstain_text():

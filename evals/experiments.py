@@ -3,6 +3,7 @@
     uv run python -m evals.experiments sync
     uv run python -m evals.experiments run --split dev --no-upload
     uv run python -m evals.experiments run --split test --repetitions 3
+    uv run python -m evals.experiments run --split dev --tag update-handover --version update-handover --no-upload
     uv run python -m evals.experiments release
     uv run python -m evals.experiments promote <run_id> --decision answer --sections REF-CATEGORY
 
@@ -17,7 +18,8 @@ checks that file (evals/release_check.py), so no keys go into GitHub.
 An experiment is a dataset, a target, and evaluators:
 https://docs.langchain.com/langsmith/evaluate-complex-agent
 The targets are synchronous (v1 drives the desk through the API, one case at a time),
-so this uses client.evaluate, the sync form of aevaluate.
+so this uses client.evaluate, the sync form of aevaluate. A hand-over case (issue #145) drives
+the customer chat instead, and its decision is what the chat offers.
 """
 
 from __future__ import annotations
@@ -32,7 +34,16 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from evals.labeled import CASES, INTENT_CASES, PHOTO_CASES, SLICE2_CASES, SPANISH_CASES, judges_may_score_test, matches
+from evals.labeled import (
+    CASES,
+    HANDOVER_CASES,
+    INTENT_CASES,
+    PHOTO_CASES,
+    SLICE2_CASES,
+    SPANISH_CASES,
+    judges_may_score_test,
+    matches,
+)
 
 E2E = "Northstar Support: E2E"
 INTENT = "Northstar Support: Intent Classifier"
@@ -72,6 +83,11 @@ def e2e_example(case: dict, version: str) -> dict:
             "customer": case.get("customer"),
             "advance_days": case.get("advance_days", 0),
             **({"photo": photo_url(case["photo"])} if case.get("photo") else {}),
+            **(
+                {"channel": "chat", "order_id": case["order_id"], "earlier": list(case["earlier"]), "live": case["live"]}
+                if channel == "chat"
+                else {}
+            ),
         },
         "outputs": {
             "decision": case["decision"],
@@ -121,6 +137,7 @@ def sync(client) -> None:
     added += _add(client, E2E, about, [e2e_example(case, "slice2") for case in SLICE2_CASES], "slice2")
     added += _add(client, E2E, about, [e2e_example(case, "slice3-es") for case in SPANISH_CASES], "slice3-es")
     added += _add(client, E2E, about, [e2e_example(case, "slice3-photo") for case in PHOTO_CASES], "slice3-photo")
+    added += _add(client, E2E, about, [e2e_example(case, "update-handover") for case in HANDOVER_CASES], "update-handover")
     routes = _add(client, INTENT, "Hand-labeled routes. The latest user message decides.", [intent_example(case) for case in INTENT_CASES])
     print(f"{E2E}: {added} added. {INTENT}: {routes} added.")
 
@@ -143,6 +160,23 @@ def _meter():
         yield used
     used["seconds"] = round(time.perf_counter() - started, 3)
     used["tokens"] = sum(model["total_tokens"] for model in usage.usage_metadata.values())
+
+
+def chat_turns(client, inputs: dict) -> dict:
+    """A hand-over case in the customer chat (issue #145), through the chat API as a customer uses it.
+
+    The earlier turns set the case up, and only the last turn is timed. The decision is what the chat
+    offers after it: talk_to_person, leave_message, or none.
+    """
+    started = client.post("/chat/start", json={"order_id": inputs["order_id"], "email": inputs["customer"]})
+    chat = {"Authorization": f"Bearer {started.json()['chat_token']}"}
+    for earlier in inputs["earlier"]:
+        client.post("/chat/messages", headers=chat, json={"question": earlier})
+    with _meter() as used:
+        body = client.post("/chat/messages", headers=chat, json={"question": inputs["question"]}).json()
+    offer = client.get("/chat/state", headers=chat).json()["offer"]
+    reply = body["messages"][-1]["text"]
+    return {"decision": offer or "none", "citations": [], "response": reply, "status": None, "ticket": False, **used}
 
 
 def v0(inputs: dict) -> dict:
@@ -185,20 +219,27 @@ class Desk:
         _ensure_test_database()
         self.clock = Clock()
         self.pool = ConnectionPool(TEST_URL, min_size=1, max_size=2, kwargs={"row_factory": dict_row}, open=True)
-        app = create_app(
-            settings=Settings(database_url=TEST_URL, token_secret="eval-token-secret-at-least-32-characters"),
-            clock=self.clock,
-            pool=self.pool,
-        )
+        secret = "eval-token-secret-at-least-32-characters"
+        # A hand-over case with live chat on runs on its own app, since the switch is a setting.
+        apps = [
+            create_app(
+                settings=Settings(database_url=TEST_URL, token_secret=secret, live_agents_enabled=live),
+                clock=self.clock,
+                pool=self.pool,
+            )
+            for live in (False, True)
+        ]
         PostgresIdentityStore(self.pool).truncate()
         seed_staff(PostgresIdentityStore(self.pool))
-        self.client = TestClient(app).__enter__()
+        self.client, self.live_client = (TestClient(app).__enter__() for app in apps)
 
     def __call__(self, inputs: dict) -> dict:
         from test_labeled_set import _clear_cases, _fresh, _login
 
         _clear_cases()
         self.clock.moment = START + timedelta(days=inputs.get("advance_days") or 0)
+        if inputs.get("channel") == "chat":
+            return chat_turns(self.live_client if inputs["live"] else self.client, inputs)
         specialist = _login(self.client, "specialist@northstar.example", "northstar-specialist")
         lead = _login(self.client, "lead@northstar.example", "northstar-lead")
         _fresh(self.client, specialist, lead, self.clock)
@@ -221,6 +262,7 @@ class Desk:
 
     def close(self) -> None:
         self.client.__exit__(None, None, None)
+        self.live_client.__exit__(None, None, None)
         self.pool.close()
 
 
