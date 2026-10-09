@@ -131,3 +131,43 @@ test("a customer chat starts from an order and email, and a refund waits for a p
   await page.getByRole("button", { name: "End chat" }).click();
   await expect(page.getByRole("button", { name: "Start chat" })).toBeVisible();
 });
+
+test("an escalated chat reaches the escalations inbox, and the specialist's reply reaches the chat", async ({ page }) => {
+  // Jon Hale, so this chat does not meet Mira's case from the test above.
+  await page.goto("/chat");
+  await page.getByLabel("Order id").fill("NS-1002");
+  await page.getByLabel("Email").fill("jon.hale@northstar.example");
+  await page.getByRole("button", { name: "Start chat" }).click();
+  await page.getByLabel("Your message").fill("I will open a chargeback with my bank.");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText(/same order id and email to read the reply/)).toBeVisible({ timeout: 30_000 });
+  await noViolations(page);
+
+  // The chat cookie lives on /chat, so the staff sign-in in the same browser does not touch it.
+  await signIn(page, "specialist@northstar.example", "northstar-specialist");
+  await expect(page.getByRole("heading", { name: "Escalations inbox" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Customer chat, Jon Hale/ })).toBeVisible();
+  await noViolations(page);
+  await tabTo(page, "Pick up");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Picked up by you.")).toBeVisible();
+  await noViolations(page);
+  await tabTo(page, "reply");
+  await page.keyboard.type("Hi Jon, our payments team has your dispute. No refund is promised yet.");
+  await tabTo(page, "Send reply");
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Reply sent. The customer sees it in their chat.")).toBeVisible();
+  await noViolations(page);
+
+  await tabTo(page, "Log out");
+  await page.keyboard.press("Enter");
+  await signIn(page, "lead@northstar.example", "northstar-lead");
+  await expect(page.getByText("Picked up by Avery Cole.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Pick up" })).toHaveCount(0);
+  await noViolations(page);
+
+  await page.goto("/chat");
+  await expect(page.getByText("Avery, Northstar specialist:")).toBeVisible();
+  await expect(page.getByText("Hi Jon, our payments team has your dispute. No refund is promised yet.")).toBeVisible();
+  await noViolations(page);
+});

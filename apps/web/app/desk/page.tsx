@@ -157,6 +157,49 @@ async function newCaseAction() {
   redirect("/desk");
 }
 
+async function pickUpAction(formData: FormData) {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/desk");
+  }
+  const access = await accessToken();
+  if (!access) {
+    redirect("/login");
+  }
+  const picked = await fetch(`${apiUrl}/inbox/${String(formData.get("case_id") ?? "")}/pick-up`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${access}` },
+  });
+  redirect(picked.ok ? "/desk" : picked.status === 409 ? "/desk?inbox=taken" : "/desk?inbox=gone");
+}
+
+async function replyAction(formData: FormData) {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/desk");
+  }
+  const access = await accessToken();
+  if (!access) {
+    redirect("/login");
+  }
+  const sent = await fetch(`${apiUrl}/inbox/${String(formData.get("case_id") ?? "")}/reply`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${access}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ text: String(formData.get("reply") ?? "") }),
+  });
+  redirect(sent.ok ? "/desk?inbox=sent" : "/desk?inbox=unsent");
+}
+
+const INBOX_NOTES: Record<string, string> = {
+  taken: "Another specialist picked this up first.",
+  gone: "That case is no longer in the inbox.",
+  sent: "Reply sent. The customer sees it in their chat.",
+  unsent: "That reply was not sent. Pick up the chat case first.",
+};
+
 async function logoutAction() {
   "use server";
   if (!(await sameSite())) {
@@ -182,7 +225,7 @@ async function logoutAction() {
 export default async function DeskPage({
   searchParams,
 }: {
-  searchParams: Promise<{ ticket?: string; case?: string }>;
+  searchParams: Promise<{ ticket?: string; case?: string; inbox?: string }>;
 }) {
   const params = await searchParams;
   const ticket = params.ticket;
@@ -243,6 +286,28 @@ export default async function DeskPage({
             : [],
         )
       : [];
+
+  // Escalations inbox (R38): leads see every item, a specialist sees unpicked items and their own.
+  const inbox = viewing
+    ? []
+    : await fetch(`${apiUrl}/inbox`, {
+        headers: { Authorization: `Bearer ${access}` },
+        cache: "no-store",
+      }).then(async (inboxResponse) =>
+        inboxResponse.ok
+          ? ((await inboxResponse.json()) as {
+              case_id: string;
+              source: "desk" | "chat";
+              customer: string | null;
+              handoff: string;
+              opened_at: string;
+              assigned_to: string | null;
+              mine: boolean;
+              replies: { text: string; created_at: string }[];
+            }[])
+          : [],
+      );
+  const inboxNote = params.inbox ? INBOX_NOTES[params.inbox] : undefined;
 
   const current = (await response.json()) as {
     status: string;
@@ -320,6 +385,48 @@ export default async function DeskPage({
                 </label>
                 <button type="submit">Reject</button>
               </form>
+            </article>
+          ))}
+        </section>
+      ) : null}
+      {!viewing ? (
+        <section>
+          <h2>Escalations inbox</h2>
+          {inboxNote ? <p role="status">{inboxNote}</p> : null}
+          {inbox.length === 0 ? <p>No escalated case is waiting.</p> : null}
+          {inbox.map((item) => (
+            <article key={item.case_id}>
+              <h3>
+                {item.source === "chat" ? "Customer chat" : "Desk case"}
+                {item.customer ? `, ${item.customer}` : ""}, opened {item.opened_at.slice(0, 10)}
+              </h3>
+              <p className="quiet">
+                {item.mine ? "Picked up by you." : item.assigned_to ? `Picked up by ${item.assigned_to}.` : "Not picked up."}
+              </p>
+              <p className="handoff">{item.handoff}</p>
+              {item.replies.length > 0 ? (
+                <ul>
+                  {item.replies.map((reply, index) => (
+                    <li key={index}>Reply sent: {reply.text}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {session.user.role === "specialist" && !item.assigned_to ? (
+                <form action={pickUpAction}>
+                  <input type="hidden" name="case_id" value={item.case_id} />
+                  <button type="submit">Pick up</button>
+                </form>
+              ) : null}
+              {item.mine && item.source === "chat" ? (
+                <form action={replyAction}>
+                  <input type="hidden" name="case_id" value={item.case_id} />
+                  <label>
+                    Reply to the customer
+                    <textarea name="reply" required maxLength={2000} />
+                  </label>
+                  <button type="submit">Send reply</button>
+                </form>
+              ) : null}
             </article>
           ))}
         </section>
@@ -409,7 +516,9 @@ export default async function DeskPage({
       ) : (
         current.messages.map((message, index) => (
           <article className="turn" key={`${message.role}-${index}`}>
-            <p className="quiet">{message.role === "user" ? "Question" : "Draft"}</p>
+            <p className="quiet">
+              {message.role === "user" ? "Question" : message.role === "specialist" ? "Specialist reply" : "Draft"}
+            </p>
             {message.steps.length > 0 ? (
               <ol>
                 {message.steps.map((step) => (

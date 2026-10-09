@@ -4,10 +4,13 @@ import uuid
 from contextlib import asynccontextmanager
 
 from northstar.cases import (
+    AlreadyPickedUp,
     AmountNotEditable,
     AmountOutOfBounds,
     CaseClosed,
     CaseStore,
+    NotInInbox,
+    NotYours,
     ProposerCannotApprove,
     ProposalNotWaiting,
 )
@@ -24,7 +27,7 @@ from northstar.identity.service import (
 from northstar_api.settings import Settings
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -70,6 +73,12 @@ class EditAmountBody(BaseModel):
 
 class RejectBody(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
+
+
+class ReplyBody(BaseModel):
+    # A reply of only spaces is empty, so the customer never sees a blank message.
+    model_config = ConfigDict(str_strip_whitespace=True)
+    text: str = Field(min_length=1, max_length=2000)
 
 
 def create_app(
@@ -341,6 +350,38 @@ def create_app(
             raise HTTPException(status_code=404, detail="This case is not waiting.") from exc
         identity.audit(staff.id, "reject", clock.now())
         return {"ticket_id": None}
+
+    # Escalations inbox (R38). Leads see every item. Specialists pick items up and reply into the chat.
+
+    @app.get("/inbox")
+    def escalations_inbox(staff=Depends(staff_from_token)) -> list:
+        return cases.inbox(staff.id, lead=staff.role == "lead")
+
+    def require_specialist(staff=Depends(staff_from_token)):
+        # Leads approve. Specialists talk to customers.
+        if staff.role != "specialist":
+            raise HTTPException(status_code=403, detail="A specialist works the escalations inbox.")
+        return staff
+
+    @app.post("/inbox/{case_id}/pick-up")
+    def pick_up_escalation(case_id: str, staff=Depends(require_specialist)) -> dict:
+        try:
+            cases.pick_up(staff.id, uuid.UUID(case_id))
+        except AlreadyPickedUp as exc:
+            raise HTTPException(status_code=409, detail="Another specialist picked this up.") from exc
+        except (NotInInbox, ValueError) as exc:
+            raise HTTPException(status_code=404, detail="This case is not in the inbox.") from exc
+        identity.audit(staff.id, "escalation_pick_up", clock.now())
+        return {"case_id": case_id}
+
+    @app.post("/inbox/{case_id}/reply")
+    def reply_to_escalation(case_id: str, body: ReplyBody, staff=Depends(require_specialist)) -> dict:
+        try:
+            cases.reply(staff.id, uuid.UUID(case_id), body.text)
+        except (NotYours, ValueError) as exc:
+            raise HTTPException(status_code=403, detail="Pick up this chat case before replying.") from exc
+        identity.audit(staff.id, "escalation_reply", clock.now())
+        return {"case_id": case_id}
 
     @app.post("/cases/current/customer")
     def bind_customer(body: BindBody, staff=Depends(staff_from_token)) -> dict:
