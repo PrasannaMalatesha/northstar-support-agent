@@ -263,6 +263,8 @@ def test_many_reads_at_once_idle_a_chat_and_bring_the_customer_back_once(client,
 
         for step in ("idle", "back"):
             if step == "back":
+                # Avery's desk checks in, as its refresh would, so she counts as available (issue #139).
+                assert _chats(client, avery) == [("Mira Shah", True)]
                 with _db() as conn:
                     conn.execute(
                         "INSERT INTO case_messages (case_id, role, body, created_at) VALUES (%s, 'user', 'Still here.', %s)",
@@ -302,3 +304,17 @@ def test_a_quiet_chat_with_a_waiting_proposal_goes_idle_and_closes_only_after_th
     assert client.get(f"/cases/{proposal['case_id']}", headers=lead).json()["status"] == "Resolved"
     assert client.get("/chat", headers=chat).json()["status"].startswith("Our team approved your request.")
     assert _events().count("live_chat_closed") == 1
+
+
+@pytest.mark.parametrize("client", LIVE, indirect=True)
+def test_the_offer_to_leave_a_message_stays_hidden_while_the_chat_is_idle(client, clock):
+    chat, avery = _chat(client), _avery(client)
+    for question in ("What is your favorite color?", "Tell me a joke.", "Who won the game last night?"):
+        _say(client, chat, question)
+    assert client.get("/chat/state", headers=chat).json()["offer"] == "leave_message"
+    _answered(client, chat, avery)
+    clock.advance(minutes=4)
+    assert _chats(client, avery) == [("Mira Shah", True)]
+    # A person is still on this chat: writing brings them back, so no message is offered.
+    assert client.get("/chat/state", headers=chat).json()["offer"] is None
+    assert client.post("/chat/leave-message", headers=chat, json={"text": "Please call me."}).status_code == 409

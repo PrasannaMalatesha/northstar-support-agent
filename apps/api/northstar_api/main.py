@@ -124,6 +124,10 @@ def create_app(
         turn_seconds=settings.turn_deadline_seconds,
         failed_turns_before_offer=settings.failed_turns_before_offer,
         live_chats=settings.live_agents_enabled,
+        offer_seconds=settings.offer_accept_seconds,
+        offers_before_message=settings.offers_before_leave_message,
+        missed_offers_before_away=settings.missed_offers_before_away,
+        check_in_seconds=settings.desk_check_in_seconds,
         line_gone_minutes=settings.line_gone_minutes,
         longest_wait_minutes=settings.longest_wait_minutes,
         wait_history_days=settings.wait_history_days,
@@ -464,6 +468,14 @@ def create_app(
         def accept_live_chat(request_id: uuid.UUID, staff=Depends(require_specialist)) -> dict:
             try:
                 cases.accept(staff.id, request_id)
+            except NotYours as exc:
+                raise HTTPException(status_code=403, detail="This offer is not yours.") from exc
+            return {"id": str(request_id)}
+
+        @app.post("/live/{request_id}/decline")
+        def decline_live_chat(request_id: uuid.UUID, staff=Depends(require_specialist)) -> dict:
+            try:
+                cases.decline(staff.id, request_id)
             except NotYours as exc:
                 raise HTTPException(status_code=403, detail="This offer is not yours.") from exc
             return {"id": str(request_id)}
