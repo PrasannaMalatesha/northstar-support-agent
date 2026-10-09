@@ -95,9 +95,9 @@ def _requests() -> list[dict]:
 
 
 def _accepted(client, chat, specialist) -> str:
-    """The customer asks for a person, and the specialist sets Available and accepts the offer."""
-    assert client.post("/chat/live", headers=chat).status_code == 200
+    """The specialist sets Available, the customer asks for a person, and the specialist accepts the offer."""
     client.post("/presence", headers=specialist, json={"state": "available"})
+    assert client.post("/chat/live", headers=chat).status_code == 200
     offer = client.get("/live", headers=specialist).json()["offers"][0]["id"]
     assert client.post(f"/live/{offer}/accept", headers=specialist).status_code == 200
     return offer
@@ -120,14 +120,14 @@ def test_a_customer_talks_to_a_specialist_who_resolves_the_case(client, monkeypa
     _say(client, chat, "How long may apparel and footwear be returned?")
     assert client.get("/chat/state", headers=chat).json() == {"offer": None, "live_enabled": True, "live": None}
 
-    # Nobody is available yet: the request waits, and the agent still answers.
-    assert client.post("/chat/live", headers=chat).json() == {"live": {"status": "waiting", "specialist": None}}
+    # Avery is available: the request is offered to her at once, and the agent still answers.
+    assert client.get("/live", headers=avery).json() == {"state": "away", "offers": [], "chats": []}
+    client.post("/presence", headers=avery, json={"state": "available"})
+    assert client.post("/chat/live", headers=chat).json() == {"live": {"status": "offered", "specialist": None}}
     assert client.post("/chat/live", headers=chat).status_code == 200
     assert len(_requests()) == 1
     assert _say(client, chat, "How long is the return window?")["messages"][-1]["role"] == "assistant"
-    assert client.get("/live", headers=avery).json() == {"state": "away", "offers": [], "chats": []}
 
-    client.post("/presence", headers=avery, json={"state": "available"})
     live = client.get("/live", headers=avery).json()
     assert live["state"] == "available" and live["chats"] == []
     assert [offer["customer"] for offer in live["offers"]] == ["Mira Shah"]
@@ -202,8 +202,8 @@ def test_an_escalated_live_chat_lands_in_the_escalations_inbox_with_a_handoff(cl
 def test_a_specialist_posts_only_into_their_own_live_chat_and_leads_take_none(client):
     _add_sam()
     chat, avery, sam, lead = _chat(client), _avery(client), _sam(client), _lead(client)
-    assert client.post("/chat/live", headers=chat).status_code == 200
     client.post("/presence", headers=avery, json={"state": "available"})
+    assert client.post("/chat/live", headers=chat).status_code == 200
     offer = client.get("/live", headers=avery).json()["offers"][0]["id"]
     reply = {"text": "Hello from the team."}
 
@@ -263,11 +263,12 @@ def test_the_offer_to_leave_a_message_is_hidden_while_a_person_is_on_the_way(cli
     for question in ("What is your favorite color?", "Tell me a joke.", "Who won the game last night?"):
         _say(client, chat, question)
     assert client.get("/chat/state", headers=chat).json()["offer"] == "leave_message"
+    client.post("/presence", headers=_avery(client), json={"state": "available"})
     client.post("/chat/live", headers=chat)
     assert client.get("/chat/state", headers=chat).json() == {
         "offer": None,
         "live_enabled": True,
-        "live": {"status": "waiting", "specialist": None},
+        "live": {"status": "offered", "specialist": None},
     }
     assert client.post("/chat/leave-message", headers=chat, json={"text": "Please call me."}).status_code == 409
 
@@ -276,6 +277,7 @@ def test_the_offer_to_leave_a_message_is_hidden_while_a_person_is_on_the_way(cli
 def test_the_chat_token_is_renewed_while_a_request_is_open(client, clock):
     chat = _chat(client)
     assert client.post("/chat/renew", headers=chat).status_code == 409
+    client.post("/presence", headers=_avery(client), json={"state": "available"})
     client.post("/chat/live", headers=chat)
     clock.advance(minutes=25)
     renewed = client.post("/chat/renew", headers=chat)
@@ -283,7 +285,7 @@ def test_the_chat_token_is_renewed_while_a_request_is_open(client, clock):
     clock.advance(minutes=10)
     assert client.get("/chat", headers=chat).status_code == 401
     fresh = {"Authorization": f"Bearer {renewed.json()['chat_token']}"}
-    assert client.get("/chat/state", headers=fresh).json()["live"] == {"status": "waiting", "specialist": None}
+    assert client.get("/chat/state", headers=fresh).json()["live"] == {"status": "offered", "specialist": None}
 
 
 @pytest.mark.parametrize("client", LIVE, indirect=True)
@@ -296,6 +298,10 @@ def test_ten_customers_and_two_specialists_with_two_slots_each_give_exactly_four
         with TestClient(create_app(settings=settings, clock=clock, pool=pool)) as api:
             chats = [_chat(api, body) for body in customers]
             specialists = [_avery(api), _sam(api)]
+            # With nobody available a request is turned away (issue #140), so both are available first.
+            # Setting Available again below runs the assignment beside the requests.
+            for staff in specialists:
+                api.post("/presence", headers=staff, json={"state": "available"})
             start = threading.Barrier(len(chats) + len(specialists))
 
             def at_once(call):

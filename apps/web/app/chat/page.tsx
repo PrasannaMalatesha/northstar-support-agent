@@ -78,6 +78,21 @@ async function liveAction() {
   redirect("/chat");
 }
 
+// The customer can leave the line at any time and go back to the agent (issue #140).
+async function leaveLineAction() {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/chat");
+  }
+  const token = await chatToken();
+  if (!token) {
+    redirect("/chat");
+  }
+  // 409 means the customer is already out of the line. Either way the chat shows where they are.
+  await fetch(`${apiUrl}/chat/live`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+  redirect("/chat");
+}
+
 // The chat is not signed out while the customer waits for or talks to a specialist (R47).
 async function renewAction() {
   "use server";
@@ -208,7 +223,11 @@ export default async function ChatPage({ searchParams }: { searchParams: Promise
       {state?.offer === "leave_message" ? (
         <section aria-labelledby="leave-message">
           <h2 id="leave-message">Leave a message for a specialist</h2>
-          <p>These replies have not helped. Leave a message, and a specialist will reply in this chat.</p>
+          {/* With a status shown (the line turned the customer away), it says why already. */}
+          <p>
+            {view.status ? "" : "These replies have not helped. "}Leave a message, and a specialist will reply in this
+            chat.
+          </p>
           <form action={leaveAction}>
             <label>
               Message for a specialist
@@ -228,6 +247,11 @@ export default async function ChatPage({ searchParams }: { searchParams: Promise
       {state?.live_enabled && !state.live ? (
         <form action={liveAction}>
           <button type="submit">Talk to a person</button>
+        </form>
+      ) : null}
+      {state?.live && state.live.status !== "active" ? (
+        <form action={leaveLineAction}>
+          <button type="submit">Leave the line</button>
         </form>
       ) : null}
       {state?.live ? <Refresh renew={renewAction} /> : null}
