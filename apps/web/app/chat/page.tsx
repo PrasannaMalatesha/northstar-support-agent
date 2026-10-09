@@ -49,11 +49,14 @@ async function sendAction(formData: FormData) {
   if (!token) {
     redirect("/chat");
   }
-  await fetch(`${apiUrl}/chat/messages`, {
+  const sent = await fetch(`${apiUrl}/chat/messages`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ question: String(formData.get("question") ?? "") }),
   });
+  if (!sent.ok) {
+    redirect(sent.status === 409 ? "/chat?error=waiting" : "/chat?error=unsent");
+  }
   redirect("/chat");
 }
 
@@ -69,6 +72,8 @@ async function endAction() {
 const ERRORS: Record<string, string> = {
   nomatch: "That order and email do not match.",
   locked: "Too many tries. Try again later.",
+  waiting: "Your request is with our team. You can write again once they reply.",
+  unsent: "That message was not sent. Try again.",
 };
 
 export default async function ChatPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
@@ -104,6 +109,7 @@ export default async function ChatPage({ searchParams }: { searchParams: Promise
     <main>
       <h1>Northstar support chat</h1>
       {view.status ? <p role="status">{view.status}</p> : null}
+      {error && ERRORS[error] ? <p role="alert">{ERRORS[error]}</p> : null}
       <section aria-label="Conversation">
         {view.messages.length === 0 ? <p>Ask about returns, shipping, warranty, or your orders.</p> : null}
         <ol>
