@@ -21,6 +21,14 @@ class Settings(BaseSettings):
     # Live chat with a specialist (issue #138). Off by default: no live chat route or control,
     # and the chat behaves as before.
     live_agents_enabled: bool = False
+    # The line (issue #140, R40, R41). A waiting customer whose chat has not refreshed this long
+    # leaves the line. Over the longest estimate, or with no specialist available, the customer is
+    # offered to leave a message instead. The estimate uses the live chats of the last days, and
+    # says "a few minutes" with fewer than this many.
+    line_gone_minutes: float = 2
+    longest_wait_minutes: float = 20
+    wait_history_days: int = 7
+    wait_history_chats: int = 5
     # Quiet customer in a live chat (issue #142): minutes after the specialist's last message with no
     # answer before "Are you still there?", before the live chat is idle and the slot is free, and
     # before it closes.

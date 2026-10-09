@@ -86,9 +86,12 @@ def _chats(client, specialist) -> list[tuple[str, bool]]:
 
 
 def _answered(client, chat, specialist) -> dict:
-    """The customer asks for a person, and the specialist accepts and answers. The quiet clock starts."""
-    assert client.post("/chat/live", headers=chat).status_code == 200
+    """The specialist is available, the customer asks for a person, and the specialist accepts and answers.
+
+    The quiet clock starts. The line turns a customer away when nobody is available, so Available comes first.
+    """
     client.post("/presence", headers=specialist, json={"state": "available"})
+    assert client.post("/chat/live", headers=chat).status_code == 200
     offer = client.get("/live", headers=specialist).json()["offers"][0]["id"]
     assert client.post(f"/live/{offer}/accept", headers=specialist).status_code == 200
     assert client.post(f"/live/{offer}/messages", headers=specialist, json={"text": ANSWER}).status_code == 200
@@ -149,8 +152,8 @@ def test_the_nudge_comes_at_2_minutes_the_slot_frees_at_3_and_the_chat_closes_at
 @pytest.mark.parametrize("client", LIVE, indirect=True)
 def test_the_clock_does_not_run_while_the_customer_waits_for_the_specialist(client, clock):
     chat, avery = _chat(client), _avery(client)
-    assert client.post("/chat/live", headers=chat).status_code == 200
     client.post("/presence", headers=avery, json={"state": "available"})
+    assert client.post("/chat/live", headers=chat).status_code == 200
     offer = client.get("/live", headers=avery).json()["offers"][0]["id"]
     client.post(f"/live/{offer}/accept", headers=avery)
 
@@ -198,23 +201,29 @@ def test_a_customer_back_from_idle_goes_to_the_front_of_the_line_when_the_specia
     _answered(client, chat, avery)
     _one_slot()
 
-    # Mira goes quiet, and Jon takes Avery's only slot.
+    # Mira goes quiet, and Jon, who keeps his chat open, takes Avery's only slot.
     clock.advance(minutes=1)
     client.post("/chat/live", headers=jon)
-    clock.advance(minutes=2)
+    clock.advance(minutes=1)
+    assert _state(client, jon)["status"] == "waiting"
+    clock.advance(minutes=1)
     [offer] = client.get("/live", headers=avery).json()["offers"]
     client.post(f"/live/{offer['id']}/accept", headers=avery)
 
-    # Another customer joins the line before Mira comes back.
+    # An escalated request joins the line before Mira comes back. It would go ahead of any requested chat.
     clock.advance(minutes=1)
-    client.post("/chat/live", headers=third)
+    with ConnectionPool(TEST_URL, min_size=1, max_size=2, kwargs={"row_factory": dict_row}) as pool:
+        third_id = uuid.uuid5(uuid.NAMESPACE_URL, "quiet.customer@example.test")
+        assert CaseStore(pool, clock, live_chats=True).request_live(third_id, reason="escalated")
     clock.advance(minutes=1)
     view = _say(client, chat, "I am back. Is the refund done?")
     assert view["messages"][-1] == {"role": "user", "text": "I am back. Is the refund done?"}
+    assert view["status"].startswith("You are number 1 in line.")
+    assert client.get("/chat", headers=third).json()["status"].startswith("You are number 2 in line.")
     assert _state(client, chat) == {"status": "waiting", "specialist": None}
     assert _chats(client, avery) == [("Jon Hale", False)]
 
-    # Avery's slot frees up, and Mira is offered first, ahead of the customer who joined earlier.
+    # Avery's slot frees up, and Mira is offered first, ahead of the escalated customer who joined earlier.
     client.post(f"/live/{offer['id']}/resolve", headers=avery)
     assert [o["customer"] for o in client.get("/live", headers=avery).json()["offers"]] == ["Mira Shah"]
     assert _state(client, third)["status"] == "waiting"
@@ -270,8 +279,8 @@ def test_many_reads_at_once_idle_a_chat_and_bring_the_customer_back_once(client,
 @pytest.mark.parametrize("client", LIVE, indirect=True)
 def test_a_quiet_chat_with_a_waiting_proposal_goes_idle_and_closes_only_after_the_lead_decides(client, clock):
     chat, avery = _chat(client), _avery(client)
-    assert client.post("/chat/live", headers=chat).status_code == 200
     client.post("/presence", headers=avery, json={"state": "available"})
+    assert client.post("/chat/live", headers=chat).status_code == 200
     offer = client.get("/live", headers=avery).json()["offers"][0]["id"]
     client.post(f"/live/{offer}/accept", headers=avery)
     # The specialist's action turn is her last word, so the quiet clock starts from it.
