@@ -86,7 +86,8 @@ def test_the_count_and_the_live_chat_switch_are_settings(client):
     _say(client, chat, OFF_TOPIC[0])
     assert _offer(client, chat) is None
     _say(client, chat, OFF_TOPIC[1])
-    assert client.get("/chat/state", headers=chat).json() == {"offer": "leave_message", "live_enabled": True, "live": None}
+    # With live chat on, the offer is a person (issue #141).
+    assert client.get("/chat/state", headers=chat).json() == {"offer": "talk_to_person", "live_enabled": True, "live": None}
 
 
 def test_a_message_is_left_only_while_the_offer_stands(client):

@@ -9,7 +9,8 @@ import { apiUrl, sameSite } from "../same-site";
 const COOKIE = "northstar_chat";
 
 type ChatView = { status: string; messages: { role: string; name?: string; text: string }[] };
-// What the chat offers beside the agent (R35). "leave_message" after replies that did not help.
+// What the chat offers beside the agent (R35). After replies that did not help: "talk_to_person" with live
+// chat on (issue #141), else "leave_message". "leave_message" also when the line turned the customer away.
 // `live` is the customer's open live chat request (issue #138), null when there is none.
 type ChatState = {
   offer: string | null;
@@ -220,6 +221,15 @@ export default async function ChatPage({ searchParams }: { searchParams: Promise
           ))}
         </ol>
       </section>
+      {state?.offer === "talk_to_person" ? (
+        <section aria-labelledby="talk-to-person">
+          <h2 id="talk-to-person">Talk to a person</h2>
+          <p>These replies have not helped. A specialist can join this chat.</p>
+          <form action={liveAction}>
+            <button type="submit">Talk to a person</button>
+          </form>
+        </section>
+      ) : null}
       {state?.offer === "leave_message" ? (
         <section aria-labelledby="leave-message">
           <h2 id="leave-message">Leave a message for a specialist</h2>
@@ -244,7 +254,7 @@ export default async function ChatPage({ searchParams }: { searchParams: Promise
         </label>
         <button type="submit">Send</button>
       </form>
-      {state?.live_enabled && !state.live ? (
+      {state?.live_enabled && !state.live && state.offer !== "talk_to_person" ? (
         <form action={liveAction}>
           <button type="submit">Talk to a person</button>
         </form>

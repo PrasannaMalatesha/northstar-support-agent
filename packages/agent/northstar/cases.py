@@ -384,6 +384,23 @@ class CaseStore:
             )
             conn.commit()
 
+    def _escalate_live(self, case_id: uuid.UUID, customer_id: uuid.UUID, handoff_text: str) -> bool:
+        """With live chat on, a chat escalation joins the line ahead of requested chats (R39, R42).
+
+        The case stays Open for the live chat and keeps its handoff, so the specialist who accepts reads it.
+        The agent is quiet from here (see `_held`). Leaving the line any way but with a specialist puts the
+        case in the escalations inbox. False when the line turns it away: it goes to the inbox now.
+        """
+        with self._pool.connection() as conn:
+            conn.execute("UPDATE cases SET handoff_text = %s WHERE id = %s", (handoff_text, case_id))
+            # A customer already waiting moves up with the escalation.
+            conn.execute(
+                "UPDATE live_chat_requests SET reason = 'escalated' WHERE case_id = %s AND status IN ('waiting', 'offered')",
+                (case_id,),
+            )
+            conn.commit()
+        return self.request_live(customer_id, reason="escalated")
+
     def _customer_id(self, case_id: uuid.UUID) -> uuid.UUID | None:
         with self._pool.connection() as conn:
             row = conn.execute("SELECT customer_id FROM cases WHERE id = %s", (case_id,)).fetchone()
@@ -477,7 +494,8 @@ class CaseStore:
         escalated = handoff(asked, self._tried(case_id))
         if escalated is not None:
             section, text = escalated.section, escalated.text
-            self._mark_escalated(case_id, text)
+            if not (self._live_chats and chat_customer is not None and self._escalate_live(case_id, chat_customer, text)):
+                self._mark_escalated(case_id, text)
             # Through the graph, so the escalation has a LangGraph trace for the safety rule and the judge.
             fixed = Draft("escalate", text, (section,), {section: "strong"}, ())
             tools = TurnTools(refund=lambda _text: fixed, support=lambda _text: fixed)
@@ -939,7 +957,8 @@ class CaseStore:
     def chat_ask(self, customer_id: uuid.UUID, question: str) -> dict:
         case_id = self._chat_case(customer_id)
         if self._live_chats and self._held(case_id):
-            # A specialist holds this chat. The agent is quiet: no model call, no limit or budget charge (R46).
+            # A specialist holds this chat, or an escalation waits for one. The agent is quiet: no model call,
+            # no limit or budget charge (R46).
             with self._pool.connection() as conn:
                 conn.execute(
                     "INSERT INTO case_messages (case_id, role, body, created_at) VALUES (%s, 'user', %s, %s)",
@@ -1031,12 +1050,19 @@ class CaseStore:
         return {"status": status, "messages": messages}
 
     def chat_offer(self, customer_id: uuid.UUID) -> str | None:
-        """What the chat offers beside the agent: "leave_message" after failed turns in a row (R35), or
-        when the line turned the customer away (R41). Else None."""
-        return "leave_message" if self._offers_message(self._chat_case(customer_id)) else None
+        return self._offer(self._chat_case(customer_id))
 
-    def _offers_message(self, case_id: uuid.UUID) -> bool:
-        return self._failing(case_id) or (self._live_chats and self._refused(case_id))
+    def _offer(self, case_id: uuid.UUID) -> str | None:
+        """What the chat offers beside the agent, or None.
+
+        After failed turns in a row (R35): "talk_to_person" with live chat on, else "leave_message".
+        When the line turned the customer away: "leave_message" (R41).
+        """
+        if self._live_chats and self._refused(case_id):
+            return "leave_message"
+        if self._failing(case_id):
+            return "talk_to_person" if self._live_chats else "leave_message"
+        return None
 
     def leave_message(self, customer_id: uuid.UUID, text: str) -> dict:
         """The customer's message for a specialist, while the offer stands.
@@ -1045,7 +1071,7 @@ class CaseStore:
         escalations inbox. The specialist's reply reaches this chat through the inbox (R38).
         """
         case_id = self._chat_case(customer_id)
-        if not self._offers_message(case_id):
+        if self._offer(case_id) != "leave_message":
             raise NoOffer()
         message = screen(text.strip())
         packet = self._left_message_packet(case_id, message)
@@ -1287,16 +1313,24 @@ class CaseStore:
         return joined
 
     def leave_line(self, customer_id: uuid.UUID) -> bool:
-        """The customer leaves the line and goes back to the agent. An offer not yet accepted is withdrawn."""
+        """The customer leaves the line and goes back to the agent. An offer not yet accepted is withdrawn.
+
+        An escalation does not go back to the agent: it goes to the escalations inbox.
+        """
         with self._pool.connection() as conn:
             left = conn.execute(
                 """
                 UPDATE live_chat_requests SET status = 'left', ended_at = %s
                 WHERE case_id = %s AND status IN ('waiting', 'offered')
-                RETURNING id
+                RETURNING case_id, reason
                 """,
                 (self._clock.now(), self._chat_case(customer_id)),
             ).fetchone()
+            if left is not None and left["reason"] == "escalated":
+                conn.execute(
+                    "UPDATE cases SET status = 'Escalated', draft_text = handoff_text WHERE id = %s AND status = 'Open'",
+                    (left["case_id"],),
+                )
             conn.commit()
         if left is None:
             return False
@@ -1380,17 +1414,23 @@ class CaseStore:
         """A waiting customer whose chat has not refreshed for a while leaves the line (R41).
 
         Noticed on read, with no scheduler. SKIP LOCKED, so a sweep never waits on an offer being made.
+        An escalation that leaves the line this way goes to the escalations inbox, so it is not lost.
         """
         now = self._clock.now()
         with self._pool.connection() as conn:
             conn.execute(
                 """
-                UPDATE live_chat_requests SET status = 'abandoned', ended_at = %s
-                WHERE id IN (
-                    SELECT id FROM live_chat_requests
-                    WHERE status = 'waiting' AND coalesce(customer_seen_at, queued_at) <= %s
-                    FOR UPDATE SKIP LOCKED
+                WITH gone AS (
+                    UPDATE live_chat_requests SET status = 'abandoned', ended_at = %s
+                    WHERE id IN (
+                        SELECT id FROM live_chat_requests
+                        WHERE status = 'waiting' AND coalesce(customer_seen_at, queued_at) <= %s
+                        FOR UPDATE SKIP LOCKED
+                    )
+                    RETURNING case_id, reason
                 )
+                UPDATE cases SET status = 'Escalated', draft_text = handoff_text
+                WHERE id IN (SELECT case_id FROM gone WHERE reason = 'escalated') AND status = 'Open'
                 """,
                 (now, now - timedelta(minutes=self._line_gone_minutes)),
             )
@@ -1474,6 +1514,8 @@ class CaseStore:
             "customer": row["customer"],
             "messages": view["messages"],
             "status": view["status"],
+            # The agent's handoff when its escalation joined the line, else empty (issue #141).
+            "handoff": self._case_row(row["case_id"])["handoff_text"],
             # The specialist replies in Spanish themselves. Nothing translates a person's words (R45).
             "spanish": bool(said) and is_spanish(said[-1]),
         }
@@ -1566,11 +1608,17 @@ class CaseStore:
         self._assign()
 
     def _held(self, case_id: uuid.UUID) -> bool:
-        """A specialist holds this chat case in a live chat."""
+        """A specialist holds this chat case in a live chat, or the agent's escalation waits in the line for one.
+
+        Either way the agent has handed over: an escalated chat takes no agent turn or proposal (R30).
+        """
         with self._pool.connection() as conn:
             return (
                 conn.execute(
-                    "SELECT 1 FROM live_chat_requests WHERE case_id = %s AND status = 'active'",
+                    """
+                    SELECT 1 FROM live_chat_requests
+                    WHERE case_id = %s AND (status = 'active' OR (reason = 'escalated' AND status IN ('waiting', 'offered')))
+                    """,
                     (case_id,),
                 ).fetchone()
                 is not None

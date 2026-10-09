@@ -15,6 +15,8 @@ type LiveChat = {
   // The status line the customer sees, such as "Nothing is approved yet".
   status: string;
   spanish: boolean;
+  // The agent's handoff when its escalation joined the line, else empty (issue #141).
+  handoff: string;
 };
 
 const ID = /^[0-9a-f-]{36}$/;
@@ -134,6 +136,13 @@ export default async function LiveChatPage({
         </p>
       ) : null}
       {chat.status ? <p role="status">The customer sees: {chat.status}</p> : null}
+      {chat.handoff ? (
+        <section aria-labelledby="handoff">
+          <h2 id="handoff">Handoff</h2>
+          <p className="quiet">The agent escalated this chat. The customer does not see this.</p>
+          <p className="handoff">{chat.handoff}</p>
+        </section>
+      ) : null}
       {error ? <p role="alert">{ERRORS[error] ?? ERRORS.unsent}</p> : null}
       <section aria-label="Conversation">
         <ol>
