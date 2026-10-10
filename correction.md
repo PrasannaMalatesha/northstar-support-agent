@@ -13,6 +13,16 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-09 — The agent package did not declare langchain
+
+Status: bug
+
+What broke: in the browser demo on a fresh worktree, the first live turn returned 500 with `ModuleNotFoundError: No module named 'langchain'`.
+
+Evidence: `northstar.graph` imports `langchain.agents` (create_agent and its middleware), and `northstar.online` imports `langchain_openai` (the judge). Both packages were listed only in the root `dev` dependency group. CI and the main checkout run `uv sync --all-packages --group dev`, so they had them. `make api` on a fresh clone (`uv run --package northstar-api`) did not.
+
+Fix: `langchain` and `langchain-openai` are runtime dependencies of `northstar-agent`. The lock resolves the same versions. A clean `uv run --package northstar-api` now imports both.
+
 ## 2026-10-09 — The agent's email filter hid the published support address
 
 Status: bug
