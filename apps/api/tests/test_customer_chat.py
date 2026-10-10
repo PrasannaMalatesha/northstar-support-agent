@@ -115,3 +115,27 @@ def test_after_an_escalation_the_customer_can_still_ask(client):
     view = _say(client, chat, "How long may apparel and footwear be returned?")
     assert "REF-CATEGORY" in view["messages"][-1]["text"]
     assert [m["text"] for m in view["messages"] if m["role"] == "user"] == ["How long may apparel and footwear be returned?"]
+
+
+def test_a_request_with_no_order_id_uses_the_order_the_chat_was_started_with(client):
+    lamp = {"order_id": "NS-1011", "email": "mira.shah@northstar.example"}
+    view = _say(client, _chat(client, lamp), "My desk lamp arrived broken, I want my money back.")
+    assert "Which order id?" not in view["messages"][-1]["text"]
+    lead = _staff(client, "lead@northstar.example", "northstar-lead")
+    [row] = client.get("/approvals", headers=lead).json()
+    assert row["order_id"] == "NS-1011"
+
+
+def test_an_order_named_in_the_message_wins_over_the_chat_order(client):
+    view = _say(client, _chat(client), "Please refund order NS-1006.")
+    assert "Which order id?" not in view["messages"][-1]["text"]
+    lead = _staff(client, "lead@northstar.example", "northstar-lead")
+    [row] = client.get("/approvals", headers=lead).json()
+    assert row["order_id"] == "NS-1006"
+
+
+def test_a_handbook_question_in_the_chat_stays_a_handbook_question(client):
+    view = _say(client, _chat(client), "How long may apparel and footwear be returned?")
+    assert "REF-CATEGORY" in view["messages"][-1]["text"] or "30 days" in view["messages"][-1]["text"]
+    lead = _staff(client, "lead@northstar.example", "northstar-lead")
+    assert client.get("/approvals", headers=lead).json() == []

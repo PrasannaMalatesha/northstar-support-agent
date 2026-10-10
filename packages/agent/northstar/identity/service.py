@@ -198,24 +198,34 @@ class Identity:
             self._store.audit(None, "chat_failure", now)
             raise LoginInvalid()
         self._store.audit(None, "chat_start", now)
-        return self.chat_token(customer_id)
+        return self.chat_token(customer_id, order_id.strip().upper())
 
-    def chat_token(self, customer_id: uuid.UUID) -> str:
-        """A chat token for this customer, valid for CHAT_MINUTES. Also the renewal during a live chat (R47)."""
+    def chat_token(self, customer_id: uuid.UUID, order_id: str | None = None) -> str:
+        """A chat token for this customer, valid for CHAT_MINUTES. Also the renewal during a live chat (R47).
+
+        It carries the order the chat was started with, so "I want my money back" needs no order id.
+        """
         now = self._clock.now()
-        return jwt.encode(
-            {
-                "sub": str(customer_id),
-                "iss": ISSUER,
-                "aud": CHAT_AUDIENCE,
-                "iat": int(now.timestamp()),
-                "exp": int((now + timedelta(minutes=CHAT_MINUTES)).timestamp()),
-            },
-            self._secret,
-            algorithm="HS256",
-        )
+        claims = {
+            "sub": str(customer_id),
+            "iss": ISSUER,
+            "aud": CHAT_AUDIENCE,
+            "iat": int(now.timestamp()),
+            "exp": int((now + timedelta(minutes=CHAT_MINUTES)).timestamp()),
+        }
+        if order_id:
+            claims["ord"] = order_id
+        return jwt.encode(claims, self._secret, algorithm="HS256")
 
     def chat_customer(self, token: str) -> uuid.UUID:
+        return uuid.UUID(self._chat_claims(token)["sub"])
+
+    def chat_order(self, token: str) -> str | None:
+        """The order the chat was started with. None for a token issued before orders were carried."""
+        order_id = self._chat_claims(token).get("ord")
+        return order_id if isinstance(order_id, str) else None
+
+    def _chat_claims(self, token: str) -> dict:
         try:
             payload = jwt.decode(
                 token,
@@ -229,7 +239,7 @@ class Identity:
             raise TokenInvalid() from exc
         if self._clock.now() >= datetime.fromtimestamp(payload["exp"], tz=timezone.utc):
             raise TokenInvalid()
-        return uuid.UUID(payload["sub"])
+        return payload
 
     def _is_locked(self, email: str, now: datetime) -> bool:
         since = now - timedelta(minutes=LOCKOUT_MINUTES)
