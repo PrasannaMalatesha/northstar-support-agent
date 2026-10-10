@@ -3,16 +3,12 @@ import { getToken } from "next-auth/jwt";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { Refresh } from "../refresh";
 import { apiUrl, sameSite } from "../same-site";
+import { accessToken } from "./access-token";
 
-async function accessToken(): Promise<string | null> {
-  const cookieHeader = (await cookies()).toString();
-  const token = await getToken({
-    req: new Request("http://localhost", { headers: { cookie: cookieHeader } }),
-    secret: process.env.AUTH_SECRET,
-  });
-  return typeof token?.accessToken === "string" ? token.accessToken : null;
-}
+// A case or live chat id goes into an API path, so only a 36-character id is sent.
+const ID = /^[0-9a-f-]{36}$/;
 
 async function bindAction(formData: FormData) {
   "use server";
@@ -65,7 +61,11 @@ async function editAction(formData: FormData) {
   if (!access) {
     redirect("/login");
   }
-  const edited = await fetch(`${apiUrl}/approvals/${String(formData.get("case_id") ?? "")}/edit`, {
+  const caseId = String(formData.get("case_id") ?? "");
+  if (!ID.test(caseId)) {
+    redirect("/desk");
+  }
+  const edited = await fetch(`${apiUrl}/approvals/${caseId}/edit`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${access}`,
@@ -87,7 +87,11 @@ async function rejectAction(formData: FormData) {
   if (!access) {
     redirect("/login");
   }
-  await fetch(`${apiUrl}/approvals/${String(formData.get("case_id") ?? "")}/reject`, {
+  const caseId = String(formData.get("case_id") ?? "");
+  if (!ID.test(caseId)) {
+    redirect("/desk");
+  }
+  await fetch(`${apiUrl}/approvals/${caseId}/reject`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${access}`,
@@ -107,7 +111,11 @@ async function approveAction(formData: FormData) {
   if (!access) {
     redirect("/login");
   }
-  const approved = await fetch(`${apiUrl}/approvals/${String(formData.get("case_id") ?? "")}/approve`, {
+  const caseId = String(formData.get("case_id") ?? "");
+  if (!ID.test(caseId)) {
+    redirect("/desk");
+  }
+  const approved = await fetch(`${apiUrl}/approvals/${caseId}/approve`, {
     method: "POST",
     headers: { Authorization: `Bearer ${access}` },
   });
@@ -157,6 +165,144 @@ async function newCaseAction() {
   redirect("/desk");
 }
 
+async function pickUpAction(formData: FormData) {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/desk");
+  }
+  const access = await accessToken();
+  if (!access) {
+    redirect("/login");
+  }
+  const caseId = String(formData.get("case_id") ?? "");
+  if (!ID.test(caseId)) {
+    redirect("/desk?inbox=gone");
+  }
+  const picked = await fetch(`${apiUrl}/inbox/${caseId}/pick-up`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${access}` },
+  });
+  redirect(picked.ok ? "/desk" : picked.status === 409 ? "/desk?inbox=taken" : "/desk?inbox=gone");
+}
+
+async function replyAction(formData: FormData) {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/desk");
+  }
+  const access = await accessToken();
+  if (!access) {
+    redirect("/login");
+  }
+  const caseId = String(formData.get("case_id") ?? "");
+  if (!ID.test(caseId)) {
+    redirect("/desk?inbox=unsent");
+  }
+  const sent = await fetch(`${apiUrl}/inbox/${caseId}/reply`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${access}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ text: String(formData.get("reply") ?? "") }),
+  });
+  redirect(sent.ok ? "/desk?inbox=sent" : "/desk?inbox=unsent");
+}
+
+async function availabilityAction(formData: FormData) {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/desk");
+  }
+  const access = await accessToken();
+  if (!access) {
+    redirect("/login");
+  }
+  await fetch(`${apiUrl}/presence`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${access}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ state: String(formData.get("state") ?? "") }),
+  });
+  redirect("/desk");
+}
+
+async function acceptAction(formData: FormData) {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/desk");
+  }
+  const access = await accessToken();
+  if (!access) {
+    redirect("/login");
+  }
+  const id = String(formData.get("id") ?? "");
+  const accepted = ID.test(id)
+    ? await fetch(`${apiUrl}/live/${id}/accept`, { method: "POST", headers: { Authorization: `Bearer ${access}` } })
+    : null;
+  redirect(accepted?.ok ? `/desk/live/${id}` : "/desk?live=gone");
+}
+
+// A declined offer goes to the next specialist, never back to this one (issue #139).
+async function declineAction(formData: FormData) {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/desk");
+  }
+  const access = await accessToken();
+  if (!access) {
+    redirect("/login");
+  }
+  const id = String(formData.get("id") ?? "");
+  const declined = ID.test(id)
+    ? await fetch(`${apiUrl}/live/${id}/decline`, { method: "POST", headers: { Authorization: `Bearer ${access}` } })
+    : null;
+  redirect(declined?.ok ? "/desk?live=declined" : "/desk?live=gone");
+}
+
+// Take the next customer in line now: the request is offered to this specialist, who accepts it as any offer.
+async function takeNextAction() {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/desk");
+  }
+  const access = await accessToken();
+  if (!access) {
+    redirect("/login");
+  }
+  const taken = await fetch(`${apiUrl}/live/next`, { method: "POST", headers: { Authorization: `Bearer ${access}` } });
+  redirect(taken.ok ? "/desk?live=taken" : "/desk?live=none");
+}
+
+// Shown after a live chat action sends the specialist back to the desk.
+const LIVE_NOTES: Record<string, string> = {
+  gone: "That live chat is no longer yours.",
+  declined: "Offer declined. It goes to the next specialist.",
+  taken: "The next customer in line is offered to you. Accept the offer to join the chat.",
+  none: "No customer is waiting for you, or you have no free slot.",
+  resolved: "Live chat resolved.",
+  escalated: "Live chat escalated. It is in the escalations inbox.",
+};
+
+// The lead's view of the line (R49). Alerts are read-only: nothing is reassigned from here.
+type LineAlert =
+  | { kind: "unanswered"; case_id: string; customer: string; offers: number; inbox: boolean }
+  | { kind: "no_reply"; case_id: string; customer: string; specialist: string; waiting_seconds: number };
+
+function minutes(seconds: number): string {
+  const whole = Math.floor(seconds / 60);
+  return whole < 1 ? "less than a minute" : whole === 1 ? "1 minute" : `${whole} minutes`;
+}
+
+const INBOX_NOTES: Record<string, string> = {
+  taken: "Another specialist picked this up first.",
+  gone: "That case is no longer in the inbox.",
+  sent: "Reply sent. The customer sees it in their chat.",
+  unsent: "That reply was not sent. Pick up the chat case first.",
+};
+
 async function logoutAction() {
   "use server";
   if (!(await sameSite())) {
@@ -182,7 +328,7 @@ async function logoutAction() {
 export default async function DeskPage({
   searchParams,
 }: {
-  searchParams: Promise<{ ticket?: string; case?: string }>;
+  searchParams: Promise<{ ticket?: string; case?: string; inbox?: string; live?: string }>;
 }) {
   const params = await searchParams;
   const ticket = params.ticket;
@@ -195,7 +341,7 @@ export default async function DeskPage({
     redirect("/login");
   }
   // A lead opens a queue row as a read-only case desk.
-  const viewing = session.user.role === "lead" && typeof params.case === "string" && /^[0-9a-f-]{36}$/.test(params.case);
+  const viewing = session.user.role === "lead" && typeof params.case === "string" && ID.test(params.case);
   const response = await fetch(viewing ? `${apiUrl}/cases/${params.case}` : `${apiUrl}/cases/current`, {
     headers: { Authorization: `Bearer ${access}` },
     cache: "no-store",
@@ -243,6 +389,66 @@ export default async function DeskPage({
             : [],
         )
       : [];
+
+  // Escalations inbox (R38): leads see every item, a specialist sees unpicked items and their own.
+  const inbox = viewing
+    ? []
+    : await fetch(`${apiUrl}/inbox`, {
+        headers: { Authorization: `Bearer ${access}` },
+        cache: "no-store",
+      }).then(async (inboxResponse) =>
+        inboxResponse.ok
+          ? ((await inboxResponse.json()) as {
+              case_id: string;
+              source: "desk" | "chat";
+              customer: string | null;
+              handoff: string;
+              opened_at: string;
+              assigned_to: string | null;
+              mine: boolean;
+              replies: { text: string; created_at: string }[];
+            }[])
+          : [],
+      );
+  const inboxNote = params.inbox ? INBOX_NOTES[params.inbox] : undefined;
+
+  // Live chats (issue #138). The API answers a specialist, and only while live chat is on.
+  const live =
+    session.user.role === "specialist" && !viewing
+      ? await fetch(`${apiUrl}/live`, {
+          headers: { Authorization: `Bearer ${access}` },
+          cache: "no-store",
+        }).then(async (liveResponse) =>
+          liveResponse.ok
+            ? ((await liveResponse.json()) as {
+                state: "available" | "away";
+                auto_away_at: string | null;
+                offers: { id: string; customer: string; reason: "requested" | "escalated"; language: "en" | "es" | null }[];
+                chats: { id: string; customer: string; idle: boolean }[];
+              })
+            : null,
+        )
+      : null;
+  const liveNote = params.live ? LIVE_NOTES[params.live] : undefined;
+
+  // The line (issue #144). The API answers a lead, and only while live chat is on.
+  const line =
+    session.user.role === "lead" && !viewing
+      ? await fetch(`${apiUrl}/line`, {
+          headers: { Authorization: `Bearer ${access}` },
+          cache: "no-store",
+        }).then(async (lineResponse) =>
+          lineResponse.ok
+            ? ((await lineResponse.json()) as {
+                available: number;
+                line_length: number;
+                longest_wait_seconds: number | null;
+                average_chat_minutes: number | null;
+                alerts: LineAlert[];
+              })
+            : null,
+        )
+      : null;
 
   const current = (await response.json()) as {
     status: string;
@@ -320,6 +526,160 @@ export default async function DeskPage({
                 </label>
                 <button type="submit">Reject</button>
               </form>
+            </article>
+          ))}
+        </section>
+      ) : null}
+      {line ? (
+        <section>
+          <h2>Line</h2>
+          <ul>
+            <li>Specialists available: {line.available}</li>
+            <li>Customers in line: {line.line_length}</li>
+            <li>
+              Longest wait:{" "}
+              {line.longest_wait_seconds === null ? "nobody is waiting" : minutes(line.longest_wait_seconds)}
+            </li>
+            <li>
+              Average chat length:{" "}
+              {line.average_chat_minutes === null
+                ? "too few recent live chats to tell"
+                : minutes(line.average_chat_minutes * 60)}
+            </li>
+          </ul>
+          <h3>Alerts</h3>
+          {line.alerts.length === 0 ? (
+            <p>No alerts.</p>
+          ) : (
+            <ul>
+              {line.alerts.map((alert) => (
+                <li key={`${alert.kind}-${alert.case_id}`}>
+                  {alert.kind === "unanswered"
+                    ? `${alert.customer}'s request was offered ${alert.offers} times, and nobody accepted. ${alert.inbox ? "It is in the escalations inbox." : "The chat offers to leave a message."}`
+                    : `${alert.customer} has waited ${minutes(alert.waiting_seconds)} for ${alert.specialist}'s reply. The chat stays with ${alert.specialist}.`}{" "}
+                  <a href={`/desk?case=${alert.case_id}`}>Open {alert.customer}&apos;s case</a>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Refresh />
+        </section>
+      ) : null}
+      {live ? (
+        <section>
+          <h2>Live chats</h2>
+          {liveNote ? <p role="status">{liveNote}</p> : null}
+          <form action={availabilityAction}>
+            <p>
+              You are {live.state === "available" ? "available for live chats" : "away"}.{" "}
+              <input type="hidden" name="state" value={live.state === "available" ? "away" : "available"} />
+              <button type="submit">{live.state === "available" ? "Set Away" : "Set Available"}</button>
+            </p>
+          </form>
+          {live.auto_away_at ? (
+            <p role="status">
+              You were set to Away at{" "}
+              {new Date(live.auto_away_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })} because
+              offers went unanswered.
+            </p>
+          ) : null}
+          {live.offers.length === 0 && live.chats.length === 0 ? <p>No live chat is offered to you.</p> : null}
+          {live.state === "available" ? (
+            <form action={takeNextAction}>
+              <button type="submit">Take next</button>
+            </form>
+          ) : null}
+          {live.offers.map((offer) => (
+            <article key={offer.id}>
+              {/* Why the customer is in the line, and their language (user story 27). */}
+              <p>
+                {offer.reason === "escalated"
+                  ? `${offer.customer}'s chat was escalated by the agent.`
+                  : `${offer.customer} asked to talk to a person.`}
+              </p>
+              {offer.language === "es" ? (
+                <p>
+                  <strong>Spanish</strong>. The customer writes in Spanish.
+                </p>
+              ) : null}
+              <form action={acceptAction}>
+                <input type="hidden" name="id" value={offer.id} />
+                <button type="submit">Accept</button>
+              </form>
+              <form action={declineAction}>
+                <input type="hidden" name="id" value={offer.id} />
+                <button type="submit">Decline</button>
+              </form>
+            </article>
+          ))}
+          {live.chats.some((chat) => !chat.idle) ? (
+            <ul>
+              {live.chats
+                .filter((chat) => !chat.idle)
+                .map((chat) => (
+                  <li key={chat.id}>
+                    <a href={`/desk/live/${chat.id}`}>Live chat with {chat.customer}</a>
+                  </li>
+                ))}
+            </ul>
+          ) : null}
+          {/* Customers who went quiet (issue #142). An idle chat does not take a slot. */}
+          {live.chats.some((chat) => chat.idle) ? (
+            <>
+              <h3>Idle live chats</h3>
+              <p>These customers went quiet, so your slots are free. A chat comes back if the customer writes.</p>
+              <ul>
+                {live.chats
+                  .filter((chat) => chat.idle)
+                  .map((chat) => (
+                    <li key={chat.id}>
+                      <a href={`/desk/live/${chat.id}`}>Idle live chat with {chat.customer}</a>
+                    </li>
+                  ))}
+              </ul>
+            </>
+          ) : null}
+          {live.state === "available" || live.offers.length > 0 || live.chats.length > 0 ? <Refresh /> : null}
+        </section>
+      ) : null}
+      {!viewing ? (
+        <section>
+          <h2>Escalations inbox</h2>
+          {inboxNote ? <p role="status">{inboxNote}</p> : null}
+          {inbox.length === 0 ? <p>No escalated case is waiting.</p> : null}
+          {inbox.map((item) => (
+            <article key={item.case_id}>
+              <h3>
+                {item.source === "chat" ? "Customer chat" : "Desk case"}
+                {item.customer ? `, ${item.customer}` : ""}, opened {item.opened_at.slice(0, 10)}
+              </h3>
+              <p className="quiet">
+                {item.mine ? "Picked up by you." : item.assigned_to ? `Picked up by ${item.assigned_to}.` : "Not picked up."}
+              </p>
+              <p className="handoff">{item.handoff}</p>
+              {item.replies.length > 0 ? (
+                <ul>
+                  {item.replies.map((reply, index) => (
+                    <li key={index}>Reply sent: {reply.text}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {session.user.role === "specialist" && !item.assigned_to ? (
+                <form action={pickUpAction}>
+                  <input type="hidden" name="case_id" value={item.case_id} />
+                  <button type="submit">Pick up</button>
+                </form>
+              ) : null}
+              {item.mine && item.source === "chat" ? (
+                <form action={replyAction}>
+                  <input type="hidden" name="case_id" value={item.case_id} />
+                  <label>
+                    Reply to the customer
+                    <textarea name="reply" required maxLength={2000} />
+                  </label>
+                  <button type="submit">Send reply</button>
+                </form>
+              ) : null}
             </article>
           ))}
         </section>
@@ -409,7 +769,9 @@ export default async function DeskPage({
       ) : (
         current.messages.map((message, index) => (
           <article className="turn" key={`${message.role}-${index}`}>
-            <p className="quiet">{message.role === "user" ? "Question" : "Draft"}</p>
+            <p className="quiet">
+              {message.role === "user" ? "Question" : message.role === "specialist" ? "Specialist reply" : "Draft"}
+            </p>
             {message.steps.length > 0 ? (
               <ol>
                 {message.steps.map((step) => (

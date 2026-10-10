@@ -198,6 +198,11 @@ class Identity:
             self._store.audit(None, "chat_failure", now)
             raise LoginInvalid()
         self._store.audit(None, "chat_start", now)
+        return self.chat_token(customer_id)
+
+    def chat_token(self, customer_id: uuid.UUID) -> str:
+        """A chat token for this customer, valid for CHAT_MINUTES. Also the renewal during a live chat (R47)."""
+        now = self._clock.now()
         return jwt.encode(
             {
                 "sub": str(customer_id),

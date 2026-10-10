@@ -1,0 +1,21 @@
+{
+  "commit": "d34ede83d4af510e77e4f3aa0939fafef9a103f8",
+  "rows": 63,
+  "gates": {
+    "action correct": true,
+    "ticket without approval": true,
+    "invalid citation": true,
+    "missing citation": true,
+    "abstain": true,
+    "latency": true,
+    "spanish latency": true,
+    "token cap": true
+  },
+  "measured": {
+    "action_correct": 1.0,
+    "p95_seconds_en": 8.67,
+    "p95_seconds_es": 16.56,
+    "max_tokens": 4065
+  },
+  "uploaded": false
+}

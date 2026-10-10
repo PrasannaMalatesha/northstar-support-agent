@@ -25,13 +25,18 @@ def has_secret(text: str) -> bool:
 
 
 def detector(kind: str):
-    """A PIIMiddleware detector for `phone` or `secret`, from the patterns above."""
-    pattern = {"phone": _PHONE, "secret": _SECRET}[kind]
+    """A PIIMiddleware detector for `email`, `phone`, or `secret`, from the patterns above.
+
+    Like screen(), the email detector leaves the published addresses alone. Redacting the support
+    address from the desk's answer made the model ask the desk again, a wasted model call.
+    """
+    pattern = {"email": _EMAIL, "phone": _PHONE, "secret": _SECRET}[kind]
 
     def find(text: str) -> list[dict]:
         return [
             {"type": kind, "value": match.group(0), "start": match.start(), "end": match.end()}
             for match in pattern.finditer(text)
+            if not (kind == "email" and match.group(0).lower() in PUBLISHED_EMAILS)
         ]
 
     return find

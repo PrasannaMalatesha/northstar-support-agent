@@ -68,10 +68,21 @@ def support_agent(state: TurnState, runtime: Runtime[TurnTools]) -> dict:
 
 LOOKUP_FAILED_TEXT = "The lookup failed. No facts were filled in. Try again."
 
+# Explicit step caps. The installed LangGraph defaults to 10007 supersteps, which is no cap at all.
+# Measured: the router takes 3 steps. Each middleware hook is its own agent step, so a normal agent turn
+# (two model calls, one desk call) needs a limit of 26, and the worst case run_limit=3 allows needs 43.
+# https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT
+TURN_RECURSION_LIMIT = 10
+AGENT_RECURSION_LIMIT = 50
+
 
 def _decide(question: str, draft_fn: Callable[[str], Draft], name: str) -> Draft:
     # https://docs.langchain.com/oss/python/langchain/agents
+    from northstar.agent_model import attempts_left
+
     if os.environ.get("PYTEST_CURRENT_TEST") or not os.environ.get("GOOGLE_API_KEY"):
+        return draft_fn(question)
+    if not attempts_left(1):  # the turn's deadline is close: the desk decides without a model
         return draft_fn(question)
     return _agent_draft(question, draft_fn, name)
 
@@ -92,7 +103,7 @@ def _ask_agent(question: str, draft_fn: Callable[[str], Draft], name: str) -> Dr
     from langchain.agents import create_agent
     from langchain_core.tools import tool
 
-    from northstar.agent_model import _model
+    from northstar.agent_model import _agent_model
 
     held: dict[str, Draft] = {}
     asked = question
@@ -106,7 +117,7 @@ def _ask_agent(question: str, draft_fn: Callable[[str], Draft], name: str) -> Dr
         return draft.text
 
     create_agent(
-        _model(),
+        _agent_model(),
         [desk],
         system_prompt=(
             "Call the desk tool once with the specialist's question. "
@@ -114,7 +125,11 @@ def _ask_agent(question: str, draft_fn: Callable[[str], Draft], name: str) -> Dr
         ),
         name=name,
         middleware=_middleware(held),
-    ).invoke({"messages": [{"role": "user", "content": question}]})
+    ).invoke(
+        {"messages": [{"role": "user", "content": question}]},
+        # Set here, not inherited: the router's smaller cap would otherwise apply to this subgraph too.
+        {"recursion_limit": AGENT_RECURSION_LIMIT},
+    )
     if held.get("failed"):
         return Draft("lookup_failed", LOOKUP_FAILED_TEXT, (), {}, ())
     return held["draft"]
@@ -138,7 +153,7 @@ def _middleware(held: dict) -> list:
         ToolRetryMiddleware,
     )
 
-    from northstar.agent_model import _fallback_model
+    from northstar.agent_model import _fallback_model, attempts_left
     from northstar.privacy import detector
 
     def pii(kind: str, strategy: str, find=None) -> PIIMiddleware:
@@ -157,15 +172,20 @@ def _middleware(held: dict) -> list:
         return "Lookup failed. Do not fill in facts."
 
     fallback = _fallback_model()
+    models = 1 if fallback is None else 2
+    # Three tries per model, or only the tries that fit before the turn's deadline, shared by both models.
+    tries = attempts_left(3 * models)
+    if tries < models:
+        fallback, models = None, 1
     return [
         pii("secret", "block", detector("secret")),
-        pii("email", "redact"),
+        pii("email", "redact", detector("email")),
         pii("credit_card", "mask"),
         pii("phone", "redact", detector("phone")),
         ModelCallLimitMiddleware(run_limit=3, exit_behavior="end"),
         ToolCallLimitMiddleware(tool_name="desk", run_limit=1),
         *([ModelFallbackMiddleware(fallback)] if fallback is not None else []),
-        ModelRetryMiddleware(max_retries=2, on_failure="error"),
+        ModelRetryMiddleware(max_retries=max(tries // models - 1, 0), on_failure="error"),
         ToolErrorMiddleware(on_error=failed),
         ToolRetryMiddleware(max_retries=1, tools=["desk"], on_failure="error"),
     ]
@@ -186,7 +206,7 @@ def _checkpointer_present() -> bool:
 def resume_turn(graph, thread_id: str, decision: str) -> None:
     config = {"configurable": {"thread_id": thread_id}}
     if graph.get_state(config).next:
-        graph.invoke(Command(resume=decision), config)
+        graph.invoke(Command(resume=decision), {**config, "recursion_limit": TURN_RECURSION_LIMIT})
 
 
 def _fields(draft: Draft) -> dict:
@@ -277,23 +297,37 @@ def _turn_input(question: str) -> dict:
     return {"question": question, "followup": ""}
 
 
-def _upload_then_judge(run_id: str, question: str, decision: str, followup: str, citations: list[str]) -> None:
+def _upload_then_judge(
+    run_id: str, question: str, decision: str, followup: str, citations: list[str], handover: str | None = None
+) -> None:
     from langchain_core.tracers.langchain import wait_for_all_tracers
 
     from northstar import online
 
     wait_for_all_tracers()
     _scrubbed_client().flush()
+    if handover is not None:
+        online.record_handover(run_id, handover)
     online.record_judge(run_id, question, decision, followup, citations, random.random())
 
 
-def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None = None) -> Draft:
+def run_turn(
+    question: str,
+    tools: TurnTools,
+    graph=None,
+    thread_id: str | None = None,
+    handover: Callable[[str], str] | None = None,
+) -> Draft:
+    """One turn through the router. `handover` names why the turn handed over, from its decision, for the
+    traced root run (issue #145). A turn without it records no hand-over."""
     from northstar.agent_model import _load_local_env
 
     _load_local_env()
     graph = graph or GRAPH
     traced = os.environ.get("LANGSMITH_TRACING", "").lower() == "true" and not os.environ.get("PYTEST_CURRENT_TEST")
-    config = {} if thread_id is None else {"configurable": {"thread_id": thread_id}}
+    config: dict = {"recursion_limit": TURN_RECURSION_LIMIT}
+    if thread_id is not None:
+        config["configurable"] = {"thread_id": thread_id}
     run_id = None
     if traced:
         import langsmith
@@ -305,15 +339,16 @@ def run_turn(question: str, tools: TurnTools, graph=None, thread_id: str | None 
         with langsmith.tracing_context(client=_scrubbed_client()):
             result = graph.invoke(_turn_input(question), config, context=tools)
     else:
-        result = graph.invoke(_turn_input(question), config or None, context=tools)
+        result = graph.invoke(_turn_input(question), config, context=tools)
     # A turn that pauses for approval stops before compile_followup writes followup.
     followup = result.get("followup") or result["text"]
     if traced and run_id is not None:
         from northstar import online
 
-        # After the turn, off the request: the trace upload (slow when LangSmith rate-limits) and then
-        # the judge, which scores the uploaded root run. A failure is logged by background().
-        online.background(_upload_then_judge, run_id, question, result["decision"], followup, list(result["citations"]))
+        # After the turn, off the request: the trace upload (slow when LangSmith rate-limits), then the
+        # hand-over reason and the judge on the uploaded root run. A failure is logged by background().
+        reason = handover(result["decision"]) if handover else None
+        online.background(_upload_then_judge, run_id, question, result["decision"], followup, list(result["citations"]), reason)
     return Draft(
         result["decision"],
         followup,

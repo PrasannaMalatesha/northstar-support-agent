@@ -113,7 +113,7 @@ def _clear_cases() -> None:
         conn.execute("DELETE FROM case_messages")
         conn.execute("DELETE FROM tickets")
         conn.execute("DELETE FROM cases")
-        conn.execute("DELETE FROM usage_days")
+        conn.execute("DELETE FROM daily_limits")
 
 
 def _desk_passed(client, clock, texts: dict | None = None) -> dict[str, bool]:
