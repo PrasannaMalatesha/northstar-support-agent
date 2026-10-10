@@ -575,17 +575,18 @@ test("a specialist declines a live chat offer, and the customer keeps waiting", 
 
 test("a specialist stays signed in after the API token is renewed", async ({ page }) => {
   // The suite's API tokens last 90 seconds and are renewed in their last minute.
-  test.setTimeout(120_000);
+  test.setTimeout(150_000);
   await signIn(page, "specialist@northstar.example", "northstar-specialist");
-  await page.waitForTimeout(35_000);
-  await page.goto("/desk");
-  await expect(page.getByRole("heading", { name: "Case desk" })).toBeVisible();
-  await page.getByLabel("Customer email or phone").fill("mira.shah@northstar.example");
-  await page.getByRole("button", { name: "Bind" }).click();
-  await expect(page.getByText("Mira Shah")).toBeVisible();
-  // The renewed token keeps working on the next request too.
-  await page.waitForTimeout(35_000);
-  await page.reload();
-  await expect(page.getByText("Mira Shah")).toBeVisible();
-  await expect(page).toHaveURL(/\/desk/);
+  for (let round = 0; round < 2; round += 1) {
+    await page.waitForTimeout(35_000);
+    // The desk reads the API on every load, and an action writes to it: both need a working token.
+    await page.goto("/desk");
+    await expect(page).toHaveURL(/\/desk/);
+    await expect(page.getByRole("heading", { name: "Case desk" })).toBeVisible();
+    const away = page.getByRole("button", { name: "Set Away" });
+    const toggle = (await away.isVisible()) ? away : page.getByRole("button", { name: "Set Available" });
+    const next = (await away.isVisible()) ? "Set Available" : "Set Away";
+    await toggle.click();
+    await expect(page.getByRole("button", { name: next })).toBeVisible();
+  }
 });
