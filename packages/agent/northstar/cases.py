@@ -27,6 +27,7 @@ from northstar.handbook import ABSTAIN_TEXT, Draft, guard_draft
 from northstar import defaults, online
 from northstar.online import NO_HANDOVER, record_edit, record_judge
 from northstar.preferences import recall, remember, stated
+from northstar.retrieve import retrieved_answer
 from northstar.privacy import SECRET_REPLY, has_secret, screen
 
 # ponytail: 1_000 tokens stands in for one handbook draft. Replace with the
@@ -2218,13 +2219,18 @@ class CaseStore:
         catalog = self._catalog_draft(question)
         if catalog is not None:
             return catalog
+        lowered = question.lower()
+        # "Do you sell surfboard wax?" asks about an item. Only a handbook section the reranker itself keeps
+        # answers it ("How much is standard shipping?"); the model pick is not asked, so an unknown item abstains.
+        if any(phrase in lowered for phrase in _ITEM_PHRASES) and retrieved_answer(question).decision != "answer":
+            return _plain("abstain", NOT_IN_CATALOG_TEXT)
         if not self._take(now.date(), "tokens", TOKENS_PER_TURN, {limit_key: self._token_budget}):
             return _plain("quota", QUOTA_TEXT)
         draft = handbook_reply(question, self._previous_question(case_id))
-        # "How much is the silk hat?" names no catalog item and no handbook section answers it.
-        # "Did the site show a wrong price?" is a handbook question, so the handbook goes first.
-        if draft.decision == "abstain" and any(phrase in question.lower() for phrase in _CATALOG_PHRASES):
-            return _plain("abstain", "I don't have that item in the catalog.")
+        # "The site showed a wrong price by mistake" is a handbook question that says "price": the handbook,
+        # with the model pick, goes first, and the catalog answers only when it finds nothing.
+        if draft.decision == "abstain" and any(phrase in lowered for phrase in _CATALOG_PHRASES):
+            return _plain("abstain", NOT_IN_CATALOG_TEXT)
         return draft
 
     def _previous_question(self, case_id: uuid.UUID) -> str | None:
@@ -2587,6 +2593,9 @@ _MISSING_FIELDS = ("material", "review", "rating", "weight", "fabric", "color")
 _ORDER_IDS = re.compile(r"\bNS-\d+\b", re.IGNORECASE)
 # A short follow-up that leans on the question before it.
 _FOLLOW_UP = re.compile(r"^\s*(and|also|but|so|then|ok(ay)?|what if|what about|how about)\b", re.IGNORECASE)
+NOT_IN_CATALOG_TEXT = "I don't have that item in the catalog."
+# Phrases that ask about an item. "price" and "final sale" also appear in handbook questions.
+_ITEM_PHRASES = ("in stock", "how much", "what size", "do you sell", "do you carry", "do you stock", "do you have")
 _CATALOG_PHRASES = ("in stock", "how much", "price", "final sale", "what size", "do you sell", "do you carry", "do you stock", "do you have")
 
 

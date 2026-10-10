@@ -108,3 +108,14 @@ def test_no_order_has_a_delivery_date_before_it_is_delivered():
 
     for order_id, _email, status, *_rest, delivered_on, _category, _shipped in _ORDERS:
         assert (delivered_on is not None) == (status == "delivered"), order_id
+
+
+def test_an_item_question_never_reaches_the_model_pick_but_a_price_policy_question_does(client, monkeypatch):
+    # Stand in for a model pick that always finds a section: only the price policy question may use it.
+    from northstar.handbook import Draft
+
+    answered = Draft("answer", "Northstar sells apparel and home goods. (CO-CATEGORIES)", ("CO-CATEGORIES",), {"CO-CATEGORIES": "weak"}, ())
+    monkeypatch.setattr("northstar.cases.handbook_reply", lambda *_args: answered)
+    specialist, _ = _desk(client)
+    assert _ask(client, specialist, "Do you sell surfboard wax?")["body"] == "I don't have that item in the catalog."
+    assert _ask(client, specialist, "The site showed a wrong price by mistake. Do we have to honor it?")["body"] == answered.text
