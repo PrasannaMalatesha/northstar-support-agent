@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 from psycopg import sql
 
-from northstar.actions import FAMILIES, PROPOSALS, Order, Proposal, Reply, family_decisions, gated, order_id as _order_id, reports_problem
+from northstar.actions import FAMILIES, PROPOSALS, Order, Proposal, Reply, family_decisions, gated, order_id as _order_id, order_ids as _order_ids, reports_problem
 from northstar.clock import Clock
 from northstar.escalate import asks_for_person, handoff, left_message, manual_handoff
 from northstar.graph import TurnTools, resume_turn, run_turn
@@ -2256,7 +2256,7 @@ class CaseStore:
 
         In a customer chat, the order the chat was started with stands in when the request names none.
         """
-        orders = sorted(set(order_id.upper() for order_id in _ORDER_IDS.findall(question)))
+        orders = sorted(_order_ids(question))
         if len(orders) > 1:
             # One proposal is one order and one action. Acting on the first id and dropping the rest is worse.
             return _plain("ask_clarification", f"This asks about more than one order ({', '.join(orders)}). Send one request per order. Nothing is proposed.")
@@ -2590,7 +2590,6 @@ _CATALOG = (
     ("Linen shirt", "apparel and footwear", 5400, "S, M, L", True, False),
 )
 _MISSING_FIELDS = ("material", "review", "rating", "weight", "fabric", "color")
-_ORDER_IDS = re.compile(r"\bNS-\d+\b", re.IGNORECASE)
 # A short follow-up that leans on the question before it.
 _FOLLOW_UP = re.compile(r"^\s*(and|also|but|so|then|ok(ay)?|what if|what about|how about)\b", re.IGNORECASE)
 NOT_IN_CATALOG_TEXT = "I don't have that item in the catalog."

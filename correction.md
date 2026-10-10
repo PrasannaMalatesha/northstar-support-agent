@@ -13,6 +13,19 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-10 — Edge cases from round 3 of the conversation checks
+
+Status: bug
+
+- **Whitespace-only messages.** "   " passed `min_length=1`, was saved as an empty question, and got a model-written refund-eligibility answer. `QuestionBody` now strips whitespace first, so it is refused with 422 and nothing is saved.
+- **Order ids without the dash.** "NS1006" and "ns-1006" were not read as an order. `actions.order_id` reads every spelling and writes back NS-1006. The escalation packet, the more-than-one-order check, and the chat sign-in use it too.
+- **Chat sign-in lockout per order.** Failures counted per email only, so many guessed emails for one order were never locked. Failures now count per email and per order. Trade-off: someone guessing can block one order's chat start for 15 minutes, like any account lockout.
+- **Exchange to the size already owned.** It got "Which size does the customer want?". It now says the item is already that size.
+
+Checked and correct: approving twice is idempotent (the same ticket, one row); script tags are stored as text and React escapes them; SQL-looking text changes nothing; a lead-only route returns 403 to a specialist; a bad case id gives 404; a chat token expires after 30 minutes.
+
+`EDGECASES.md` collects every edge case and error from the project, with the token, cost, and speed work.
+
 ## 2026-10-10 — Fixes from the end-to-end check
 
 Status: bug
