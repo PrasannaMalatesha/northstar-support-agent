@@ -13,6 +13,40 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-10 — Fixes from the conversation check
+
+Status: bug
+
+What broke (results/conversation_check_2026-10-09.md and the browser demo):
+- **The customer chat ignored its order.** "My desk lamp arrived broken, I want my money back" in a chat started on NS-1011 got "Which order id?". The chat token carried only the customer.
+- **A complaint naming a product got the catalog row.** "The rain jacket leaks at the seams" got price and stock. "seams" did not match the defect pattern (`\bseam\b`), "leaks" was not in it, and any message naming a product went to the catalog.
+- **"She will sue us" was not escalated.** ESC-LEGAL matched only the words chargeback, lawyer, lawsuit, regulator, and legal advice.
+- **A lost gift card asked for an order.** "lost" made it a lost package.
+- **"Exchange for an XL" asked which size.** Sizes were read only after the word "size".
+- **Handbook misses.** "Does the warranty cover a speaker she dropped?" and "Can we ship an order to Canada?" abstained. Follow-ups such as "what should I tell her about sending it back?" abstained too.
+- **Staff were signed out 15 minutes after sign-in, mid live chat.** The console never used the refresh token. The desk then bounced between `/login` and `/desk`, and the middleware's redirect went to `localhost`.
+
+Evidence for the handbook misses: Pinecone ranked the right section first every time (WAR-EXCLUSIONS 0.673, SHIP-REGIONS 0.633). FlashRank (`ms-marco-MiniLM-L-12-v2`) scored them 0.01 to 0.04, under the 0.2 threshold. A threshold on Pinecone similarity cannot separate them: "Can I pay with cryptocurrency?" also scores 0.633. Every should-abstain question tops out at a 0.02 rerank score, too close to the misses (0.042) for a threshold rule.
+
+Fix:
+- **Chat order.** The chat token carries the order (`ord`) from `/chat/start`, kept on renewal. An action that names no order uses it. Handbook questions are unchanged.
+- **Defects and complaints.** `seams?` and `leak` are defects. A message that names a product and reports a problem is not a catalog question.
+- **Legal and gift cards.** ESC-LEGAL also matches threats to sue, attorneys, court, small claims, and legal action. The name Sue does not match. A lost gift card is not a lost package.
+- **Sizes.** "for an XL", "to a M", and XXS to XXL are read. A size the item is not made in gets "not made in size XL. Sizes: S, M, L" (EXC-STOCK).
+- **Handbook misses.** When the reranker keeps no section, the model (thinking `minimal`) picks among the reranker's own top four, or NONE. It sees the case's previous question. Picked sections are cited as weak. In testing it picked the right section for every miss and NONE for every should-abstain question. "Can I pay with cryptocurrency?" now answers from PAY-METHODS, which lists the accepted methods.
+- **Staff session.** The console renews the API token within its last minute (Auth.js `jwt` callback). Middleware runs on the Node.js runtime, so the page in the same request reuses that one renewal (`apps/web/staff-session.ts`); a rotated refresh token is never spent twice. A refused renewal ends the session, and `/login?expired=1` shows "Your session ended" instead of bouncing. Redirects keep the browser's host. `ACCESS_TOKEN_MINUTES` sets the token life (15 by default, 1.5 in the browser suite).
+- **Token savings.** Thinking is `minimal` for the agent's tool call and `low` for the handbook wording. Translation and the photo check keep the default. The desk tool returns directly, so the agent's unused final call is gone.
+
+Results on the same conversations:
+- Latency p50 2.54 → 0.85 s, p95 7.97 → 4.41 s.
+- Gemini calls per model turn 2.25 → 1.48.
+- Cost per turn $0.00170 → $0.00081 (−53%).
+- Tests: 331 Python and 12 browser tests pass. `test_a_model_that_keeps_asking_stops_after_the_desk_answers` now expects one model call; the old worst case of three cannot happen with `return_direct`.
+
+Open:
+- A stronger reranker would fix the misses at the source. It needs a model download, so it waits for a decision.
+- The labeled hand-over case `chat-three-failures` now uses "Exchange this for another size, please." as its failed turn, because a chat refund now finds its order. LangSmith sync adds by case id, so the old example in the `update-handover` dataset still has the old question. Update it when the trace limit allows.
+
 ## 2026-10-09 — The agent package did not declare langchain
 
 Status: bug
