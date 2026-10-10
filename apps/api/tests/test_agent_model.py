@@ -103,3 +103,18 @@ def test_the_earlier_question_is_given_to_the_picker(monkeypatch):
     monkeypatch.setattr(agent_model, "_picker", lambda: picker)
     agent_model._picked("And to Canada?", _abstained(), "Do you ship to all 50 states?")
     assert "Earlier question in this case: Do you ship to all 50 states?" in picker.seen[0]
+
+
+def test_when_the_reranker_dropped_the_search_s_first_section_the_model_chooses_among_both(monkeypatch):
+    import northstar.agent_model as agent_model
+    from northstar.handbook import Draft
+
+    kept = Draft("answer", "x", ("SHIP-REFUSED", "REF-ELIGIBILITY"), {"SHIP-REFUSED": "strong", "REF-ELIGIBILITY": "strong"}, unsure=("REF-FINAL-SALE",))
+    picker = _Picker("REF-FINAL-SALE")
+    monkeypatch.setattr(agent_model, "_picker", lambda: picker)
+    draft = agent_model._rechecked("Can final sale items be returned?", kept, None)
+    assert draft.citations == ("REF-FINAL-SALE",) and draft.match == {"REF-FINAL-SALE": "weak"}
+    assert "SHIP-REFUSED" in picker.seen[0] and "REF-FINAL-SALE" in picker.seen[0]
+    # NONE or a failed call keeps the reranker's draft.
+    monkeypatch.setattr(agent_model, "_picker", lambda: _Picker("NONE"))
+    assert agent_model._rechecked("Can final sale items be returned?", kept, None) is kept

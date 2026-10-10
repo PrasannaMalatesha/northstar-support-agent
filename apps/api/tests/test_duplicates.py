@@ -46,8 +46,26 @@ def test_a_completed_cancel_blocks_a_second_cancel_but_not_another_action(client
     assert again["messages"][-1]["decision"] == "duplicate"
     assert ticket in again["messages"][-1]["body"]
 
-    other = _ask(client, specialist, "Change the address on order NS-1004 to 12 Oak St, Austin TX 78701.")
-    assert other["action"] == "address_change"
+    # Nothing else changes on a cancelled order (ORD-CANCEL), so another family is checked the other way round.
+    cancelled = _ask(client, specialist, "Change the address on order NS-1004 to 12 Oak St, Austin TX 78701.")
+    assert cancelled["messages"][-1]["citations"] == ["ORD-CANCEL"]
+
+
+def test_a_completed_address_change_blocks_a_second_one_but_not_a_cancel(client, clock):
+    specialist = _login(client, "specialist@northstar.example", "northstar-specialist")
+    lead = _login(client, "lead@northstar.example", "northstar-lead")
+    client.post("/cases/current/customer", headers=specialist, json={"query": "mira.shah@northstar.example"})
+    first = _ask(client, specialist, "Change the address on order NS-1004 to 12 Oak St, Austin TX 78701.")
+    ticket = client.post(f"/approvals/{first['id']}/approve", headers=lead).json()["ticket_id"]
+
+    clock.advance(seconds=1)
+    _next_case(client, specialist)
+    again = _ask(client, specialist, "Change the address on order NS-1004 to 40 Elm Ave, Round Rock TX 78664.")
+    assert again["messages"][-1]["decision"] == "duplicate"
+    assert ticket in again["messages"][-1]["body"]
+
+    other = _ask(client, specialist, "Cancel order NS-1004.")
+    assert other["action"] == "cancel"
     assert other["status"] == "Waiting for approval"
 
 

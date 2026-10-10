@@ -73,11 +73,18 @@ def retrieved_answer(question: str, directory: Path | None = None) -> Draft:
         match[section_id] = "strong" if float(row["score"]) >= best * 0.75 else "weak"
     if not lines:
         return _abstain()
-    return Draft("answer", "\n".join(lines), tuple(citations), match)
+    first = str(picked[0][0])
+    unsure = (first,) if _vector_search() and first not in citations and _rule(bodies[first]) else ()
+    return Draft("answer", "\n".join(lines), tuple(citations), match, unsure=unsure)
+
+
+def _vector_search() -> bool:
+    """Candidates come from Pinecone, ranked by similarity. Tests and keyless runs use word overlap."""
+    return not os.environ.get("PYTEST_CURRENT_TEST") and bool(os.environ.get("PINECONE_API_KEY"))
 
 
 def _candidates(question: str, sections: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    if os.environ.get("PYTEST_CURRENT_TEST") or not os.environ.get("PINECONE_API_KEY"):
+    if not _vector_search():
         return _overlap(question, sections)
     return _pinecone_top(question)
 

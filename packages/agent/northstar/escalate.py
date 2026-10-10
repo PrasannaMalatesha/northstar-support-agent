@@ -20,7 +20,8 @@ _LEGAL = re.compile(
     re.IGNORECASE,
 )
 _FRAUD = re.compile(
-    r"\b(did not|didn't|never) (place|make|buy|order)\b|\bnot my order\b|\baccount (was |got |has been )?(hacked|taken over)\b",
+    r"\b(did not|didn't|never) (place|placed|make|made|buy|bought|order|ordered|authorize|authorized)\b"
+    r"|\bnot my order\b|\baccount (was |got |has been )?(hacked|taken over)\b",
     re.IGNORECASE,
 )
 _CONFLICT = re.compile(
