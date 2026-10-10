@@ -36,3 +36,12 @@ def test_do_you_sell_asks_the_catalog_and_a_policy_question_still_reaches_the_ha
     assert _ask(client, "Do you sell surfboard wax?") == "I don't have that item in the catalog."
     assert _ask(client, "Do you carry the wool coat?").startswith("Wool coat. Category: apparel and footwear.")
     assert "(GC-TERMS)" in _ask(client, "Do you have gift cards that expire?")
+
+
+def test_a_complaint_that_names_an_item_is_not_answered_with_its_catalog_row(client):
+    body = _ask(client, "The rain jacket I bought is the wrong color.")
+    assert "Price:" not in body
+
+
+def test_a_catalog_question_still_gets_the_catalog_row(client):
+    assert "Price: $96.00" in _ask(client, "Is the rain jacket in stock?")

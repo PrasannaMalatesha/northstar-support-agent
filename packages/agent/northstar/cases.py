@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 from psycopg import sql
 
-from northstar.actions import FAMILIES, PROPOSALS, Order, Proposal, Reply, family_decisions, gated, order_id as _order_id
+from northstar.actions import FAMILIES, PROPOSALS, Order, Proposal, Reply, family_decisions, gated, order_id as _order_id, reports_problem
 from northstar.clock import Clock
 from northstar.escalate import asks_for_person, handoff, left_message, manual_handoff
 from northstar.graph import TurnTools, resume_turn, run_turn
@@ -2358,6 +2358,9 @@ class CaseStore:
         named = [row for row in rows if row["name"].lower() in lowered]
         if named and any(word in lowered for word in _MISSING_FIELDS):
             return _plain("abstain", "The catalog row does not have that field.")
+        if named and reports_problem(question):
+            # "The rain jacket leaks at the seams" is a complaint about an item, not a question about the catalog.
+            return None
         if named:
             return _plain("catalog", "\n".join(_catalog_line(row) for row in named))
         if any(phrase in lowered for phrase in _CATALOG_PHRASES):

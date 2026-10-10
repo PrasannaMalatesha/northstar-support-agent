@@ -250,7 +250,8 @@ _DAMAGED = re.compile(
     re.IGNORECASE,
 )
 _DEFECT = re.compile(
-    r"\bdefect|\bbroke|\bstopped working\b|\bfault|\bcrack|\b(does not|doesn't|won't) (work|turn on|charge)\b|\bseam\b|\bzipper\b",
+    r"\bdefect|\bbroke|\bstopped working\b|\bfault|\bcrack|\b(does not|doesn't|won't) (work|turn on|charge)\b|\bseams?\b|\bzipper\b"
+    r"|\bleak(s|ed|ing)?\b",
     re.IGNORECASE,
 )
 
@@ -412,11 +413,23 @@ def order_id(question: str) -> str | None:
     return match.group(0).upper() if match else None
 
 
+# A lost gift card is a GC-LOST question for the handbook, not a lost package.
+_GIFT_CARD_LOST = re.compile(r"gift ?cards?\b[^.?!]{0,30}\blost\b|\blost\b[^.?!]{0,30}\bgift ?cards?\b")
+# A message that reports a problem with an item. It is a complaint, not a catalog question.
+_PROBLEM = re.compile(r"\b(wrong|problem|issue|complain|itch|faded|shrank|stain|ripped|torn|tear)", re.IGNORECASE)
+
+
+def reports_problem(text: str) -> bool:
+    return any(pattern.search(text) for pattern in (_DEFECT, _DAMAGED, re.compile(_NOT_ARRIVED, re.IGNORECASE), _PROBLEM))
+
+
 def gated(question: str) -> GatedAction | None:
     if order_id(question) is None and _POLICY_QUESTION.match(question):
         return None
     lowered = question.lower()
     for action in ACTIONS:
+        if action.kind == "shipment" and _GIFT_CARD_LOST.search(lowered):
+            continue
         if action.pattern.search(lowered):
             return action
     return None

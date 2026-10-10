@@ -47,3 +47,13 @@ def test_the_waiting_list_shows_action_details_and_amount(client):
     assert row["amount_cents"] == 12800
     assert row["details"] == ""
     assert row["order_id"] == "NS-1001"
+
+
+def test_a_leak_or_a_split_seam_is_a_defect_and_a_lost_gift_card_is_not_a_lost_package():
+    assert gated("The rain jacket leaks at the seams.").kind == "warranty_claim"
+    assert gated("The seams on my coat came apart.").kind == "warranty_claim"
+    lost_card = gated("A customer lost the physical gift card she was given. Can we replace it?")
+    assert lost_card is None or lost_card.kind != "shipment"
+    assert gated("My gift card was lost in the move.") is None or gated("My gift card was lost in the move.").kind != "shipment"
+    assert gated("Order NS-1009 is lost.").kind == "shipment"
+    assert gated("Order NS-1009 never arrived.").kind == "shipment"
