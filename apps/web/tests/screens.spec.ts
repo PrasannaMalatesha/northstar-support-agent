@@ -572,3 +572,20 @@ test("a specialist declines a live chat offer, and the customer keeps waiting", 
 
   await specialistContext.close();
 });
+
+test("a specialist stays signed in after the API token is renewed", async ({ page }) => {
+  // The suite's API tokens last 90 seconds and are renewed in their last minute.
+  test.setTimeout(120_000);
+  await signIn(page, "specialist@northstar.example", "northstar-specialist");
+  await page.waitForTimeout(35_000);
+  await page.goto("/desk");
+  await expect(page.getByRole("heading", { name: "Case desk" })).toBeVisible();
+  await page.getByLabel("Customer email or phone").fill("mira.shah@northstar.example");
+  await page.getByRole("button", { name: "Bind" }).click();
+  await expect(page.getByText("Mira Shah")).toBeVisible();
+  // The renewed token keeps working on the next request too.
+  await page.waitForTimeout(35_000);
+  await page.reload();
+  await expect(page.getByText("Mira Shah")).toBeVisible();
+  await expect(page).toHaveURL(/\/desk/);
+});

@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://northstar:northstar@localhost:5433/northstar"
     token_secret: str = "local-dev-token-secret-at-least-32-chars"
     console_origin: str = "http://localhost:3000"
+    # Minutes a staff API token lasts. The console renews it with the refresh token shortly before it ends.
+    access_token_minutes: float = Field(default=defaults.ACCESS_TOKEN_MINUTES, gt=1)
     request_limit: int = defaults.REQUEST_LIMIT
     daily_token_budget: int = defaults.DAILY_TOKEN_BUDGET
     # Agent turns a day for each chat customer, and for all chat customers together (issue #134).

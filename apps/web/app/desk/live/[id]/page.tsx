@@ -52,7 +52,7 @@ async function liveId(formData: FormData): Promise<{ id: string; access: string 
   }
   const access = await accessToken();
   if (!access) {
-    redirect("/login");
+    redirect("/login?expired=1");
   }
   return { id, access };
 }
@@ -109,11 +109,11 @@ export default async function LiveChatPage({
   const { error } = await searchParams;
   const session = await auth();
   if (!session?.user) {
-    redirect("/login");
+    redirect("/login?expired=1");
   }
   const access = await accessToken();
   if (!access) {
-    redirect("/login");
+    redirect("/login?expired=1");
   }
   const response = await fetch(`${apiUrl}/live`, {
     headers: { Authorization: `Bearer ${access}` },

@@ -121,7 +121,7 @@ def create_app(
     store = PostgresIdentityStore(pool)
     store.ensure_schema()
     seed_staff(store)
-    identity = Identity(store, clock, settings.token_secret)
+    identity = Identity(store, clock, settings.token_secret, settings.access_token_minutes)
     cases = CaseStore(
         pool,
         clock,

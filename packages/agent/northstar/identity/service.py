@@ -15,8 +15,8 @@ from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 
 from northstar.clock import Clock
+from northstar.defaults import ACCESS_TOKEN_MINUTES as ACCESS_MINUTES
 
-ACCESS_MINUTES = 15
 REFRESH_DAYS = 14
 LOCKOUT_FAILURES = 5
 LOCKOUT_MINUTES = 15
@@ -88,10 +88,11 @@ class IdentityStore(Protocol):
 
 
 class Identity:
-    def __init__(self, store: IdentityStore, clock: Clock, token_secret: str) -> None:
+    def __init__(self, store: IdentityStore, clock: Clock, token_secret: str, access_minutes: float = ACCESS_MINUTES) -> None:
         self._store = store
         self._clock = clock
         self._secret = token_secret
+        self._access_minutes = access_minutes
 
     def audit(self, staff_id: uuid.UUID | None, event: str, at: datetime) -> None:
         self._store.audit(staff_id, event, at)
@@ -246,7 +247,7 @@ class Identity:
         return self._store.recent_failure_count(email, since) >= LOCKOUT_FAILURES
 
     def _issue(self, staff: Staff, now: datetime) -> TokenPair:
-        expires = now + timedelta(minutes=ACCESS_MINUTES)
+        expires = now + timedelta(minutes=self._access_minutes)
         access = jwt.encode(
             {
                 "sub": str(staff.id),
@@ -268,7 +269,7 @@ class Identity:
         return TokenPair(
             access_token=access,
             refresh_token=refresh,
-            expires_in=ACCESS_MINUTES * 60,
+            expires_in=int(self._access_minutes * 60),
             staff_id=staff.id,
             name=staff.name,
             role=staff.role,
