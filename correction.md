@@ -13,6 +13,160 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-09 — The agent's email filter hid the published support address
+
+Status: bug
+
+What broke: the first release bar run for the update phase (commit 8972587) failed one gate. English p95 latency was 10.47 s against the 10 s target. Every other gate passed (action correct 100%, Spanish p95 17.07 s, max 4,151 tokens).
+
+Evidence: timing each English test case once on the live desk, 14 of 15 took 2 to 8 s. "What email should a customer use to contact support?" took 11.1 s and 2,496 tokens, about twice the others. The release run repeats each case 3 times, so this one case gave 3 slow turns out of 45. That is enough to fail the p95 on its own.
+
+Debug steps: printing the `create_agent` messages for that question showed the email `PIIMiddleware` redacting `help@northstar.example` from the desk tool's result. The model saw `[REDACTED_EMAIL]`, called the desk again, hit the tool call limit, and needed a third model call to finish. `screen()` already kept the published addresses (#105). The middleware used the built-in email detector, which has no such exception.
+
+Fix: `privacy.detector("email")` uses the same pattern as `screen()` and skips `PUBLISHED_EMAILS`. The graph's email filter uses it. A customer's address is still redacted for the model. The turn now makes the usual two agent calls (2.3 s for the agent step, down from 5.7 s). Test: `test_the_agent_email_filter_keeps_the_published_address`.
+
+## 2026-10-09 — Update phase built (#132 to #145, PR #146)
+
+Status: decision
+
+What changed:
+- **U1, quality within budget:**
+  - Experiments run one code evaluator per row (`code_scores`), one repetition by default, with `--no-upload` and `--router` options (#132).
+  - The release bar runs locally (`evals.experiments release`) and writes `results/release_bar.json`. A CI job on PRs into `uat` checks that file (#133).
+- **U2, limits and a bounded conversation:**
+  - Per-customer chat limits (10 agent turns a day, 500 for all chat customers) in a Postgres `daily_limits` table, counted atomically (#134).
+  - A 45 s turn deadline that skips optional model steps (#135).
+  - After 3 failed turns, the chat suggests a follow-up (#137).
+- **U3, escalations inbox:** leads see escalated cases, specialists pick them up, and a reply reaches the customer's chat (#136).
+- **U4 to U6, live chat** behind `LIVE_CHAT_ENABLED`, off by default:
+  - The tracer bullet (#138).
+  - Offers that move on (#139).
+  - The line and the wait estimate (#140).
+  - Escalations and three failures reach the line (#141).
+  - Quiet customers free the specialist (#142).
+  - Money actions in a live chat (#143).
+- **U7:** the lead's line view and alerts (#144), and hand-over evals and the hand-over reason (#145).
+
+Evidence:
+- After the code review fixes: 317 Python tests, 11 browser tests (axe, three-browser live chat flows), lint, types and build all pass.
+- The two-axis review covered standards and spec. Its fixes are below.
+- Every agreed setting matches its code default.
+
+Debug steps: Each ticket was built in its own worktree with its own test database and merged into `feature/update-phase` only after the full suite passed on the merged result. Browser checks ran under a shared lock, because the suite's ports are fixed.
+
+Fix: Built as planned, with the differences listed in "Built differently" in `docs/plans/update-phase.md`.
+
+Open for Malatesha:
+- Whether the agent keeps answering while an escalation waits in the line. Today it stays quiet.
+- Making "Release bar results" a required check on `uat`.
+- Setting `TOKEN_CAP` from the first real release run.
+- A follow-up PR that moves the live chat code out of `cases.py`.
+- The escalations inbox has no "done" state: an answered escalated case stays listed.
+
+## 2026-10-09 — Code review fixes for the update phase
+
+Status: bug
+
+What broke:
+- **Desk forms:** two desk server actions put the form's case id straight into the API path. A crafted value could send the request to a different route under the specialist's own token.
+- **Tie-break:** ties went by staff id, not "longest since offered".
+- **Offer card:** it lacked the reason and the language.
+- **Spec gaps:**
+  - `POST /live/next` was missing;
+  - the live chat page lacked the customer's orders and history;
+  - chats per specialist was not a setting.
+- **Names:**
+  - "offer" and "handoff" were each used for two things;
+  - the setting name used "agent" for a person.
+- **Code shape:**
+  - settings defaults lived in two places;
+  - the line's timers ran in a different order on each read path.
+
+Evidence: The standards and spec reviews, run in parallel against spec #131 and its tickets.
+
+Fix:
+- **Case ids:** checked before they reach an API path, and typed as UUIDs in the API (a malformed id gets 422).
+- **Tie-break:** `specialist_availability.last_offered_at` decides ties. It is not taken from `live_chat_requests.offered_at`, because a decline clears that row's specialist, which would make the specialist who just declined look never-offered.
+- **Offer card and end reasons:** `language` and `end_reason` columns. Offers show the reason and a Spanish label. The quiet close records `closed_quiet`.
+- **Missing pieces:** `POST /live/next` and a "Take next" button; orders and history on the live chat page; the setting `LIVE_CHATS_PER_SPECIALIST`.
+- **Renames:** `LIVE_CHAT_ENABLED`; the chat's `follow_up` (glossary: Follow-up); `record_handover` and feedback key `handover_reason`.
+- **Code shape:** one defaults module (`northstar/defaults.py`), and one `_tick()` that runs sweep, expire, quiet, then offers, on every read and write path.
+
+## 2026-10-09 — Two shared Postgres connections could open twice under a race
+
+Status: bug
+
+What broke: `preferences._store` and `memory.graph_for` cached their Postgres store and checkpointer without a lock. When the first requests to a fresh process arrived at once, each could open one, and the loser's connection was closed while still in use ("the connection is closed").
+
+Evidence: The concurrency test in #134 hit it, and a new test with eight racing threads fails without the fix.
+
+Fix: A module lock with a second check inside it, in both caches.
+
+## 2026-10-09 — `upload_results=False` still sent traces
+
+Status: bug
+
+What broke: In langsmith 0.14.4, `evaluate(..., upload_results=False)` still posts the LangChain model runs made inside the target and the evaluators. A "local" experiment would have kept using the monthly trace allowance.
+
+Evidence: Shown with a client that has no server behind it; a test fails if the fix is removed.
+
+Fix: `--no-upload` also turns tracing off around the target and passes `disable_evaluator_tracing=True` (#132).
+
+## 2026-10-09 — Ending a live chat could drop a waiting proposal
+
+Status: bug
+
+What broke: Resolving or escalating a live chat whose case waited for a lead overwrote the case status. The proposal silently left the lead's approval list.
+
+Evidence: Found while building #143.
+
+Fix: `ProposalWaiting`: a live chat cannot be ended, by hand or by the quiet-customer close, while its case waits for a lead (#143, #142).
+
+## 2026-10-09 — Browser tests failed only in the main checkout
+
+Status: bug (local setup, not product code)
+
+What broke: The first two browser tests failed on the integration branch with "Application error". The login page crashed with `__webpack_modules__[moduleId] is not a function`.
+
+Evidence:
+- An old `next dev` server on port 3000 (started 2026-10-06) runs from the same `apps/web` folder and shares its `.next` cache with the suite's dev server.
+- From a separate worktree with its own cache, all 11 browser tests pass.
+- A first guess, that a slow model turn was the cause, was wrong. Its test change was reset before it was pushed.
+
+Fix: Browser checks run from a separate worktree, or after stopping the old server. Nothing in the product changed.
+
+## 2026-10-09 — Update phase grilled and settled
+
+Status: decision
+
+What changed: Malatesha and the plan went through four rounds of questions. Every open setting is now agreed. Specialists take live chats, and leads only approve. A specialist holds 2 live chats at once. An offer has 45 seconds to be accepted. Quiet-customer timers are 2, 3, and 15 minutes. The wait cap is 20 minutes, and a customer who stops refreshing for 2 minutes leaves the line. After 3 failed turns the chat offers a person. Each chat customer gets 10 agent turns a day, and all chat customers 500. The release bar runs locally with a results file that CI checks, because CI holds no keys. Spanish has its own p95 target of 20 s. "Handoff" keeps its meaning (the packet). A customer's request for a person is a "live chat request" waiting in "the line" (`CONTEXT.md`).
+
+Evidence: The decisions are listed in `docs/plans/update-phase.md` (agreed settings) and `prd.md` (R34 to R49, Open points). The line's design is recorded in `docs/adr/0001-live-chat-line-in-postgres.md`.
+
+Fix: Documentation only. Building starts at U1 when Malatesha asks.
+
+## 2026-10-09 — Update phase planned: production readiness and live human support
+
+Status: decision
+
+What changed: Slices 1 to 3 are built, but an end-to-end check and a review found gaps for real customers. Chat customers share one model budget. Request limits live in memory. Escalated chats have no staff list. The chat token cannot be renewed. Experiments use up the trace allowance. There is no way for a customer to reach a person. `prd.md` now has an update phase (R34 to R49), and `docs/plans/update-phase.md` holds the design and build order (U0 to U7).
+
+Evidence: The code facts are listed under "What the code showed" in the plan. Routing, capacity, the wait estimate, and the timers follow Twilio TaskRouter, Salesforce Omni-Channel, Zendesk, Intercom, and the Postgres docs, as cited in the plan.
+
+Fix: Planned only. U0 is done in #128. The rest waits until Malatesha has grilled the plan and agreed the settings listed under Open points in `prd.md`.
+
+## 2026-10-09 — Model calls had no timeout, stacked retries, and no real step cap
+
+Status: bug
+
+What broke: Nothing visible yet, but there were three limits missing. (1) The Gemini client had `timeout=None` and `max_retries=6`. google-genai counts that as 6 attempts including the first, and `ModelRetryMiddleware(max_retries=2)` repeats the whole call 3 times, so one model call could make up to 18 requests, each with no time limit. (2) No `recursion_limit` was set, and the installed LangGraph 1.2.14 defaults to 10007 supersteps (`langgraph/_internal/_config.py`), not the 25 the docs page shows. (3) The background groundedness judge on OpenRouter had no timeout either.
+
+Evidence: Read `HttpRetryOptions.attempts` ("Maximum number of attempts, including the original request") and `retry_args` in google-genai 2.28.0, and how langchain-google-genai 4.4.0 passes `timeout` and `max_retries`. Counted supersteps on a live turn: the router takes 3; the agent takes 12 per model call because every middleware hook is its own step. Probed the limit with a scripted model: a normal agent turn needs 26, and the worst case `run_limit=3` allows needs 43.
+
+Fix: Every model call now gets at most 3 attempts of at most 20 s each, and only one layer retries. Calls outside `create_agent` (wording, translation, photo) let the client retry (`max_retries=3`). The agent's model and fallback make one attempt each, and `ModelRetryMiddleware` retries. The router runs with `recursion_limit=10` and the agent subgraph with its own `recursion_limit=50`. It is set on the agent's call, because the router's config would otherwise carry over. The background judge has `timeout=30, max_retries=1`. A live check with every model call forced to time out: the handbook answer and the damaged-item refund still came back from the desk rules, the Spanish turn abstained instead of guessing, and no turn hung.
+
+Also found: the LangSmith monthly limit was used up by experiments, not retries. A retry stays inside its trace. This month: 3,855 evaluator traces (3,852 on 2026-10-08), about 1,165 experiment traces, and 158 app traces. Each experiment row adds one trace per evaluator. Next: one evaluator that returns several scores, one repetition while developing, and `upload_results=False` for local runs.
+
 ## 2026-10-08 — Customer chat stuck after an escalation, and a silent desk tool failure
 
 Status: bug

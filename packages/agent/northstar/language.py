@@ -55,12 +55,16 @@ def to_spanish(draft: Draft) -> Draft:
 
 
 def _translate(instruction: str, text: str) -> str:
-    from northstar.agent_model import _load_local_env, _model, reply_text
+    from northstar.agent_model import DIRECT_ATTEMPTS, _load_local_env, _model, attempts_left, reply_text
 
     _load_local_env()
     if os.environ.get("PYTEST_CURRENT_TEST") or not os.environ.get("GOOGLE_API_KEY"):
         return ""
+    attempts = attempts_left(DIRECT_ATTEMPTS)
+    if not attempts:  # the turn's deadline is close: the text stays untranslated
+        return ""
     try:
-        return reply_text(_model().invoke([{"role": "system", "content": instruction}, {"role": "user", "content": text}]))
+        message = [{"role": "system", "content": instruction}, {"role": "user", "content": text}]
+        return reply_text(_model().invoke(message, max_retries=attempts))
     except Exception:
         return ""

@@ -12,6 +12,10 @@ _Avoid_: User, client, shopper, account
 The staff member who works a case in the console.
 _Avoid_: Agent (the person), rep, user
 
+**Agent**:
+The AI that drafts replies and proposals for a case. It never approves a gated action and never stands in for a person.
+_Avoid_: Agent (meaning a person), bot, assistant
+
 **Lead**:
 The only staff member who may approve, edit, or reject a gated action. Never the person who proposed it.
 _Avoid_: Manager, admin
@@ -103,3 +107,36 @@ _Avoid_: Exchange, when the customer wants a different size or color
 **Store credit**:
 Credit Northstar holds for that customer, with no expiry and no transfer to someone else. It is not cash and not a gift card.
 _Avoid_: Refund, when the money goes back to the original payment method
+
+**Live chat request**:
+A customer's request, in the customer chat, to talk with a specialist. It waits in the line until a specialist accepts it.
+_Avoid_: Handoff, transfer, ticket
+
+**Live chat**:
+A customer chat that a specialist has accepted. While it lasts, the specialist replies and the agent does not.
+_Avoid_: Session, live agent chat
+
+**Line**:
+The live chat requests waiting for a specialist, in the order they will be offered.
+_Avoid_: Queue (the approval queue is the lead's), backlog
+
+**Escalations inbox**:
+The staff list of escalated cases with their handoffs. Leads see all of them. A specialist picks one up to work it.
+_Avoid_: Escalation queue, follow-up list
+
+**Offer**:
+One live chat request shown to one specialist, who accepts or declines it within a short window. An offer that is not accepted goes to the next specialist.
+_Avoid_: Assignment, before the specialist accepts
+
+**Available**:
+A specialist who is signed in and ready to take live chats, up to their own number of chats at once. Otherwise they are away.
+_Avoid_: Online, when the specialist has stepped away
+
+**Left message**:
+What a customer leaves when no specialist is available or the wait is too long. It becomes an escalated case, and the reply appears in that customer's chat.
+_Avoid_: Ticket, email, voicemail
+
+**Follow-up**:
+What the customer chat suggests when the agent cannot help: leave a message, or talk to a person. The customer decides.
+_Avoid_: Offer (an offer goes to a specialist), escalation
+

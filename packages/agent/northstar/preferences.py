@@ -9,6 +9,7 @@ https://docs.langchain.com/oss/python/langgraph/stores
 from __future__ import annotations
 
 import re
+import threading
 
 _CHANNEL = re.compile(
     r"\b(prefer|prefers|rather|contact me|reach me|reply to me|get back to me)\b[^.?!]*?\b(?P<channel>email|e-mail|phone|call|text|sms)\b",
@@ -17,6 +18,8 @@ _CHANNEL = re.compile(
 _CHANNELS = {"email": "email", "e-mail": "email", "phone": "phone", "call": "phone", "text": "text", "sms": "text"}
 # conninfo -> (context, store). The context is kept: dropping it closes the connection.
 _OPEN: dict[str, tuple[object, object]] = {}
+# Two first requests at once must not both open a store; the loser's would be closed while in use.
+_LOCK = threading.Lock()
 
 
 def stated(question: str) -> dict[str, str]:
@@ -34,11 +37,15 @@ def _store(conninfo: str):
         return cached[1]
     from langgraph.store.postgres import PostgresStore
 
-    context = PostgresStore.from_conn_string(conninfo)
-    store = context.__enter__()
-    store.setup()
-    _OPEN[conninfo] = (context, store)
-    return store
+    with _LOCK:
+        cached = _OPEN.get(conninfo)
+        if cached is not None:
+            return cached[1]
+        context = PostgresStore.from_conn_string(conninfo)
+        store = context.__enter__()
+        store.setup()
+        _OPEN[conninfo] = (context, store)
+        return store
 
 
 def remember(conninfo: str, customer_id, prefs: dict[str, str], stated_on: str) -> None:

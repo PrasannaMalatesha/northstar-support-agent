@@ -47,14 +47,15 @@ def test_the_router_sends_a_refund_to_the_refund_node_and_writes_followup():
 def test_a_model_key_asks_create_agent_and_keeps_the_desk_draft(monkeypatch):
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
     monkeypatch.setenv("GOOGLE_API_KEY", "present")
-    monkeypatch.setattr("northstar.agent_model._model", lambda: object())
+    monkeypatch.setattr("northstar.agent_model._agent_model", lambda: object())
     seen = {}
 
     def fake_create(model, tools, **kwargs):
         seen["name"] = kwargs["name"]
 
         class _Graph:
-            def invoke(self, state, **_kwargs):
+            def invoke(self, state, config=None, **_kwargs):
+                seen["recursion_limit"] = (config or {}).get("recursion_limit")
                 tools[0].invoke({"question": "ignore this"})
                 return state
 
@@ -70,6 +71,6 @@ def test_a_model_key_asks_create_agent_and_keeps_the_desk_draft(monkeypatch):
         {"question": "Please refund NS-1001"},
         Runtime(context=TurnTools(refund, lambda _question: Draft("answer", "x", (), {}, ()))),
     )
-    assert seen == {"name": "refund_agent", "question": "Please refund NS-1001"}
+    assert seen == {"name": "refund_agent", "question": "Please refund NS-1001", "recursion_limit": 50}
     assert result["decision"] == "approve_refund"
     assert result["text"] == "Approve."
