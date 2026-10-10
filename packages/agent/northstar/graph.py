@@ -179,7 +179,7 @@ def _middleware(held: dict) -> list:
         fallback, models = None, 1
     return [
         pii("secret", "block", detector("secret")),
-        pii("email", "redact"),
+        pii("email", "redact", detector("email")),
         pii("credit_card", "mask"),
         pii("phone", "redact", detector("phone")),
         ModelCallLimitMiddleware(run_limit=3, exit_behavior="end"),
