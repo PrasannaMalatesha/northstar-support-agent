@@ -26,10 +26,10 @@ def _say(client, chat, question: str) -> dict:
     return sent.json()
 
 
-def _offer(client, chat):
+def _follow_up(client, chat):
     state = client.get("/chat/state", headers=chat)
     assert state.status_code == 200, state.text
-    return state.json()["offer"]
+    return state.json()["follow_up"]
 
 
 def _staff(client, email, password) -> dict:
@@ -46,12 +46,12 @@ def _failed_three_times(client) -> dict:
 
 def test_three_failed_turns_in_a_row_offer_to_leave_a_message(client):
     chat = _chat(client)
-    assert client.get("/chat/state", headers=chat).json() == {"offer": None, "live_enabled": False, "live": None}
+    assert client.get("/chat/state", headers=chat).json() == {"follow_up": None, "live_enabled": False, "live": None}
     for question in OFF_TOPIC[:2]:
         assert _say(client, chat, question)["messages"][-1]["text"].startswith("No handbook section covers that.")
-        assert _offer(client, chat) is None
+        assert _follow_up(client, chat) is None
     _say(client, chat, OFF_TOPIC[2])
-    assert client.get("/chat/state", headers=chat).json() == {"offer": "leave_message", "live_enabled": False, "live": None}
+    assert client.get("/chat/state", headers=chat).json() == {"follow_up": "leave_message", "live_enabled": False, "live": None}
     # The chat view keeps its shape. The offer is only in /chat/state.
     assert set(client.get("/chat", headers=chat).json()) == {"status", "messages"}
 
@@ -62,7 +62,7 @@ def test_a_clarification_and_a_failed_lookup_count_as_failed_turns(client, monke
     assert _say(client, chat, "Please refund my order.")["messages"][-1]["text"].startswith("Which order id?")
     monkeypatch.setattr("northstar.cases.handbook_reply", lambda _q: Draft("lookup_failed", LOOKUP_FAILED_TEXT, (), {}, ()))
     _say(client, chat, "Tell me a joke.")
-    assert _offer(client, chat) == "leave_message"
+    assert _follow_up(client, chat) == "leave_message"
 
 
 def test_a_turn_that_helps_resets_the_count(client):
@@ -72,22 +72,22 @@ def test_a_turn_that_helps_resets_the_count(client):
     assert "REF-CATEGORY" in _say(client, chat, HELPS)["messages"][-1]["text"]
     _say(client, chat, OFF_TOPIC[0])
     _say(client, chat, OFF_TOPIC[1])
-    assert _offer(client, chat) is None
+    assert _follow_up(client, chat) is None
     _say(client, chat, OFF_TOPIC[2])
-    assert _offer(client, chat) == "leave_message"
+    assert _follow_up(client, chat) == "leave_message"
     # A turn that helps after the offer withdraws it.
     _say(client, chat, HELPS)
-    assert _offer(client, chat) is None
+    assert _follow_up(client, chat) is None
 
 
-@pytest.mark.parametrize("client", [{"failed_turns_before_offer": 2, "live_agents_enabled": True}], indirect=True)
+@pytest.mark.parametrize("client", [{"failed_turns_before_follow_up": 2, "live_chat_enabled": True}], indirect=True)
 def test_the_count_and_the_live_chat_switch_are_settings(client):
     chat = _chat(client)
     _say(client, chat, OFF_TOPIC[0])
-    assert _offer(client, chat) is None
+    assert _follow_up(client, chat) is None
     _say(client, chat, OFF_TOPIC[1])
     # With live chat on, the offer is a person (issue #141).
-    assert client.get("/chat/state", headers=chat).json() == {"offer": "talk_to_person", "live_enabled": True, "live": None}
+    assert client.get("/chat/state", headers=chat).json() == {"follow_up": "talk_to_person", "live_enabled": True, "live": None}
 
 
 def test_a_message_is_left_only_while_the_offer_stands(client):
@@ -117,7 +117,7 @@ def test_a_left_message_is_screened_and_becomes_an_escalated_case_in_the_inbox(c
     assert view["messages"][-1] == {"role": "assistant", "text": LEFT}
     assert view["status"] == f"A specialist will follow up with you. {COME_BACK_TEXT}"
     # The offer ends with the left message, and a second one is refused.
-    assert _offer(client, chat) is None
+    assert _follow_up(client, chat) is None
     assert client.post("/chat/leave-message", headers=chat, json={"text": "Again."}).status_code == 409
 
     lead = _staff(client, "lead@northstar.example", "northstar-lead")
@@ -152,7 +152,7 @@ def test_a_specialist_picks_up_the_left_message_and_the_reply_reaches_the_chat(c
     # Writing again starts a new chat case, with a fresh count and no offer.
     clock.advance(minutes=5)
     _say(client, chat, OFF_TOPIC[0])
-    assert _offer(client, chat) is None
+    assert _follow_up(client, chat) is None
     assert client.get("/chat", headers=chat).json()["messages"][-1]["text"].startswith("No handbook section covers that.")
 
 

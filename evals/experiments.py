@@ -165,8 +165,8 @@ def _meter():
 def chat_turns(client, inputs: dict) -> dict:
     """A hand-over case in the customer chat (issue #145), through the chat API as a customer uses it.
 
-    The earlier turns set the case up, and only the last turn is timed. The decision is what the chat
-    offers after it: talk_to_person, leave_message, or none.
+    The earlier turns set the case up, and only the last turn is timed. The decision is the chat's
+    follow-up after it: talk_to_person, leave_message, or none.
     """
     started = client.post("/chat/start", json={"order_id": inputs["order_id"], "email": inputs["customer"]})
     chat = {"Authorization": f"Bearer {started.json()['chat_token']}"}
@@ -174,9 +174,9 @@ def chat_turns(client, inputs: dict) -> dict:
         client.post("/chat/messages", headers=chat, json={"question": earlier})
     with _meter() as used:
         body = client.post("/chat/messages", headers=chat, json={"question": inputs["question"]}).json()
-    offer = client.get("/chat/state", headers=chat).json()["offer"]
+    follow_up = client.get("/chat/state", headers=chat).json()["follow_up"]
     reply = body["messages"][-1]["text"]
-    return {"decision": offer or "none", "citations": [], "response": reply, "status": None, "ticket": False, **used}
+    return {"decision": follow_up or "none", "citations": [], "response": reply, "status": None, "ticket": False, **used}
 
 
 def v0(inputs: dict) -> dict:
@@ -223,7 +223,7 @@ class Desk:
         # A hand-over case with live chat on runs on its own app, since the switch is a setting.
         apps = [
             create_app(
-                settings=Settings(database_url=TEST_URL, token_secret=secret, live_agents_enabled=live),
+                settings=Settings(database_url=TEST_URL, token_secret=secret, live_chat_enabled=live),
                 clock=self.clock,
                 pool=self.pool,
             )

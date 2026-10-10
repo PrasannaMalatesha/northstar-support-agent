@@ -298,7 +298,7 @@ def _turn_input(question: str) -> dict:
 
 
 def _upload_then_judge(
-    run_id: str, question: str, decision: str, followup: str, citations: list[str], handoff: str | None = None
+    run_id: str, question: str, decision: str, followup: str, citations: list[str], handover: str | None = None
 ) -> None:
     from langchain_core.tracers.langchain import wait_for_all_tracers
 
@@ -306,8 +306,8 @@ def _upload_then_judge(
 
     wait_for_all_tracers()
     _scrubbed_client().flush()
-    if handoff is not None:
-        online.record_handoff(run_id, handoff)
+    if handover is not None:
+        online.record_handover(run_id, handover)
     online.record_judge(run_id, question, decision, followup, citations, random.random())
 
 
@@ -316,9 +316,9 @@ def run_turn(
     tools: TurnTools,
     graph=None,
     thread_id: str | None = None,
-    handoff: Callable[[str], str] | None = None,
+    handover: Callable[[str], str] | None = None,
 ) -> Draft:
-    """One turn through the router. `handoff` names why the turn handed over, from its decision, for the
+    """One turn through the router. `handover` names why the turn handed over, from its decision, for the
     traced root run (issue #145). A turn without it records no hand-over."""
     from northstar.agent_model import _load_local_env
 
@@ -347,7 +347,7 @@ def run_turn(
 
         # After the turn, off the request: the trace upload (slow when LangSmith rate-limits), then the
         # hand-over reason and the judge on the uploaded root run. A failure is logged by background().
-        reason = handoff(result["decision"]) if handoff else None
+        reason = handover(result["decision"]) if handover else None
         online.background(_upload_then_judge, run_id, question, result["decision"], followup, list(result["citations"]), reason)
     return Draft(
         result["decision"],

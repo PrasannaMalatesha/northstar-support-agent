@@ -10,7 +10,7 @@ from northstar.cases import (
     AmountOutOfBounds,
     CaseClosed,
     CaseStore,
-    NoOffer,
+    NoFollowUp,
     NotInInbox,
     NotYours,
     ProposerCannotApprove,
@@ -122,8 +122,9 @@ def create_app(
         chat_turns_per_customer=settings.chat_turns_per_customer,
         chat_turns_per_day=settings.chat_turns_per_day,
         turn_seconds=settings.turn_deadline_seconds,
-        failed_turns_before_offer=settings.failed_turns_before_offer,
-        live_chats=settings.live_agents_enabled,
+        failed_turns_before_follow_up=settings.failed_turns_before_follow_up,
+        live_chat=settings.live_chat_enabled,
+        chats_per_specialist=settings.live_chats_per_specialist,
         offer_seconds=settings.offer_accept_seconds,
         offers_before_message=settings.offers_before_leave_message,
         missed_offers_before_away=settings.missed_offers_before_away,
@@ -286,15 +287,15 @@ def create_app(
 
     @app.get("/chat/state")
     def chat_state(customer_id=Depends(customer_from_token)) -> dict:
-        # What the chat offers beside the agent (R35), and the customer's live chat request (issue #138).
-        live = cases.live_state(customer_id) if settings.live_agents_enabled else None
-        return {"offer": cases.chat_offer(customer_id), "live_enabled": settings.live_agents_enabled, "live": live}
+        # The chat's follow-up beside the agent (R35), and the customer's live chat request (issue #138).
+        live = cases.live_state(customer_id) if settings.live_chat_enabled else None
+        return {"follow_up": cases.chat_follow_up(customer_id), "live_enabled": settings.live_chat_enabled, "live": live}
 
     @app.post("/chat/leave-message")
     def leave_message(body: ReplyBody, customer_id=Depends(customer_from_token)) -> dict:
         try:
             return cases.leave_message(customer_id, body.text)
-        except NoOffer as exc:
+        except NoFollowUp as exc:
             raise HTTPException(status_code=409, detail="Leaving a message is offered after replies that did not help.") from exc
 
     @app.post("/cases/current/new")
@@ -431,7 +432,7 @@ def create_app(
 
     # Live chat (issue #138). With the setting off, no live chat route exists.
 
-    if settings.live_agents_enabled:
+    if settings.live_chat_enabled:
 
         @app.post("/chat/live")
         def request_live_chat(customer_id=Depends(customer_from_token)) -> dict:

@@ -24,8 +24,8 @@ from northstar.memory import graph_for
 from northstar.photo import describe
 from northstar.agent_model import handbook_reply, turn_deadline
 from northstar.handbook import ABSTAIN_TEXT, Draft, guard_draft
-from northstar import online
-from northstar.online import NO_HANDOFF, record_edit, record_judge
+from northstar import defaults, online
+from northstar.online import NO_HANDOVER, record_edit, record_judge
 from northstar.preferences import recall, remember, stated
 from northstar.retrieve import retrieved_answer
 from northstar.privacy import SECRET_REPLY, has_secret, screen
@@ -244,8 +244,8 @@ class NotYours(Exception):
     """Only the specialist who picked up an escalated chat case replies on it. The same for a live chat."""
 
 
-class NoOffer(Exception):
-    """The chat is not offering to leave a message: the agent's last turns helped, or the case is not open."""
+class NoFollowUp(Exception):
+    """The chat's follow-up is not to leave a message: the agent's last turns helped, or the case is not open."""
 
 
 class ProposalWaiting(Exception):
@@ -257,23 +257,28 @@ class CaseStore:
         self,
         pool,
         clock: Clock,
-        request_limit: int = 60,
-        token_budget: int = 20_000,
-        chat_turns_per_customer: int = 10,
-        chat_turns_per_day: int = 500,
-        turn_seconds: float = 45,
-        failed_turns_before_offer: int = 3,
-        live_chats: bool = False,
-        offer_seconds: float = 45,
-        offers_before_message: int = 3,
-        missed_offers_before_away: int = 2,
-        check_in_seconds: float = 60,
-        line_gone_minutes: float = 2,
-        longest_wait_minutes: float = 20,
-        wait_history_days: int = 7,
-        wait_history_chats: int = 5,
-        quiet_minutes: tuple[float, float, float] = (2, 3, 15),
-        quiet_specialist_minutes: float = 2,
+        request_limit: int = defaults.REQUEST_LIMIT,
+        token_budget: int = defaults.DAILY_TOKEN_BUDGET,
+        chat_turns_per_customer: int = defaults.CHAT_TURNS_PER_CUSTOMER,
+        chat_turns_per_day: int = defaults.CHAT_TURNS_PER_DAY,
+        turn_seconds: float = defaults.TURN_DEADLINE_SECONDS,
+        failed_turns_before_follow_up: int = defaults.FAILED_TURNS_BEFORE_FOLLOW_UP,
+        live_chat: bool = defaults.LIVE_CHAT_ENABLED,
+        chats_per_specialist: int = defaults.LIVE_CHATS_PER_SPECIALIST,
+        offer_seconds: float = defaults.OFFER_ACCEPT_SECONDS,
+        offers_before_message: int = defaults.OFFERS_BEFORE_LEAVE_MESSAGE,
+        missed_offers_before_away: int = defaults.MISSED_OFFERS_BEFORE_AWAY,
+        check_in_seconds: float = defaults.DESK_CHECK_IN_SECONDS,
+        line_gone_minutes: float = defaults.LINE_GONE_MINUTES,
+        longest_wait_minutes: float = defaults.LONGEST_WAIT_MINUTES,
+        wait_history_days: int = defaults.WAIT_HISTORY_DAYS,
+        wait_history_chats: int = defaults.WAIT_HISTORY_CHATS,
+        quiet_minutes: tuple[float, float, float] = (
+            defaults.QUIET_NUDGE_MINUTES,
+            defaults.QUIET_IDLE_MINUTES,
+            defaults.QUIET_CLOSE_MINUTES,
+        ),
+        quiet_specialist_minutes: float = defaults.QUIET_SPECIALIST_MINUTES,
     ) -> None:
         self._pool = pool
         self._clock = clock
@@ -282,8 +287,10 @@ class CaseStore:
         self._chat_turns_per_customer = chat_turns_per_customer
         self._chat_turns_per_day = chat_turns_per_day
         self._turn_seconds = turn_seconds
-        self._failed_turns = failed_turns_before_offer
-        self._live_chats = live_chats
+        self._failed_turns = failed_turns_before_follow_up
+        self._live_chat_enabled = live_chat
+        # The capacity a specialist starts with when they first set Available (user story 61).
+        self._chats_per_specialist = chats_per_specialist
         self._offer_window = timedelta(seconds=offer_seconds)
         self._offers_before_message = offers_before_message
         self._missed_before_away = missed_offers_before_away
@@ -540,7 +547,7 @@ class CaseStore:
         escalated = handoff(asked, self._tried(case_id))
         if escalated is not None:
             section, text = escalated.section, escalated.text
-            if not (self._live_chats and chat_customer is not None and self._escalate_live(case_id, chat_customer, text)):
+            if not (self._live_chat_enabled and chat_customer is not None and self._escalate_live(case_id, chat_customer, text)):
                 self._mark_escalated(case_id, text)
             # Through the graph, so the escalation has a LangGraph trace for the safety rule and the judge.
             fixed = Draft("escalate", text, (section,), {section: "strong"}, ())
@@ -551,7 +558,7 @@ class CaseStore:
         if chat_customer is not None and asks_for_person(asked):
             # The chat offers a person, as after failed turns (R35, R39). Through the graph, like an escalation,
             # so the root run records the hand-over.
-            fixed = _plain(PERSON_REQUESTED, PERSON_TEXT_LIVE if self._live_chats else PERSON_TEXT)
+            fixed = _plain(PERSON_REQUESTED, PERSON_TEXT_LIVE if self._live_chat_enabled else PERSON_TEXT)
             tools = TurnTools(refund=lambda _text: fixed, support=lambda _text: fixed)
             return self._save(case_id, asked_with, reply(self._turn(case_id, asked, tools, handover)), now, by)
         tools = TurnTools(
@@ -561,7 +568,7 @@ class CaseStore:
         return self._save(case_id, asked_with, reply(_noted(self._turn(case_id, asked, tools, handover), note)), now, by)
 
     def _turn(self, case_id: uuid.UUID, question: str, tools: TurnTools, handover=None) -> Draft:
-        return run_turn(question, tools, graph=graph_for(self._pool.conninfo), thread_id=str(case_id), handoff=handover)
+        return run_turn(question, tools, graph=graph_for(self._pool.conninfo), thread_id=str(case_id), handover=handover)
 
     def _handover_reason(self, case_id: uuid.UUID, decision: str) -> str:
         """Why the agent handed this chat turn's customer to a person, or "none" (issue #145).
@@ -572,7 +579,7 @@ class CaseStore:
         """
         if decision == "escalate":
             return "escalated"
-        return self._person_offer(case_id, decision) or NO_HANDOFF
+        return self._person_follow_up(case_id, decision) or NO_HANDOVER
 
     def _save(self, case_id: uuid.UUID, question: str, draft: Draft, now: datetime, by: uuid.UUID | None = None) -> dict:
         """Save the question and the draft. `by` marks a specialist's turn on a chat case, which the customer does not see."""
@@ -1013,17 +1020,17 @@ class CaseStore:
 
     def chat(self, customer_id: uuid.UUID) -> dict:
         case_id = self._chat_case(customer_id)
-        if self._live_chats:
+        if self._live_chat_enabled:
             self._quiet()
             self._refreshed(case_id)
         self._notice_expired()
         return self._chat_view(case_id)
 
     def chat_ask(self, customer_id: uuid.UUID, question: str) -> dict:
-        if self._live_chats:
+        if self._live_chat_enabled:
             self._quiet()
         case_id = self._chat_case(customer_id)
-        if self._live_chats and self._held(case_id):
+        if self._live_chat_enabled and self._held(case_id):
             # A specialist holds this chat, or an escalation waits for one. The agent is quiet: no model call,
             # no limit or budget charge (R46).
             with self._pool.connection() as conn:
@@ -1091,7 +1098,7 @@ class CaseStore:
             status = "A person on our team is reviewing your request. Nothing is approved yet."
         elif row["status"] == "Escalated":
             status = f"A specialist will follow up with you. {COME_BACK_TEXT}"
-        elif self._live_chats and self._still_there(case_id):
+        elif self._live_chat_enabled and self._still_there(case_id):
             status = STILL_THERE_TEXT
         elif ticket:
             status = f"Our team approved your request. Reference {ticket}."
@@ -1101,7 +1108,7 @@ class CaseStore:
             status = "This chat is closed. Write again to start a new one."
         else:
             status = ""
-        if self._live_chats and row["status"] == "Open":
+        if self._live_chat_enabled and row["status"] == "Open":
             status = self._line_text(case_id) or status
         messages, spanish = [], False
         for m in self._chat_messages(case_id):
@@ -1120,12 +1127,12 @@ class CaseStore:
                 messages.append({"role": m["role"], "text": _for_customer(m["decision"], m["body"], spanish)})
         return {"status": status, "messages": messages}
 
-    def chat_offer(self, customer_id: uuid.UUID) -> str | None:
+    def chat_follow_up(self, customer_id: uuid.UUID) -> str | None:
         self._notice_expired()
-        return self._offer(self._chat_case(customer_id))
+        return self._follow_up(self._chat_case(customer_id))
 
-    def _offer(self, case_id: uuid.UUID) -> str | None:
-        """What the chat offers beside the agent, or None.
+    def _follow_up(self, case_id: uuid.UUID) -> str | None:
+        """The chat's follow-up: what it offers the customer beside the agent, or None.
 
         "leave_message" when the line turned the customer away (R41) or no specialist accepted the last
         offer of a live chat (issue #139). After failed turns in a row (R35), or when the customer asked for a
@@ -1133,22 +1140,22 @@ class CaseStore:
         """
         if self._left_line(case_id) in ("refused", "unanswered"):
             return "leave_message"
-        if self._person_offer(case_id):
-            return "talk_to_person" if self._live_chats else "leave_message"
+        if self._person_follow_up(case_id):
+            return "talk_to_person" if self._live_chat_enabled else "leave_message"
         return None
 
     def leave_message(self, customer_id: uuid.UUID, text: str) -> dict:
-        """The customer's message for a specialist, while the offer stands.
+        """The customer's message for a specialist, while the follow-up stands.
 
         The chat case becomes Escalated with a handoff that stands alone, so it lands in the
         escalations inbox. The specialist's reply reaches this chat through the inbox (R38).
         """
         case_id = self._chat_case(customer_id)
-        if self._offer(case_id) != "leave_message":
-            raise NoOffer()
+        if self._follow_up(case_id) != "leave_message":
+            raise NoFollowUp()
         unanswered = self._left_line(case_id) == "unanswered"
         message = screen(text.strip())
-        packet = self._left_message_packet(case_id, message, unanswered, self._person_offer(case_id) == "requested")
+        packet = self._left_message_packet(case_id, message, unanswered, self._person_follow_up(case_id) == "requested")
         now = self._clock.now()
         with self._pool.connection() as conn:
             # The status check is in the update, so a message is left once even when two arrive together.
@@ -1162,7 +1169,7 @@ class CaseStore:
             ).fetchone()
             if escalated is None:
                 conn.rollback()
-                raise NoOffer()
+                raise NoFollowUp()
             conn.execute(
                 "INSERT INTO case_messages (case_id, role, body, created_at) VALUES (%s, 'user', %s, %s)",
                 (case_id, message, now),
@@ -1177,7 +1184,7 @@ class CaseStore:
             conn.commit()
         return self._chat_view(case_id)
 
-    def _person_offer(self, case_id: uuid.UUID, latest: str | None = None) -> str | None:
+    def _person_follow_up(self, case_id: uuid.UUID, latest: str | None = None) -> str | None:
         """Why the open case offers a person after the agent's turns, or None.
 
         "requested" when the last turn was the customer asking for a person (R39). "three_failures" when the
@@ -1338,15 +1345,18 @@ class CaseStore:
     # Live chat (issue #138, ADR 0001): the line is rows in live_chat_requests. One function makes offers.
 
     def set_availability(self, staff_id: uuid.UUID, state: str) -> None:
-        """The specialist's own choice. It clears missed offers and the note that they were set to away."""
+        """The specialist's own choice. It clears missed offers and the note that they were set to away.
+
+        A specialist's first choice starts their capacity at the chats-per-specialist setting.
+        """
         with self._pool.connection() as conn:
             conn.execute(
                 """
-                INSERT INTO specialist_availability (staff_id, state, last_seen) VALUES (%s, %s, %s)
+                INSERT INTO specialist_availability (staff_id, state, capacity, last_seen) VALUES (%s, %s, %s, %s)
                 ON CONFLICT (staff_id) DO UPDATE SET state = EXCLUDED.state, last_seen = EXCLUDED.last_seen,
                     missed_in_a_row = 0, auto_away_at = NULL
                 """,
-                (staff_id, state, self._clock.now()),
+                (staff_id, state, self._chats_per_specialist, self._clock.now()),
             )
             conn.commit()
         if state == "available":
@@ -1495,7 +1505,7 @@ class CaseStore:
         'refused' when the line turned it away (R41), 'unanswered' when no specialist accepted its last
         offer (issue #139). Either way the chat offers to leave a message. None with live chat off.
         """
-        if not self._live_chats:
+        if not self._live_chat_enabled:
             return None
         with self._pool.connection() as conn:
             row = conn.execute(
@@ -1876,7 +1886,7 @@ class CaseStore:
 
     def _notice_expired(self) -> None:
         """Expired offers are noticed whenever the line is read, so no scheduler runs (ADR 0001)."""
-        if self._live_chats and self._expire():
+        if self._live_chat_enabled and self._expire():
             self._assign()
 
     def _check_in(self, staff_id: uuid.UUID) -> bool:

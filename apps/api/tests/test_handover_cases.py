@@ -28,7 +28,7 @@ def test_the_handover_cases_are_new_ids_with_known_offers():
 
 @pytest.mark.parametrize(
     ("client", "case"),
-    [({"live_agents_enabled": case["live"]}, case) for case in HANDOVER_CASES],
+    [({"live_chat_enabled": case["live"]}, case) for case in HANDOVER_CASES],
     indirect=["client"],
     ids=[case["id"] for case in HANDOVER_CASES],
 )
@@ -45,9 +45,9 @@ def reasons(monkeypatch):
     """The hand-over reason of each turn, as run_turn reads it for a traced root run. pytest never traces."""
     seen = []
 
-    def traced(question, tools, graph=None, thread_id=None, handoff=None):
+    def traced(question, tools, graph=None, thread_id=None, handover=None):
         draft = run_turn(question, tools, graph=graph, thread_id=thread_id)
-        seen.append(None if handoff is None else handoff(draft.decision))
+        seen.append(None if handover is None else handover(draft.decision))
         return draft
 
     monkeypatch.setattr(cases, "run_turn", traced)
@@ -82,7 +82,7 @@ def test_asking_for_a_person_offers_to_leave_a_message_and_the_packet_says_why(c
     chat = _chat(client)
     reply = _say(client, chat, PERSON)["messages"][-1]["text"]
     assert reply == cases.PERSON_TEXT
-    assert client.get("/chat/state", headers=chat).json() == {"offer": "leave_message", "live_enabled": False, "live": None}
+    assert client.get("/chat/state", headers=chat).json() == {"follow_up": "leave_message", "live_enabled": False, "live": None}
     left = client.post("/chat/leave-message", headers=chat, json={"text": "Please call me about my coat."})
     assert left.status_code == 200, left.text
     [item] = client.get("/inbox", headers=_lead(client)).json()
@@ -96,13 +96,13 @@ def test_with_live_chat_on_asking_for_a_person_offers_one_and_a_turn_that_helps_
     client.post("/presence", headers=_avery(client), json={"state": "available"})
     chat = _chat(client)
     assert _say(client, chat, PERSON)["messages"][-1]["text"] == cases.PERSON_TEXT_LIVE
-    assert client.get("/chat/state", headers=chat).json()["offer"] == "talk_to_person"
+    assert client.get("/chat/state", headers=chat).json()["follow_up"] == "talk_to_person"
     _say(client, chat, "How long may apparel and footwear be returned?")
-    assert client.get("/chat/state", headers=chat).json()["offer"] is None
+    assert client.get("/chat/state", headers=chat).json()["follow_up"] is None
     _say(client, chat, "Can I speak with a human, please?")
     assert client.post("/chat/live", headers=chat).json() == {"live": {"status": "offered", "specialist": None}}
     # In the line, the offer is gone: a person is on the way.
-    assert client.get("/chat/state", headers=chat).json()["offer"] is None
+    assert client.get("/chat/state", headers=chat).json()["follow_up"] is None
 
 
 class Graph:
@@ -120,7 +120,7 @@ def test_a_traced_turn_hands_its_handover_reason_to_the_upload(monkeypatch):
     jobs = []
     monkeypatch.setattr(online, "background", lambda fn, *args: jobs.append((fn, args)))
     unused = TurnTools(refund=lambda _q: None, support=lambda _q: None)
-    draft = run_turn("Tell me a joke.", unused, graph=Graph(), handoff=lambda decision: f"reason for {decision}")
+    draft = run_turn("Tell me a joke.", unused, graph=Graph(), handover=lambda decision: f"reason for {decision}")
     assert draft.run_id is not None
     assert jobs == [(graph._upload_then_judge, (draft.run_id, "Tell me a joke.", "abstain", "No.", [], "reason for abstain"))]
     jobs.clear()
@@ -140,7 +140,7 @@ def test_the_upload_posts_the_handover_reason_then_the_judge(monkeypatch):
     monkeypatch.setattr(online, "_post_feedback", lambda run_id, score, **fields: calls.append((run_id, score, fields)))
     monkeypatch.setattr(online, "record_judge", lambda *args: calls.append("judge"))
     graph._upload_then_judge("run-1", "I want a person.", "person_requested", "A specialist can join.", [], "requested")
-    assert calls == ["upload", ("run-1", 1, {"key": "handoff_reason", "value": "requested"}), "judge"]
+    assert calls == ["upload", ("run-1", 1, {"key": "handover_reason", "value": "requested"}), "judge"]
     calls.clear()
     graph._upload_then_judge("run-2", "Tell me a joke.", "abstain", "No.", [], None)
     assert calls == ["upload", "judge"]
@@ -149,6 +149,6 @@ def test_the_upload_posts_the_handover_reason_then_the_judge(monkeypatch):
 def test_the_handover_score_is_one_for_a_handover_and_zero_for_none():
     posted = []
     post = lambda run_id, score, **fields: posted.append((run_id, score, fields["value"]))
-    assert [online.record_handoff("run", reason, post) for reason in ("escalated", "none")] == [1, 0]
+    assert [online.record_handover("run", reason, post) for reason in ("escalated", "none")] == [1, 0]
     assert posted == [("run", 1, "escalated"), ("run", 0, "none")]
 

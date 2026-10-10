@@ -21,7 +21,7 @@ from psycopg_pool import ConnectionPool
 from northstar_api.main import create_app
 from northstar_api.settings import Settings
 
-LIVE = [{"live_agents_enabled": True}]
+LIVE = [{"live_chat_enabled": True}]
 MIRA = {"order_id": "NS-1001", "email": "mira.shah@northstar.example"}
 JON = {"order_id": "NS-1002", "email": "jon.hale@northstar.example"}
 SAM = "sam.ortiz@northstar.example"
@@ -105,7 +105,7 @@ def _accepted(client, chat, specialist) -> str:
 
 def test_with_the_setting_off_no_live_chat_route_works(client):
     chat, avery = _chat(client), _avery(client)
-    assert client.get("/chat/state", headers=chat).json() == {"offer": None, "live_enabled": False, "live": None}
+    assert client.get("/chat/state", headers=chat).json() == {"follow_up": None, "live_enabled": False, "live": None}
     assert client.post("/chat/live", headers=chat).status_code == 404
     assert client.post("/chat/renew", headers=chat).status_code == 404
     assert client.post("/presence", headers=avery, json={"state": "available"}).status_code == 404
@@ -118,7 +118,7 @@ def test_with_the_setting_off_no_live_chat_route_works(client):
 def test_a_customer_talks_to_a_specialist_who_resolves_the_case(client, monkeypatch):
     chat, avery = _chat(client), _avery(client)
     _say(client, chat, "How long may apparel and footwear be returned?")
-    assert client.get("/chat/state", headers=chat).json() == {"offer": None, "live_enabled": True, "live": None}
+    assert client.get("/chat/state", headers=chat).json() == {"follow_up": None, "live_enabled": True, "live": None}
 
     # Avery is available: the request is offered to her at once, and the agent still answers.
     assert client.get("/live", headers=avery).json() == {"state": "away", "auto_away_at": None, "offers": [], "chats": []}
@@ -263,11 +263,11 @@ def test_the_offer_to_leave_a_message_is_hidden_while_a_person_is_on_the_way(cli
     for question in ("What is your favorite color?", "Tell me a joke.", "Who won the game last night?"):
         _say(client, chat, question)
     # With live chat on, three failed turns offer a person (issue #141).
-    assert client.get("/chat/state", headers=chat).json()["offer"] == "talk_to_person"
+    assert client.get("/chat/state", headers=chat).json()["follow_up"] == "talk_to_person"
     client.post("/presence", headers=_avery(client), json={"state": "available"})
     client.post("/chat/live", headers=chat)
     assert client.get("/chat/state", headers=chat).json() == {
-        "offer": None,
+        "follow_up": None,
         "live_enabled": True,
         "live": {"status": "offered", "specialist": None},
     }
@@ -292,7 +292,7 @@ def test_the_chat_token_is_renewed_while_a_request_is_open(client, clock):
 def test_ten_customers_and_two_specialists_with_two_slots_each_give_exactly_four_offers(client, clock):
     _add_sam()
     customers = _customers(10)
-    settings = Settings(database_url=TEST_URL, token_secret=SECRET, live_agents_enabled=True)
+    settings = Settings(database_url=TEST_URL, token_secret=SECRET, live_chat_enabled=True)
     # Its own pool: twelve requests at once, each holding a connection while it waits for row locks.
     with ConnectionPool(TEST_URL, min_size=1, max_size=14, kwargs={"row_factory": dict_row}) as pool:
         with TestClient(create_app(settings=settings, clock=clock, pool=pool)) as api:
@@ -324,7 +324,7 @@ def test_ten_customers_and_two_specialists_with_two_slots_each_give_exactly_four
             # More slots, then the assignment run from many threads at once: each slot is filled once.
             with _db() as conn:
                 conn.execute("UPDATE specialist_availability SET capacity = 3")
-            store = CaseStore(pool, clock, live_chats=True)
+            store = CaseStore(pool, clock, live_chat=True)
             start = threading.Barrier(8)
             with ThreadPoolExecutor(max_workers=8) as workers:
                 list(workers.map(lambda _: at_once(store._assign), range(8)))

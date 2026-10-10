@@ -113,7 +113,7 @@ def test_waiting_customers_see_their_place_and_the_wait_as_a_range(client, clock
     # GET /chat keeps its shape, and /chat/state keeps its keys.
     assert set(client.get("/chat", headers=waiting[0]).json()) == {"status", "messages"}
     assert client.get("/chat/state", headers=waiting[0]).json() == {
-        "offer": None,
+        "follow_up": None,
         "live_enabled": True,
         "live": {"status": "waiting", "specialist": None},
     }
@@ -139,7 +139,7 @@ def test_the_line_is_escalated_first_then_oldest(client, clock):
     escalated = customers[4]
     with ConnectionPool(TEST_URL, min_size=1, max_size=1, kwargs={"row_factory": dict_row}) as pool:
         customer_id = CaseStore(pool, clock).chat_customer(escalated["order_id"], escalated["email"])
-        assert CaseStore(pool, clock, live_chats=True).request_live(customer_id, reason="escalated") is True
+        assert CaseStore(pool, clock, live_chat=True).request_live(customer_id, reason="escalated") is True
     escalated_chat = _chat(client, escalated)
     for place, chat in enumerate((escalated_chat, first, second), start=1):
         assert _status(client, chat) == f"You are number {place} in line. {FEW}"
@@ -157,11 +157,11 @@ def test_the_line_is_escalated_first_then_oldest(client, clock):
 def test_with_no_specialist_available_the_customer_may_leave_a_message(client):
     chat = _chat(client)
     assert client.post("/chat/live", headers=chat).json() == {"live": None}
-    assert client.get("/chat/state", headers=chat).json() == {"offer": "leave_message", "live_enabled": True, "live": None}
+    assert client.get("/chat/state", headers=chat).json() == {"follow_up": "leave_message", "live_enabled": True, "live": None}
     assert _status(client, chat) == LINE_REFUSED_TEXT
     # The agent still answers, and the offer stands.
     assert _say(client, chat, "How long is the return window?")["messages"][-1]["role"] == "assistant"
-    assert client.get("/chat/state", headers=chat).json()["offer"] == "leave_message"
+    assert client.get("/chat/state", headers=chat).json()["follow_up"] == "leave_message"
 
     left = client.post("/chat/leave-message", headers=chat, json={"text": "Please call me about my coat."})
     assert left.status_code == 200
@@ -182,7 +182,7 @@ def test_over_the_longest_wait_the_customer_may_leave_a_message(client, clock):
     assert _status(client, first) == "You are number 1 in line. The wait is about 10 to 22 minutes."
 
     second = _join(client, clock, customers[3])
-    assert client.get("/chat/state", headers=second).json() == {"offer": "leave_message", "live_enabled": True, "live": None}
+    assert client.get("/chat/state", headers=second).json() == {"follow_up": "leave_message", "live_enabled": True, "live": None}
     assert _status(client, second) == LINE_REFUSED_TEXT
     assert _line()[-1] == "refused"
 
@@ -192,10 +192,10 @@ def test_over_the_longest_wait_the_customer_may_leave_a_message(client, clock):
     client.post(f"/live/{offer}/resolve", headers=avery)
     clock.advance(seconds=1)
     assert client.post("/chat/live", headers=second).json() == {"live": {"status": "waiting", "specialist": None}}
-    assert client.get("/chat/state", headers=second).json()["offer"] is None
+    assert client.get("/chat/state", headers=second).json()["follow_up"] is None
 
 
-@pytest.mark.parametrize("client", [{"live_agents_enabled": True, "longest_wait_minutes": 30}], indirect=True)
+@pytest.mark.parametrize("client", [{"live_chat_enabled": True, "longest_wait_minutes": 30}], indirect=True)
 def test_the_longest_wait_is_a_setting(client, clock):
     _history(clock, 30, 30, 30, 30, 30)
     customers = _customers(4)
@@ -233,7 +233,7 @@ def test_a_chat_that_stops_refreshing_leaves_the_line_and_rejoins_at_the_back(cl
     assert _status(client, mira) == f"You are number 1 in line. {FEW}"
 
 
-@pytest.mark.parametrize("client", [{"live_agents_enabled": True, "line_gone_minutes": 5}], indirect=True)
+@pytest.mark.parametrize("client", [{"live_chat_enabled": True, "line_gone_minutes": 5}], indirect=True)
 def test_the_time_before_a_quiet_chat_leaves_the_line_is_a_setting(client, clock):
     avery = _avery(client)
     _busy(client, clock, avery, _customers(2))
@@ -256,7 +256,7 @@ def test_the_customer_can_leave_the_line_and_go_back_to_the_agent(client, clock)
     mira, jon = _join(client, clock, MIRA), _join(client, clock, JON)
 
     assert client.delete("/chat/live", headers=mira).json() == {"live": None}
-    assert client.get("/chat/state", headers=mira).json() == {"offer": None, "live_enabled": True, "live": None}
+    assert client.get("/chat/state", headers=mira).json() == {"follow_up": None, "live_enabled": True, "live": None}
     assert client.delete("/chat/live", headers=mira).status_code == 409
     assert _status(client, jon) == f"You are number 1 in line. {FEW}"
     view = _say(client, mira, "How long is the return window?")

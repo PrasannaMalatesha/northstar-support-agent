@@ -182,24 +182,24 @@ test("three replies that did not help offer a person, and a customer turned away
   await page.getByLabel("Email").fill("jon.hale@northstar.example");
   await page.getByRole("button", { name: "Start chat" }).click();
   const person = page.getByRole("heading", { name: "Talk to a person" });
-  const offer = page.getByRole("heading", { name: "Leave a message for a specialist" });
+  const leaveMessage = page.getByRole("heading", { name: "Leave a message for a specialist" });
   for (const question of ["What is your favorite color?", "Tell me a joke.", "Who won the game last night?"]) {
     await expect(person).toHaveCount(0);
     await page.getByLabel("Your message", { exact: true }).fill(question);
     await page.getByRole("button", { name: "Send" }).click();
     await expect(page.getByText(question)).toBeVisible({ timeout: 30_000 });
   }
-  // With live chat on, the offer is a person (issue #141). One button, inside the offer.
+  // With live chat on, the follow-up is a person (issue #141). One button, inside the follow-up.
   await expect(person).toBeVisible();
   await expect(page.getByText("These replies have not helped. A specialist can join this chat.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Talk to a person" })).toHaveCount(1);
-  await expect(offer).toHaveCount(0);
+  await expect(leaveMessage).toHaveCount(0);
   await noViolations(page);
 
   // Nobody is available yet, so the line turns Jon away and the chat offers to leave a message.
   await tabTo(page, "Talk to a person");
   await page.keyboard.press("Enter");
-  await expect(offer).toBeVisible();
+  await expect(leaveMessage).toBeVisible();
   await expect(person).toHaveCount(0);
   await noViolations(page);
 
@@ -209,7 +209,7 @@ test("three replies that did not help offer a person, and a customer turned away
   await page.keyboard.press("Enter");
   await expect(page.getByText("Your message is with our team. A specialist will reply in this chat.")).toBeVisible();
   await expect(page.getByText(/same order id and email to read the reply/)).toBeVisible();
-  await expect(offer).toHaveCount(0);
+  await expect(leaveMessage).toHaveCount(0);
   await noViolations(page);
 
   await signIn(page, "specialist@northstar.example", "northstar-specialist");
