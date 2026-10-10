@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 from psycopg import sql
 
-from northstar.actions import FAMILIES, PROPOSALS, Order, Proposal, Reply, family_decisions, gated, order_id as _order_id
+from northstar.actions import FAMILIES, PROPOSALS, Order, Proposal, Reply, family_decisions, gated, order_id as _order_id, reports_problem
 from northstar.clock import Clock
 from northstar.escalate import asks_for_person, handoff, left_message, manual_handoff
 from northstar.graph import TurnTools, resume_turn, run_turn
@@ -516,10 +516,11 @@ class CaseStore:
         case_id: uuid.UUID | None = None,
         chat_customer: uuid.UUID | None = None,
         staff_turn: bool = False,
+        chat_order: str | None = None,
     ) -> dict:
         # Each turn has a deadline. Optional model steps are skipped when it is close (R36).
         with turn_deadline(self._clock, self._turn_seconds):
-            return self._ask(staff_id, question, photo, case_id, chat_customer, staff_id if staff_turn else None)
+            return self._ask(staff_id, question, photo, case_id, chat_customer, staff_id if staff_turn else None, chat_order)
 
     def _ask(
         self,
@@ -529,6 +530,7 @@ class CaseStore:
         case_id: uuid.UUID | None,
         chat_customer: uuid.UUID | None,
         by: uuid.UUID | None = None,
+        chat_order: str | None = None,
     ) -> dict:
         case_id = case_id or self._open(staff_id)
         if self._status(case_id) != "Open":
@@ -575,7 +577,7 @@ class CaseStore:
             tools = TurnTools(refund=lambda _text: fixed, support=lambda _text: fixed)
             return self._save(case_id, asked_with, reply(self._turn(case_id, asked, tools, handover)), now, by)
         tools = TurnTools(
-            refund=lambda text: self._gated_draft(case_id, staff_id, text, now, note),
+            refund=lambda text: self._gated_draft(case_id, staff_id, text, now, note, chat_order),
             support=lambda text: self._support_draft(case_id, key, text, now),
         )
         return self._save(case_id, asked_with, reply(_noted(self._turn(case_id, asked, tools, handover), note)), now, by)
@@ -1038,7 +1040,7 @@ class CaseStore:
             self._refreshed(case_id)
         return self._chat_view(case_id)
 
-    def chat_ask(self, customer_id: uuid.UUID, question: str) -> dict:
+    def chat_ask(self, customer_id: uuid.UUID, question: str, order_id: str | None = None) -> dict:
         self._tick()
         case_id = self._chat_case(customer_id)
         if self._live_chat_enabled and self._held(case_id):
@@ -1055,7 +1057,7 @@ class CaseStore:
             return self._chat_view(case_id)
         case_id = self._writable(customer_id, case_id)
         # Limits are per customer, so one customer cannot use up the chat for everyone.
-        self.ask(staff_id_for(CHAT_STAFF_EMAIL), question, case_id=case_id, chat_customer=customer_id)
+        self.ask(staff_id_for(CHAT_STAFF_EMAIL), question, case_id=case_id, chat_customer=customer_id, chat_order=order_id)
         return self._chat_view(case_id)
 
     def _writable(self, customer_id: uuid.UUID, case_id: uuid.UUID) -> uuid.UUID:
@@ -2216,14 +2218,28 @@ class CaseStore:
             return catalog
         if not self._take(now.date(), "tokens", TOKENS_PER_TURN, {limit_key: self._token_budget}):
             return _plain("quota", QUOTA_TEXT)
-        return handbook_reply(question)
+        return handbook_reply(question, self._previous_question(case_id))
 
-    def _gated_draft(self, case_id: uuid.UUID, staff_id: uuid.UUID, question: str, now: datetime, note: str = "") -> Draft:
-        """Any request that waits for a lead. The handbook rule for each action lives in northstar.actions."""
+    def _previous_question(self, case_id: uuid.UUID) -> str | None:
+        """The case's last question before this turn, which is saved only after its draft."""
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                "SELECT body FROM case_messages WHERE case_id = %s AND role = 'user' ORDER BY created_at DESC, id DESC LIMIT 1",
+                (case_id,),
+            ).fetchone()
+        return row["body"] if row else None
+
+    def _gated_draft(
+        self, case_id: uuid.UUID, staff_id: uuid.UUID, question: str, now: datetime, note: str = "", chat_order: str | None = None
+    ) -> Draft:
+        """Any request that waits for a lead. The handbook rule for each action lives in northstar.actions.
+
+        In a customer chat, the order the chat was started with stands in when the request names none.
+        """
         action = gated(question)
         if action is None:
             return _plain("ask_clarification", "Which action and which order id? Nothing is proposed.")
-        order_id = _order_id(question)
+        order_id = _order_id(question) or chat_order
         if order_id is None:
             return _plain("ask_clarification", action.missing_order)
         if self._customer(case_id) is None:
@@ -2351,6 +2367,9 @@ class CaseStore:
         named = [row for row in rows if row["name"].lower() in lowered]
         if named and any(word in lowered for word in _MISSING_FIELDS):
             return _plain("abstain", "The catalog row does not have that field.")
+        if named and reports_problem(question):
+            # "The rain jacket leaks at the seams" is a complaint about an item, not a question about the catalog.
+            return None
         if named:
             return _plain("catalog", "\n".join(_catalog_line(row) for row in named))
         if any(phrase in lowered for phrase in _CATALOG_PHRASES):

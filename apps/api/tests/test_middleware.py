@@ -90,12 +90,13 @@ def test_a_secret_stops_the_turn_before_any_model_call(monkeypatch):
     assert model.seen == []
 
 
-def test_a_model_that_keeps_asking_stops_at_three_calls_inside_the_step_cap(monkeypatch):
-    # The worst case run_limit allows: three model calls, each asking for the desk again.
+def test_a_model_that_keeps_asking_stops_after_the_desk_answers(monkeypatch):
+    # A model that would ask for the desk again and again: the desk tool returns directly, so the agent
+    # ends after the first answer. ModelCallLimitMiddleware (3 calls) stays as the backstop.
     model = _use(monkeypatch, _desk_call("1"), _desk_call("2"), _desk_call("3"), _desk_call("4"))
     asked = []
     draft = _agent_draft("When does it ship?", _answer(asked), "support_agent")
-    assert len(model.seen) == 3
+    assert len(model.seen) == 1
     assert len(asked) == 1
     assert draft.citations == ("SHIP-SLA",)
 
