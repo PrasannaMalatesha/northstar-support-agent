@@ -10,8 +10,9 @@ from northstar.cases import (
     AmountOutOfBounds,
     CaseClosed,
     CaseStore,
-    NoOffer,
+    NoFollowUp,
     NotInInbox,
+    NothingToTake,
     NotYours,
     ProposerCannotApprove,
     ProposalNotWaiting,
@@ -85,6 +86,13 @@ class ReplyBody(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
 
 
+class LiveActionBody(BaseModel):
+    # What the specialist asks the agent to do in their live chat, such as "Refund order NS-1001".
+    # It is a turn for the lead's approval list, never a message the customer sees.
+    model_config = ConfigDict(str_strip_whitespace=True)
+    text: str = Field(min_length=1, max_length=2000)
+
+
 class AvailabilityBody(BaseModel):
     state: Literal["available", "away"]
 
@@ -122,8 +130,9 @@ def create_app(
         chat_turns_per_customer=settings.chat_turns_per_customer,
         chat_turns_per_day=settings.chat_turns_per_day,
         turn_seconds=settings.turn_deadline_seconds,
-        failed_turns_before_offer=settings.failed_turns_before_offer,
-        live_chats=settings.live_agents_enabled,
+        failed_turns_before_follow_up=settings.failed_turns_before_follow_up,
+        live_chat=settings.live_chat_enabled,
+        chats_per_specialist=settings.live_chats_per_specialist,
         offer_seconds=settings.offer_accept_seconds,
         offers_before_message=settings.offers_before_leave_message,
         missed_offers_before_away=settings.missed_offers_before_away,
@@ -286,15 +295,15 @@ def create_app(
 
     @app.get("/chat/state")
     def chat_state(customer_id=Depends(customer_from_token)) -> dict:
-        # What the chat offers beside the agent (R35), and the customer's live chat request (issue #138).
-        live = cases.live_state(customer_id) if settings.live_agents_enabled else None
-        return {"offer": cases.chat_offer(customer_id), "live_enabled": settings.live_agents_enabled, "live": live}
+        # The chat's follow-up beside the agent (R35), and the customer's live chat request (issue #138).
+        live = cases.live_state(customer_id) if settings.live_chat_enabled else None
+        return {"follow_up": cases.chat_follow_up(customer_id), "live_enabled": settings.live_chat_enabled, "live": live}
 
     @app.post("/chat/leave-message")
     def leave_message(body: ReplyBody, customer_id=Depends(customer_from_token)) -> dict:
         try:
             return cases.leave_message(customer_id, body.text)
-        except NoOffer as exc:
+        except NoFollowUp as exc:
             raise HTTPException(status_code=409, detail="Leaving a message is offered after replies that did not help.") from exc
 
     @app.post("/cases/current/new")
@@ -409,29 +418,30 @@ def create_app(
             raise HTTPException(status_code=403, detail="Specialists talk to customers. Leads approve.")
         return staff
 
+    # Path ids are typed, so a malformed id is 422 on every inbox and live chat route.
     @app.post("/inbox/{case_id}/pick-up")
-    def pick_up_escalation(case_id: str, staff=Depends(require_specialist)) -> dict:
+    def pick_up_escalation(case_id: uuid.UUID, staff=Depends(require_specialist)) -> dict:
         try:
-            cases.pick_up(staff.id, uuid.UUID(case_id))
+            cases.pick_up(staff.id, case_id)
         except AlreadyPickedUp as exc:
             raise HTTPException(status_code=409, detail="Another specialist picked this up.") from exc
-        except (NotInInbox, ValueError) as exc:
+        except NotInInbox as exc:
             raise HTTPException(status_code=404, detail="This case is not in the inbox.") from exc
         identity.audit(staff.id, "escalation_pick_up", clock.now())
-        return {"case_id": case_id}
+        return {"case_id": str(case_id)}
 
     @app.post("/inbox/{case_id}/reply")
-    def reply_to_escalation(case_id: str, body: ReplyBody, staff=Depends(require_specialist)) -> dict:
+    def reply_to_escalation(case_id: uuid.UUID, body: ReplyBody, staff=Depends(require_specialist)) -> dict:
         try:
-            cases.reply(staff.id, uuid.UUID(case_id), body.text)
-        except (NotYours, ValueError) as exc:
+            cases.reply(staff.id, case_id, body.text)
+        except NotYours as exc:
             raise HTTPException(status_code=403, detail="Pick up this chat case before replying.") from exc
         identity.audit(staff.id, "escalation_reply", clock.now())
-        return {"case_id": case_id}
+        return {"case_id": str(case_id)}
 
     # Live chat (issue #138). With the setting off, no live chat route exists.
 
-    if settings.live_agents_enabled:
+    if settings.live_chat_enabled:
 
         @app.post("/chat/live")
         def request_live_chat(customer_id=Depends(customer_from_token)) -> dict:
@@ -470,6 +480,17 @@ def create_app(
             # The lead's view of the line and its alerts (R49). Read-only: nothing is reassigned from here.
             return cases.line()
 
+        @app.post("/live/next")
+        def take_next_live_chat(staff=Depends(require_specialist)) -> dict:
+            # The specialist takes the next request in line. It is offered to them now, and they accept it as any offer.
+            try:
+                request_id = cases.take_next(staff.id)
+            except NothingToTake as exc:
+                raise HTTPException(
+                    status_code=409, detail="No request is waiting for you, or you are away or have no free slot."
+                ) from exc
+            return {"id": str(request_id)}
+
         @app.post("/live/{request_id}/accept")
         def accept_live_chat(request_id: uuid.UUID, staff=Depends(require_specialist)) -> dict:
             try:
@@ -495,7 +516,7 @@ def create_app(
             return {"id": str(request_id)}
 
         @app.post("/live/{request_id}/actions")
-        def raise_live_action(request_id: uuid.UUID, body: ReplyBody, staff=Depends(require_specialist)) -> dict:
+        def raise_live_action(request_id: uuid.UUID, body: LiveActionBody, staff=Depends(require_specialist)) -> dict:
             # The same turn and rules as the agent, as the specialist. A lead approves what it proposes (R45).
             try:
                 cases.live_action(staff.id, request_id, body.text)

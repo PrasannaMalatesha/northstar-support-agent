@@ -74,11 +74,11 @@ def record_judge(
     return score
 
 
-HANDOFF_KEY = "handoff_reason"
-NO_HANDOFF = "none"
+HANDOVER_KEY = "handover_reason"
+NO_HANDOVER = "none"
 
 
-def record_handoff(run_id: str, reason: str, post=None) -> int:
+def record_handover(run_id: str, reason: str, post=None) -> int:
     """Why a customer chat turn handed over to a person, on its LangGraph root run (issue #145, R35, R39).
 
     The reason is feedback, not run metadata: "three_failures" is known only from the turn's own decision,
@@ -86,8 +86,8 @@ def record_handoff(run_id: str, reason: str, post=None) -> int:
     customer, so the key's mean score is the share of chat turns handed to a person.
     https://docs.langchain.com/langsmith/attach-user-feedback
     """
-    score = int(reason != NO_HANDOFF)
-    (post or _post_feedback)(run_id, score, key=HANDOFF_KEY, value=reason)
+    score = int(reason != NO_HANDOVER)
+    (post or _post_feedback)(run_id, score, key=HANDOVER_KEY, value=reason)
     return score
 
 

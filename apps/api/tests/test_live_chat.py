@@ -21,7 +21,7 @@ from psycopg_pool import ConnectionPool
 from northstar_api.main import create_app
 from northstar_api.settings import Settings
 
-LIVE = [{"live_agents_enabled": True}]
+LIVE = [{"live_chat_enabled": True}]
 MIRA = {"order_id": "NS-1001", "email": "mira.shah@northstar.example"}
 JON = {"order_id": "NS-1002", "email": "jon.hale@northstar.example"}
 SAM = "sam.ortiz@northstar.example"
@@ -94,6 +94,13 @@ def _requests() -> list[dict]:
         return conn.execute("SELECT status, staff_id, customer_id FROM live_chat_requests").fetchall()
 
 
+def _ends() -> list[tuple[str, str | None]]:
+    """Each live chat request's status and end reason, oldest first."""
+    with _db() as conn:
+        rows = conn.execute("SELECT status, end_reason FROM live_chat_requests ORDER BY queued_at, id").fetchall()
+    return [(row["status"], row["end_reason"]) for row in rows]
+
+
 def _accepted(client, chat, specialist) -> str:
     """The specialist sets Available, the customer asks for a person, and the specialist accepts the offer."""
     client.post("/presence", headers=specialist, json={"state": "available"})
@@ -105,20 +112,21 @@ def _accepted(client, chat, specialist) -> str:
 
 def test_with_the_setting_off_no_live_chat_route_works(client):
     chat, avery = _chat(client), _avery(client)
-    assert client.get("/chat/state", headers=chat).json() == {"offer": None, "live_enabled": False, "live": None}
+    assert client.get("/chat/state", headers=chat).json() == {"follow_up": None, "live_enabled": False, "live": None}
     assert client.post("/chat/live", headers=chat).status_code == 404
     assert client.post("/chat/renew", headers=chat).status_code == 404
     assert client.post("/presence", headers=avery, json={"state": "available"}).status_code == 404
     assert client.get("/live", headers=avery).status_code == 404
     for action in ("accept", "decline", "messages", "resolve", "escalate"):
         assert client.post(f"/live/{uuid.uuid4()}/{action}", headers=avery, json={}).status_code == 404
+    assert client.post("/live/next", headers=avery).status_code == 404
 
 
 @pytest.mark.parametrize("client", LIVE, indirect=True)
 def test_a_customer_talks_to_a_specialist_who_resolves_the_case(client, monkeypatch):
     chat, avery = _chat(client), _avery(client)
     _say(client, chat, "How long may apparel and footwear be returned?")
-    assert client.get("/chat/state", headers=chat).json() == {"offer": None, "live_enabled": True, "live": None}
+    assert client.get("/chat/state", headers=chat).json() == {"follow_up": None, "live_enabled": True, "live": None}
 
     # Avery is available: the request is offered to her at once, and the agent still answers.
     assert client.get("/live", headers=avery).json() == {"state": "away", "auto_away_at": None, "offers": [], "chats": []}
@@ -163,6 +171,7 @@ def test_a_customer_talks_to_a_specialist_who_resolves_the_case(client, monkeypa
 
     assert client.post(f"/live/{offer}/resolve", headers=avery).status_code == 200
     assert client.get(f"/cases/{held['case_id']}", headers=_lead(client)).json()["status"] == "Resolved"
+    assert _ends() == [("ended", "resolved")]
     assert client.get("/live", headers=avery).json()["chats"] == []
     assert client.get("/chat/state", headers=chat).json()["live"] is None
     view = client.get("/chat", headers=chat).json()
@@ -196,6 +205,7 @@ def test_an_escalated_live_chat_lands_in_the_escalations_inbox_with_a_handoff(cl
     assert client.get("/chat", headers=chat).json()["status"].startswith("A specialist will follow up with you.")
     assert client.get("/chat/state", headers=chat).json()["live"] is None
     assert _live_events()[-1] == "live_chat_ended"
+    assert _ends() == [("ended", "escalated")]
 
 
 @pytest.mark.parametrize("client", LIVE, indirect=True)
@@ -258,16 +268,119 @@ def test_the_most_spare_capacity_gets_the_offer_and_an_ended_chat_frees_a_slot(c
 
 
 @pytest.mark.parametrize("client", LIVE, indirect=True)
+def test_a_tie_on_spare_capacity_goes_to_whoever_was_offered_work_longest_ago(client, clock):
+    _add_sam()
+    mira, jon, third = _chat(client, MIRA), _chat(client, JON), _chat(client, _customers(1)[0])
+    avery, sam = _avery(client), _sam(client)
+    first = _accepted(client, mira, avery)
+    client.post(f"/live/{first}/resolve", headers=avery)
+
+    # Both have two free slots. Sam was never offered work, so Sam gets the next request.
+    client.post("/presence", headers=sam, json={"state": "available"})
+    clock.advance(seconds=1)
+    client.post("/chat/live", headers=jon)
+    assert client.get("/live", headers=avery).json()["offers"] == []
+    [offer] = client.get("/live", headers=sam).json()["offers"]
+    assert offer["customer"] == "Jon Hale"
+    client.post(f"/live/{offer['id']}/accept", headers=sam)
+    client.post(f"/live/{offer['id']}/resolve", headers=sam)
+
+    # A tie again. Avery was offered work longer ago than Sam, so she gets the next one.
+    clock.advance(seconds=1)
+    client.post("/chat/live", headers=third)
+    assert client.get("/live", headers=sam).json()["offers"] == []
+    assert [offer["customer"] for offer in client.get("/live", headers=avery).json()["offers"]] == ["Live Customer0"]
+
+
+@pytest.mark.parametrize("client", LIVE, indirect=True)
+def test_an_offer_shows_why_the_customer_is_in_the_line_and_their_language(client, clock):
+    mira, jon, avery = _chat(client, MIRA), _chat(client, JON), _avery(client)
+    client.post("/presence", headers=avery, json={"state": "available"})
+    _say(client, mira, "Hola, ¿dónde está mi pedido NS-1009?")
+    client.post("/chat/live", headers=mira)
+    clock.advance(seconds=1)
+    client.post("/chat/live", headers=jon)
+    offers = client.get("/live", headers=avery).json()["offers"]
+    assert [(o["customer"], o["reason"], o["language"]) for o in offers] == [
+        ("Mira Shah", "requested", "es"),
+        ("Jon Hale", "requested", "en"),
+    ]
+
+
+@pytest.mark.parametrize("client", LIVE, indirect=True)
+def test_the_live_chat_shows_the_customers_orders_and_history_panel(client, clock):
+    avery = _avery(client)
+    # An earlier case of Mira's, on Avery's desk.
+    client.post("/cases/current/customer", headers=avery, json={"query": MIRA["email"]})
+    desk = client.get("/cases/current", headers=avery).json()["id"]
+    clock.advance(seconds=1)
+    _accepted(client, _chat(client), avery)
+
+    [held] = client.get("/live", headers=avery).json()["chats"]
+    assert [order["id"] for order in held["orders"]] == [
+        "NS-1004", "NS-1005", "NS-1010", "NS-1006", "NS-1011", "NS-1009", "NS-1003", "NS-1001", "NS-1007", "NS-1008",
+    ]  # fmt: skip
+    assert held["orders"][7] == {
+        "id": "NS-1001",
+        "summary": "Wool coat, size M. Status: delivered. Total: 12800 cents.",
+        "purchased_on": "2026-09-01",
+        "refunds": "none",
+    }
+    # The history panel the case desk shows: the customer's other cases, newest first.
+    assert held["history"] == [{"id": desk, "status": "Open", "outcome": "Open", "refunded_lines": []}]
+
+
+@pytest.mark.parametrize(
+    "client", [{"live_chat_enabled": True, "live_chats_per_specialist": 1, "line_gone_minutes": 30}], indirect=True
+)
+def test_a_specialist_takes_the_next_request_when_a_slot_is_free(client, clock):
+    mira, jon, avery = _chat(client, MIRA), _chat(client, JON), _avery(client)
+    assert client.post("/live/next", headers=_lead(client)).status_code == 403
+    assert client.post("/live/next", headers=avery).status_code == 409  # away
+    client.post("/presence", headers=avery, json={"state": "available"})
+    assert client.post("/live/next", headers=avery).status_code == 409  # nobody waits
+
+    # One live chat per specialist here, so Mira's live chat fills Avery's only slot, and Jon waits.
+    offer = _accepted(client, mira, avery)
+    with _db() as conn:
+        assert conn.execute("SELECT capacity FROM specialist_availability").fetchone()["capacity"] == 1
+    clock.advance(seconds=1)
+    client.post("/chat/live", headers=jon)
+    assert client.get("/chat/state", headers=jon).json()["live"]["status"] == "waiting"
+    assert client.post("/live/next", headers=avery).status_code == 409
+
+    # Mira goes quiet after Avery's message. At 3 minutes her live chat is idle and the slot is free, so
+    # taking the next request offers Jon to Avery at once.
+    client.post(f"/live/{offer}/messages", headers=avery, json={"text": "Is there anything else?"})
+    clock.advance(minutes=3)
+    taken = client.post("/live/next", headers=avery)
+    assert taken.status_code == 200
+    assert [(o["id"], o["customer"]) for o in client.get("/live", headers=avery).json()["offers"]] == [
+        (taken.json()["id"], "Jon Hale")
+    ]
+    assert client.post("/live/next", headers=avery).status_code == 409  # the offer takes the slot
+
+    # Declined, Jon is not offered to Avery again, even when she takes the next request.
+    client.post(f"/live/{taken.json()['id']}/decline", headers=avery)
+    assert client.get("/chat/state", headers=jon).json()["live"]["status"] == "waiting"
+    assert client.post("/live/next", headers=avery).status_code == 409
+
+
+def test_a_specialist_starts_with_two_live_chats_at_once():
+    assert Settings(database_url=TEST_URL).live_chats_per_specialist == 2
+
+
+@pytest.mark.parametrize("client", LIVE, indirect=True)
 def test_the_offer_to_leave_a_message_is_hidden_while_a_person_is_on_the_way(client):
     chat = _chat(client)
     for question in ("What is your favorite color?", "Tell me a joke.", "Who won the game last night?"):
         _say(client, chat, question)
     # With live chat on, three failed turns offer a person (issue #141).
-    assert client.get("/chat/state", headers=chat).json()["offer"] == "talk_to_person"
+    assert client.get("/chat/state", headers=chat).json()["follow_up"] == "talk_to_person"
     client.post("/presence", headers=_avery(client), json={"state": "available"})
     client.post("/chat/live", headers=chat)
     assert client.get("/chat/state", headers=chat).json() == {
-        "offer": None,
+        "follow_up": None,
         "live_enabled": True,
         "live": {"status": "offered", "specialist": None},
     }
@@ -292,7 +405,7 @@ def test_the_chat_token_is_renewed_while_a_request_is_open(client, clock):
 def test_ten_customers_and_two_specialists_with_two_slots_each_give_exactly_four_offers(client, clock):
     _add_sam()
     customers = _customers(10)
-    settings = Settings(database_url=TEST_URL, token_secret=SECRET, live_agents_enabled=True)
+    settings = Settings(database_url=TEST_URL, token_secret=SECRET, live_chat_enabled=True)
     # Its own pool: twelve requests at once, each holding a connection while it waits for row locks.
     with ConnectionPool(TEST_URL, min_size=1, max_size=14, kwargs={"row_factory": dict_row}) as pool:
         with TestClient(create_app(settings=settings, clock=clock, pool=pool)) as api:
@@ -324,7 +437,7 @@ def test_ten_customers_and_two_specialists_with_two_slots_each_give_exactly_four
             # More slots, then the assignment run from many threads at once: each slot is filled once.
             with _db() as conn:
                 conn.execute("UPDATE specialist_availability SET capacity = 3")
-            store = CaseStore(pool, clock, live_chats=True)
+            store = CaseStore(pool, clock, live_chat=True)
             start = threading.Barrier(8)
             with ThreadPoolExecutor(max_workers=8) as workers:
                 list(workers.map(lambda _: at_once(store._assign), range(8)))

@@ -7,6 +7,9 @@ import { Refresh } from "../refresh";
 import { apiUrl, sameSite } from "../same-site";
 import { accessToken } from "./access-token";
 
+// A case or live chat id goes into an API path, so only a 36-character id is sent.
+const ID = /^[0-9a-f-]{36}$/;
+
 async function bindAction(formData: FormData) {
   "use server";
   if (!(await sameSite())) {
@@ -58,7 +61,11 @@ async function editAction(formData: FormData) {
   if (!access) {
     redirect("/login");
   }
-  const edited = await fetch(`${apiUrl}/approvals/${String(formData.get("case_id") ?? "")}/edit`, {
+  const caseId = String(formData.get("case_id") ?? "");
+  if (!ID.test(caseId)) {
+    redirect("/desk");
+  }
+  const edited = await fetch(`${apiUrl}/approvals/${caseId}/edit`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${access}`,
@@ -80,7 +87,11 @@ async function rejectAction(formData: FormData) {
   if (!access) {
     redirect("/login");
   }
-  await fetch(`${apiUrl}/approvals/${String(formData.get("case_id") ?? "")}/reject`, {
+  const caseId = String(formData.get("case_id") ?? "");
+  if (!ID.test(caseId)) {
+    redirect("/desk");
+  }
+  await fetch(`${apiUrl}/approvals/${caseId}/reject`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${access}`,
@@ -100,7 +111,11 @@ async function approveAction(formData: FormData) {
   if (!access) {
     redirect("/login");
   }
-  const approved = await fetch(`${apiUrl}/approvals/${String(formData.get("case_id") ?? "")}/approve`, {
+  const caseId = String(formData.get("case_id") ?? "");
+  if (!ID.test(caseId)) {
+    redirect("/desk");
+  }
+  const approved = await fetch(`${apiUrl}/approvals/${caseId}/approve`, {
     method: "POST",
     headers: { Authorization: `Bearer ${access}` },
   });
@@ -159,7 +174,11 @@ async function pickUpAction(formData: FormData) {
   if (!access) {
     redirect("/login");
   }
-  const picked = await fetch(`${apiUrl}/inbox/${String(formData.get("case_id") ?? "")}/pick-up`, {
+  const caseId = String(formData.get("case_id") ?? "");
+  if (!ID.test(caseId)) {
+    redirect("/desk?inbox=gone");
+  }
+  const picked = await fetch(`${apiUrl}/inbox/${caseId}/pick-up`, {
     method: "POST",
     headers: { Authorization: `Bearer ${access}` },
   });
@@ -175,7 +194,11 @@ async function replyAction(formData: FormData) {
   if (!access) {
     redirect("/login");
   }
-  const sent = await fetch(`${apiUrl}/inbox/${String(formData.get("case_id") ?? "")}/reply`, {
+  const caseId = String(formData.get("case_id") ?? "");
+  if (!ID.test(caseId)) {
+    redirect("/desk?inbox=unsent");
+  }
+  const sent = await fetch(`${apiUrl}/inbox/${caseId}/reply`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${access}`,
@@ -216,7 +239,7 @@ async function acceptAction(formData: FormData) {
     redirect("/login");
   }
   const id = String(formData.get("id") ?? "");
-  const accepted = /^[0-9a-f-]{36}$/.test(id)
+  const accepted = ID.test(id)
     ? await fetch(`${apiUrl}/live/${id}/accept`, { method: "POST", headers: { Authorization: `Bearer ${access}` } })
     : null;
   redirect(accepted?.ok ? `/desk/live/${id}` : "/desk?live=gone");
@@ -233,16 +256,32 @@ async function declineAction(formData: FormData) {
     redirect("/login");
   }
   const id = String(formData.get("id") ?? "");
-  const declined = /^[0-9a-f-]{36}$/.test(id)
+  const declined = ID.test(id)
     ? await fetch(`${apiUrl}/live/${id}/decline`, { method: "POST", headers: { Authorization: `Bearer ${access}` } })
     : null;
   redirect(declined?.ok ? "/desk?live=declined" : "/desk?live=gone");
+}
+
+// Take the next customer in line now: the request is offered to this specialist, who accepts it as any offer.
+async function takeNextAction() {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/desk");
+  }
+  const access = await accessToken();
+  if (!access) {
+    redirect("/login");
+  }
+  const taken = await fetch(`${apiUrl}/live/next`, { method: "POST", headers: { Authorization: `Bearer ${access}` } });
+  redirect(taken.ok ? "/desk?live=taken" : "/desk?live=none");
 }
 
 // Shown after a live chat action sends the specialist back to the desk.
 const LIVE_NOTES: Record<string, string> = {
   gone: "That live chat is no longer yours.",
   declined: "Offer declined. It goes to the next specialist.",
+  taken: "The next customer in line is offered to you. Accept the offer to join the chat.",
+  none: "No customer is waiting for you, or you have no free slot.",
   resolved: "Live chat resolved.",
   escalated: "Live chat escalated. It is in the escalations inbox.",
 };
@@ -302,7 +341,7 @@ export default async function DeskPage({
     redirect("/login");
   }
   // A lead opens a queue row as a read-only case desk.
-  const viewing = session.user.role === "lead" && typeof params.case === "string" && /^[0-9a-f-]{36}$/.test(params.case);
+  const viewing = session.user.role === "lead" && typeof params.case === "string" && ID.test(params.case);
   const response = await fetch(viewing ? `${apiUrl}/cases/${params.case}` : `${apiUrl}/cases/current`, {
     headers: { Authorization: `Bearer ${access}` },
     cache: "no-store",
@@ -384,7 +423,7 @@ export default async function DeskPage({
             ? ((await liveResponse.json()) as {
                 state: "available" | "away";
                 auto_away_at: string | null;
-                offers: { id: string; customer: string }[];
+                offers: { id: string; customer: string; reason: "requested" | "escalated"; language: "en" | "es" | null }[];
                 chats: { id: string; customer: string; idle: boolean }[];
               })
             : null,
@@ -545,9 +584,24 @@ export default async function DeskPage({
             </p>
           ) : null}
           {live.offers.length === 0 && live.chats.length === 0 ? <p>No live chat is offered to you.</p> : null}
+          {live.state === "available" ? (
+            <form action={takeNextAction}>
+              <button type="submit">Take next</button>
+            </form>
+          ) : null}
           {live.offers.map((offer) => (
             <article key={offer.id}>
-              <p>{offer.customer} asked to talk to a person.</p>
+              {/* Why the customer is in the line, and their language (user story 27). */}
+              <p>
+                {offer.reason === "escalated"
+                  ? `${offer.customer}'s chat was escalated by the agent.`
+                  : `${offer.customer} asked to talk to a person.`}
+              </p>
+              {offer.language === "es" ? (
+                <p>
+                  <strong>Spanish</strong>. The customer writes in Spanish.
+                </p>
+              ) : null}
               <form action={acceptAction}>
                 <input type="hidden" name="id" value={offer.id} />
                 <button type="submit">Accept</button>

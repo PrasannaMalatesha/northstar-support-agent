@@ -14,10 +14,11 @@ from conftest import TEST_URL
 from northstar.cases import CaseStore
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
+from test_live_chat import _ends
 
 from northstar_api.settings import Settings
 
-LIVE = [{"live_agents_enabled": True}]
+LIVE = [{"live_chat_enabled": True}]
 MIRA = {"order_id": "NS-1001", "email": "mira.shah@northstar.example"}
 JON = {"order_id": "NS-1002", "email": "jon.hale@northstar.example"}
 ANSWER = "Your refund is on its way. Is there anything else?"
@@ -141,6 +142,8 @@ def test_the_nudge_comes_at_2_minutes_the_slot_frees_at_3_and_the_chat_closes_at
     assert view["messages"][-1] == {"role": "specialist", "name": "Avery", "text": ANSWER}
     assert _state(client, chat) is None
     assert client.get(f"/cases/{held['case_id']}", headers=lead).json()["status"] == "Resolved"
+    # Resolved, as after a specialist's Resolve, and the end reason tells the quiet close apart.
+    assert _ends()[0] == ("ended", "closed_quiet")
     assert _chats(client, avery) == []
     assert [e for e in _events() if e in ("live_chat_idle", "live_chat_closed")] == ["live_chat_idle", "live_chat_closed"]
 
@@ -214,7 +217,7 @@ def test_a_customer_back_from_idle_goes_to_the_front_of_the_line_when_the_specia
     clock.advance(minutes=1)
     with ConnectionPool(TEST_URL, min_size=1, max_size=2, kwargs={"row_factory": dict_row}) as pool:
         third_id = uuid.uuid5(uuid.NAMESPACE_URL, "quiet.customer@example.test")
-        assert CaseStore(pool, clock, live_chats=True).request_live(third_id, reason="escalated")
+        assert CaseStore(pool, clock, live_chat=True).request_live(third_id, reason="escalated")
     clock.advance(minutes=1)
     view = _say(client, chat, "I am back. Is the refund done?")
     assert view["messages"][-1] == {"role": "user", "text": "I am back. Is the refund done?"}
@@ -231,7 +234,7 @@ def test_a_customer_back_from_idle_goes_to_the_front_of_the_line_when_the_specia
 
 @pytest.mark.parametrize(
     "client",
-    [{"live_agents_enabled": True, "quiet_nudge_minutes": 1, "quiet_idle_minutes": 5, "quiet_close_minutes": 10}],
+    [{"live_chat_enabled": True, "quiet_nudge_minutes": 1, "quiet_idle_minutes": 5, "quiet_close_minutes": 10}],
     indirect=True,
 )
 def test_the_three_times_are_settings(client, clock):
@@ -255,7 +258,7 @@ def test_many_reads_at_once_idle_a_chat_and_bring_the_customer_back_once(client,
     held = _answered(client, chat, avery)
     clock.advance(minutes=3)
     with ConnectionPool(TEST_URL, min_size=1, max_size=8, kwargs={"row_factory": dict_row}) as pool:
-        store = CaseStore(pool, clock, live_chats=True)
+        store = CaseStore(pool, clock, live_chat=True)
 
         def at_once(start: threading.Barrier) -> None:
             start.wait()
@@ -312,10 +315,10 @@ def test_the_offer_to_leave_a_message_stays_hidden_while_the_chat_is_idle(client
     for question in ("What is your favorite color?", "Tell me a joke.", "Who won the game last night?"):
         _say(client, chat, question)
     # With live chat on, three failed turns offer a person (issue #141).
-    assert client.get("/chat/state", headers=chat).json()["offer"] == "talk_to_person"
+    assert client.get("/chat/state", headers=chat).json()["follow_up"] == "talk_to_person"
     _answered(client, chat, avery)
     clock.advance(minutes=4)
     assert _chats(client, avery) == [("Mira Shah", True)]
     # A person is still on this chat: writing brings them back, so no message is offered.
-    assert client.get("/chat/state", headers=chat).json()["offer"] is None
+    assert client.get("/chat/state", headers=chat).json()["follow_up"] is None
     assert client.post("/chat/leave-message", headers=chat, json={"text": "Please call me."}).status_code == 409

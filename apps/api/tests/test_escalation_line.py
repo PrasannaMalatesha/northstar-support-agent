@@ -5,6 +5,7 @@ specialist is available and the wait is under the cap. Otherwise it goes to the 
 before. Three failed turns offer "Talk to a person", and a customer the line turns away may leave a message.
 """
 
+import northstar.cases as cases_module
 import pytest
 from northstar.cases import COME_BACK_TEXT, LINE_REFUSED_TEXT, OFFERED_TEXT, CaseStore
 from test_leave_message import OFF_TOPIC
@@ -35,13 +36,13 @@ def test_a_chat_escalation_joins_the_line_and_the_specialist_reads_the_handoff_a
     view = _say(client, chat, CHARGEBACK)
     assert view["messages"][-1] == {"role": "assistant", "text": FOLLOW_UP}
     assert view["status"] == OFFERED_TEXT
-    assert _state(client, chat) == {"offer": None, "live_enabled": True, "live": {"status": "offered", "specialist": None}}
+    assert _state(client, chat) == {"follow_up": None, "live_enabled": True, "live": {"status": "offered", "specialist": None}}
     assert _requests() == [("escalated", "offered")]
     # In the line, not in the inbox: one person works it.
     assert client.get("/inbox", headers=lead).json() == []
 
     [offer] = client.get("/live", headers=avery).json()["offers"]
-    assert offer["customer"] == "Mira Shah"
+    assert (offer["customer"], offer["reason"], offer["language"]) == ("Mira Shah", "escalated", "en")
     assert client.post(f"/live/{offer['id']}/accept", headers=avery).status_code == 200
     [held] = client.get("/live", headers=avery).json()["chats"]
     assert held["handoff"].startswith(f"Asked: {CHARGEBACK}")
@@ -109,7 +110,7 @@ def test_with_nobody_available_the_escalation_goes_to_the_inbox(client):
     assert view["messages"][-1] == {"role": "assistant", "text": FOLLOW_UP}
     assert view["status"] == INBOX_STATUS
     # Not offered to leave a message: the escalation is already with the team.
-    assert _state(client, chat) == {"offer": None, "live_enabled": True, "live": None}
+    assert _state(client, chat) == {"follow_up": None, "live_enabled": True, "live": None}
     assert _requests() == [("escalated", "refused")]
     [item] = client.get("/inbox", headers=_lead(client)).json()
     assert item["source"] == "chat" and "(ESC-LEGAL)" in item["handoff"]
@@ -130,7 +131,7 @@ def test_over_the_longest_wait_the_escalation_goes_to_the_inbox(client, clock):
     clock.advance(seconds=1)
     second = _chat(client, customers[4])
     assert _say(client, second, CHARGEBACK)["status"] == INBOX_STATUS
-    assert _state(client, second) == {"offer": None, "live_enabled": True, "live": None}
+    assert _state(client, second) == {"follow_up": None, "live_enabled": True, "live": None}
     assert _requests()[-2:] == [("escalated", "waiting"), ("escalated", "refused")]
     assert [item["customer"] for item in client.get("/inbox", headers=_lead(client)).json()] == ["Live Customer4"]
 
@@ -147,7 +148,7 @@ def test_an_escalation_that_leaves_the_line_goes_to_the_inbox(client, clock):
     _say(client, mira, CHARGEBACK)
     assert client.delete("/chat/live", headers=mira).json() == {"live": None}
     assert _status(client, mira) == INBOX_STATUS
-    assert _state(client, mira) == {"offer": None, "live_enabled": True, "live": None}
+    assert _state(client, mira) == {"follow_up": None, "live_enabled": True, "live": None}
     assert [item["customer"] for item in client.get("/inbox", headers=lead).json()] == ["Mira Shah"]
 
     # A chat that stops refreshing for 2 minutes leaves the line, and the escalation goes to the inbox too.
@@ -163,7 +164,7 @@ def test_an_escalation_that_leaves_the_line_goes_to_the_inbox(client, clock):
     assert _requests()[-1] == ("escalated", "abandoned")
 
 
-@pytest.mark.parametrize("client", [{"live_agents_enabled": True, "offers_before_leave_message": 1}], indirect=True)
+@pytest.mark.parametrize("client", [{"live_chat_enabled": True, "offers_before_leave_message": 1}], indirect=True)
 def test_an_escalation_no_specialist_accepts_goes_to_the_inbox(client, clock):
     avery, lead = _avery(client), _lead(client)
     client.post("/presence", headers=avery, json={"state": "available"})
@@ -174,7 +175,7 @@ def test_an_escalation_no_specialist_accepts_goes_to_the_inbox(client, clock):
     assert _requests() == [("escalated", "unanswered")]
     assert _status(client, mira) == INBOX_STATUS
     # The escalation is with the team already, so there is no message to leave.
-    assert _state(client, mira) == {"offer": None, "live_enabled": True, "live": None}
+    assert _state(client, mira) == {"follow_up": None, "live_enabled": True, "live": None}
     assert [item["customer"] for item in client.get("/inbox", headers=lead).json()] == ["Mira Shah"]
 
     # An offer that expires is the same.
@@ -202,12 +203,12 @@ def test_three_failed_turns_offer_a_person_and_a_turned_away_customer_may_leave_
     chat = _chat(client)
     for question in OFF_TOPIC:
         _say(client, chat, question)
-    assert _state(client, chat) == {"offer": "talk_to_person", "live_enabled": True, "live": None}
+    assert _state(client, chat) == {"follow_up": "talk_to_person", "live_enabled": True, "live": None}
     assert client.post("/chat/leave-message", headers=chat, json={"text": "Please call me."}).status_code == 409
 
     # Nobody is available: the line turns the customer away, and the offer becomes leaving a message.
     assert client.post("/chat/live", headers=chat).json() == {"live": None}
-    assert _state(client, chat)["offer"] == "leave_message"
+    assert _state(client, chat)["follow_up"] == "leave_message"
     assert _status(client, chat) == LINE_REFUSED_TEXT
     left = client.post("/chat/leave-message", headers=chat, json={"text": "Please call me about my coat."})
     assert left.status_code == 200
@@ -223,7 +224,21 @@ def test_three_failed_turns_then_talk_to_a_person_joins_the_line(client):
     chat = _chat(client)
     for question in OFF_TOPIC:
         _say(client, chat, question)
-    assert _state(client, chat)["offer"] == "talk_to_person"
+    assert _state(client, chat)["follow_up"] == "talk_to_person"
     assert client.post("/chat/live", headers=chat).json() == {"live": {"status": "offered", "specialist": None}}
-    assert _state(client, chat)["offer"] is None
+    assert _state(client, chat)["follow_up"] is None
     assert _requests() == [("requested", "offered")]
+
+
+@pytest.mark.parametrize("client", LIVE, indirect=True)
+def test_an_escalation_in_spanish_is_offered_with_its_language(client, monkeypatch):
+    avery = _avery(client)
+    client.post("/presence", headers=avery, json={"state": "available"})
+    chat = _chat(client)
+    spanish = "Abriré un contracargo con mi banco."
+    # pytest makes no model call, so the translation is set here. The escalating message is not saved yet
+    # when its request joins the line, and the offer still has its language.
+    monkeypatch.setattr(cases_module, "to_english", lambda text: CHARGEBACK if text == spanish else text)
+    _say(client, chat, spanish)
+    [offer] = client.get("/live", headers=avery).json()["offers"]
+    assert (offer["reason"], offer["language"]) == ("escalated", "es")

@@ -149,7 +149,7 @@ def test_an_alert_appears_for_a_request_offered_3_times_until_a_specialist_picks
     assert _line(client, lead)["alerts"] == []
 
 
-@pytest.mark.parametrize("client", [{"live_agents_enabled": True, "offers_before_leave_message": 1}], indirect=True)
+@pytest.mark.parametrize("client", [{"live_chat_enabled": True, "offers_before_leave_message": 1}], indirect=True)
 def test_an_escalation_no_specialist_accepts_raises_the_alert_from_the_inbox(client):
     avery, lead = _avery(client), _lead(client)
     client.post("/presence", headers=avery, json={"state": "available"})
@@ -166,7 +166,7 @@ def test_an_escalation_no_specialist_accepts_raises_the_alert_from_the_inbox(cli
     assert _line(client, lead)["alerts"] == []
 
 
-@pytest.mark.parametrize("client", [{"live_agents_enabled": True, "offers_before_leave_message": 1}], indirect=True)
+@pytest.mark.parametrize("client", [{"live_chat_enabled": True, "offers_before_leave_message": 1}], indirect=True)
 def test_asking_again_clears_the_alert(client, clock):
     avery, lead = _avery(client), _lead(client)
     client.post("/presence", headers=avery, json={"state": "available"})
@@ -245,7 +245,7 @@ def test_the_wait_for_a_reply_starts_when_the_specialist_accepts(client, clock):
     ]
 
 
-@pytest.mark.parametrize("client", [{"live_agents_enabled": True, "quiet_specialist_minutes": 5}], indirect=True)
+@pytest.mark.parametrize("client", [{"live_chat_enabled": True, "quiet_specialist_minutes": 5}], indirect=True)
 def test_the_wait_before_a_quiet_specialist_is_flagged_is_a_setting(client, clock):
     chat, avery, lead = _chat(client), _avery(client), _lead(client)
     client.post("/presence", headers=avery, json={"state": "available"})

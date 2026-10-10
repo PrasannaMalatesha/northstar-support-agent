@@ -14,7 +14,7 @@ from northstar.identity.service import staff_id_for
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
-LIVE = [{"live_agents_enabled": True}]
+LIVE = [{"live_chat_enabled": True}]
 MIRA = {"order_id": "NS-1001", "email": "mira.shah@northstar.example"}
 WAITING = "A person on our team is reviewing your request. Nothing is approved yet."
 
@@ -87,7 +87,7 @@ def test_a_refund_raised_in_a_live_chat_waits_for_a_lead_and_the_specialist_cann
     assert client.post(f"/approvals/{case_id}/approve", headers=avery).status_code == 403
     with ConnectionPool(TEST_URL, min_size=1, max_size=1, kwargs={"row_factory": dict_row}) as pool:
         with pytest.raises(ProposerCannotApprove):
-            CaseStore(pool, clock, live_chats=True).approve(proposed_by, case_id)
+            CaseStore(pool, clock, live_chat=True).approve(proposed_by, case_id)
 
     # The customer sees that nothing is approved yet, and no ask, amount, or rule.
     view = client.get("/chat", headers=chat).json()
@@ -127,7 +127,7 @@ def test_a_refund_raised_in_a_live_chat_waits_for_a_lead_and_the_specialist_cann
     assert client.post(f"/live/{offer}/resolve", headers=avery).status_code == 200
 
 
-@pytest.mark.parametrize("client", [{"live_agents_enabled": True, "request_limit": 1}], indirect=True)
+@pytest.mark.parametrize("client", [{"live_chat_enabled": True, "request_limit": 1}], indirect=True)
 def test_a_live_action_counts_against_the_specialists_own_request_limit(client):
     chat, avery = _chat(client), _avery(client)
     offer = _accepted(client, chat, avery)
