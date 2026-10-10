@@ -13,6 +13,18 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-09 — The agent's email filter hid the published support address
+
+Status: bug
+
+What broke: the first release bar run for the update phase (commit 8972587) failed one gate. English p95 latency was 10.47 s against the 10 s target. Every other gate passed (action correct 100%, Spanish p95 17.07 s, max 4,151 tokens).
+
+Evidence: timing each English test case once on the live desk, 14 of 15 took 2 to 8 s. "What email should a customer use to contact support?" took 11.1 s and 2,496 tokens, about twice the others. The release run repeats each case 3 times, so this one case gave 3 slow turns out of 45. That is enough to fail the p95 on its own.
+
+Debug steps: printing the `create_agent` messages for that question showed the email `PIIMiddleware` redacting `help@northstar.example` from the desk tool's result. The model saw `[REDACTED_EMAIL]`, called the desk again, hit the tool call limit, and needed a third model call to finish. `screen()` already kept the published addresses (#105). The middleware used the built-in email detector, which has no such exception.
+
+Fix: `privacy.detector("email")` uses the same pattern as `screen()` and skips `PUBLISHED_EMAILS`. The graph's email filter uses it. A customer's address is still redacted for the model. The turn now makes the usual two agent calls (2.3 s for the agent step, down from 5.7 s). Test: `test_the_agent_email_filter_keeps_the_published_address`.
+
 ## 2026-10-09 — Update phase built (#132 to #145, PR #146)
 
 Status: decision
