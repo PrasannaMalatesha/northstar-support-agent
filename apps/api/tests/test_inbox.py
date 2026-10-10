@@ -110,7 +110,8 @@ def test_a_picked_up_case_is_theirs_and_no_other_specialist_can_take_it(client):
     assert client.post(f"/inbox/{case_id}/pick-up", headers=lead).status_code == 403
     open_case = client.get("/cases/current", headers=sam).json()["id"]
     assert client.post(f"/inbox/{open_case}/pick-up", headers=sam).status_code == 404
-    assert client.post("/inbox/not-a-case/pick-up", headers=sam).status_code == 404
+    # A malformed id is refused before any lookup, the same on every inbox and live chat route.
+    assert client.post("/inbox/not-a-case/pick-up", headers=sam).status_code == 422
     assert _events().count("escalation_pick_up") == 2
 
 
@@ -167,6 +168,7 @@ def test_only_the_specialist_who_picked_up_a_chat_case_replies(client):
     assert client.post(f"/inbox/{case_id}/reply", headers=sam, json=reply).status_code == 403
     assert client.post(f"/inbox/{case_id}/reply", headers=avery, json={"text": "   "}).status_code == 422
     assert client.post(f"/inbox/{case_id}/reply", headers=_lead(client), json=reply).status_code == 403
+    assert client.post("/inbox/not-a-case/reply", headers=avery, json=reply).status_code == 422
 
     # A desk case has no customer chat to reply into.
     desk = client.post(

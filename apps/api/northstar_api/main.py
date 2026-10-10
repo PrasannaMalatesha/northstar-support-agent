@@ -85,6 +85,13 @@ class ReplyBody(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
 
 
+class LiveActionBody(BaseModel):
+    # What the specialist asks the agent to do in their live chat, such as "Refund order NS-1001".
+    # It is a turn for the lead's approval list, never a message the customer sees.
+    model_config = ConfigDict(str_strip_whitespace=True)
+    text: str = Field(min_length=1, max_length=2000)
+
+
 class AvailabilityBody(BaseModel):
     state: Literal["available", "away"]
 
@@ -410,25 +417,26 @@ def create_app(
             raise HTTPException(status_code=403, detail="Specialists talk to customers. Leads approve.")
         return staff
 
+    # Path ids are typed, so a malformed id is 422 on every inbox and live chat route.
     @app.post("/inbox/{case_id}/pick-up")
-    def pick_up_escalation(case_id: str, staff=Depends(require_specialist)) -> dict:
+    def pick_up_escalation(case_id: uuid.UUID, staff=Depends(require_specialist)) -> dict:
         try:
-            cases.pick_up(staff.id, uuid.UUID(case_id))
+            cases.pick_up(staff.id, case_id)
         except AlreadyPickedUp as exc:
             raise HTTPException(status_code=409, detail="Another specialist picked this up.") from exc
-        except (NotInInbox, ValueError) as exc:
+        except NotInInbox as exc:
             raise HTTPException(status_code=404, detail="This case is not in the inbox.") from exc
         identity.audit(staff.id, "escalation_pick_up", clock.now())
-        return {"case_id": case_id}
+        return {"case_id": str(case_id)}
 
     @app.post("/inbox/{case_id}/reply")
-    def reply_to_escalation(case_id: str, body: ReplyBody, staff=Depends(require_specialist)) -> dict:
+    def reply_to_escalation(case_id: uuid.UUID, body: ReplyBody, staff=Depends(require_specialist)) -> dict:
         try:
-            cases.reply(staff.id, uuid.UUID(case_id), body.text)
-        except (NotYours, ValueError) as exc:
+            cases.reply(staff.id, case_id, body.text)
+        except NotYours as exc:
             raise HTTPException(status_code=403, detail="Pick up this chat case before replying.") from exc
         identity.audit(staff.id, "escalation_reply", clock.now())
-        return {"case_id": case_id}
+        return {"case_id": str(case_id)}
 
     # Live chat (issue #138). With the setting off, no live chat route exists.
 
@@ -496,7 +504,7 @@ def create_app(
             return {"id": str(request_id)}
 
         @app.post("/live/{request_id}/actions")
-        def raise_live_action(request_id: uuid.UUID, body: ReplyBody, staff=Depends(require_specialist)) -> dict:
+        def raise_live_action(request_id: uuid.UUID, body: LiveActionBody, staff=Depends(require_specialist)) -> dict:
             # The same turn and rules as the agent, as the specialist. A lead approves what it proposes (R45).
             try:
                 cases.live_action(staff.id, request_id, body.text)

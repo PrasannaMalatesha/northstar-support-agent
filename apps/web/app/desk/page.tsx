@@ -7,6 +7,9 @@ import { Refresh } from "../refresh";
 import { apiUrl, sameSite } from "../same-site";
 import { accessToken } from "./access-token";
 
+// A case or live chat id goes into an API path, so only a 36-character id is sent.
+const ID = /^[0-9a-f-]{36}$/;
+
 async function bindAction(formData: FormData) {
   "use server";
   if (!(await sameSite())) {
@@ -58,7 +61,11 @@ async function editAction(formData: FormData) {
   if (!access) {
     redirect("/login");
   }
-  const edited = await fetch(`${apiUrl}/approvals/${String(formData.get("case_id") ?? "")}/edit`, {
+  const caseId = String(formData.get("case_id") ?? "");
+  if (!ID.test(caseId)) {
+    redirect("/desk");
+  }
+  const edited = await fetch(`${apiUrl}/approvals/${caseId}/edit`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${access}`,
@@ -80,7 +87,11 @@ async function rejectAction(formData: FormData) {
   if (!access) {
     redirect("/login");
   }
-  await fetch(`${apiUrl}/approvals/${String(formData.get("case_id") ?? "")}/reject`, {
+  const caseId = String(formData.get("case_id") ?? "");
+  if (!ID.test(caseId)) {
+    redirect("/desk");
+  }
+  await fetch(`${apiUrl}/approvals/${caseId}/reject`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${access}`,
@@ -100,7 +111,11 @@ async function approveAction(formData: FormData) {
   if (!access) {
     redirect("/login");
   }
-  const approved = await fetch(`${apiUrl}/approvals/${String(formData.get("case_id") ?? "")}/approve`, {
+  const caseId = String(formData.get("case_id") ?? "");
+  if (!ID.test(caseId)) {
+    redirect("/desk");
+  }
+  const approved = await fetch(`${apiUrl}/approvals/${caseId}/approve`, {
     method: "POST",
     headers: { Authorization: `Bearer ${access}` },
   });
@@ -159,7 +174,11 @@ async function pickUpAction(formData: FormData) {
   if (!access) {
     redirect("/login");
   }
-  const picked = await fetch(`${apiUrl}/inbox/${String(formData.get("case_id") ?? "")}/pick-up`, {
+  const caseId = String(formData.get("case_id") ?? "");
+  if (!ID.test(caseId)) {
+    redirect("/desk?inbox=gone");
+  }
+  const picked = await fetch(`${apiUrl}/inbox/${caseId}/pick-up`, {
     method: "POST",
     headers: { Authorization: `Bearer ${access}` },
   });
@@ -175,7 +194,11 @@ async function replyAction(formData: FormData) {
   if (!access) {
     redirect("/login");
   }
-  const sent = await fetch(`${apiUrl}/inbox/${String(formData.get("case_id") ?? "")}/reply`, {
+  const caseId = String(formData.get("case_id") ?? "");
+  if (!ID.test(caseId)) {
+    redirect("/desk?inbox=unsent");
+  }
+  const sent = await fetch(`${apiUrl}/inbox/${caseId}/reply`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${access}`,
@@ -216,7 +239,7 @@ async function acceptAction(formData: FormData) {
     redirect("/login");
   }
   const id = String(formData.get("id") ?? "");
-  const accepted = /^[0-9a-f-]{36}$/.test(id)
+  const accepted = ID.test(id)
     ? await fetch(`${apiUrl}/live/${id}/accept`, { method: "POST", headers: { Authorization: `Bearer ${access}` } })
     : null;
   redirect(accepted?.ok ? `/desk/live/${id}` : "/desk?live=gone");
@@ -233,7 +256,7 @@ async function declineAction(formData: FormData) {
     redirect("/login");
   }
   const id = String(formData.get("id") ?? "");
-  const declined = /^[0-9a-f-]{36}$/.test(id)
+  const declined = ID.test(id)
     ? await fetch(`${apiUrl}/live/${id}/decline`, { method: "POST", headers: { Authorization: `Bearer ${access}` } })
     : null;
   redirect(declined?.ok ? "/desk?live=declined" : "/desk?live=gone");
@@ -302,7 +325,7 @@ export default async function DeskPage({
     redirect("/login");
   }
   // A lead opens a queue row as a read-only case desk.
-  const viewing = session.user.role === "lead" && typeof params.case === "string" && /^[0-9a-f-]{36}$/.test(params.case);
+  const viewing = session.user.role === "lead" && typeof params.case === "string" && ID.test(params.case);
   const response = await fetch(viewing ? `${apiUrl}/cases/${params.case}` : `${apiUrl}/cases/current`, {
     headers: { Authorization: `Bearer ${access}` },
     cache: "no-store",

@@ -26,7 +26,7 @@ const ID = /^[0-9a-f-]{36}$/;
 const SPEAKERS: Record<string, string> = {
   user: "Customer",
   action: "Your action, not shown to the customer",
-  desk: "Desk rules, not shown to the customer",
+  desk: "Agent draft, not shown to the customer",
 };
 
 function speaker(message: LiveChat["messages"][number]): string {
