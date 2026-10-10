@@ -16,16 +16,28 @@ git checkout dev
 git pull origin dev
 ```
 
-## Stop point (2026-10-10, conversation fixes promoted)
+## Stop point (2026-10-10, end-to-end fixes on dev)
 
-`dev`, `uat`, `prod`, and `main` hold the same tree (#158 to #160), apart from this stop point note on `dev`. That tree includes:
-- the update phase (#146);
-- the runtime dependency fix (#153);
-- the conversation check (#154);
-- its fixes and about half the model cost (#155);
-- the passing release bar for 26235f9 (#157): action correct 100%, English p95 6.14 s, Spanish p95 9.62 s, max 2,152 tokens.
+`uat`, `prod`, and `main` hold the conversation fixes (#158 to #160). `dev` is ahead with #161 to #163, not promoted:
+- #162: the end-to-end check, `results/e2e_check_2026-10-10.md`.
+- #163: its fixes:
+  - final sale (a reranker recheck with the model when it drops Pinecone's first section);
+  - fraud in any tense;
+  - price questions reach the handbook, while item questions stay on the catalog;
+  - wrong-item refunds;
+  - one order per request;
+  - follow-ups read the handbook;
+  - nothing changes on a cancelled order;
+  - insults and "ignore all previous instructions" get the safe reply;
+  - "torn" is a defect;
+  - chat order lookups;
+  - a consistent NS-1002 seed.
 
-There are no open issues. 331 Python tests and 12 browser tests pass; run the browser suite on a fresh database. Any later change outside `results/` needs a fresh release bar run before the next PR into `uat`. Promote only when Malatesha asks.
+  Details are in `correction.md`.
+
+There are no open issues. 347 Python tests and 12 browser tests pass; run the browser suite on a fresh database. The release bar on #163's code passed every gate (English p95 4.44 s). The next PR into `uat` needs a fresh run on `dev` with its results file committed. Promote only when Malatesha asks.
+
+The browser suite runs on the real clock. NS-1002 stays inside its return window through 2026-10-31, and Mira's orders follow the tests' 2026-10-06 dates. Move the seed dates, or give the browser API a fixed clock, before then.
 
 Suggested next, not started (details in the 2026-10-10 session notes):
 - **Token budget.** Each handbook question is charged a flat 1,000 tokens (`TOKENS_PER_TURN`) against a 20,000-a-day budget, so a specialist gets only 20 handbook questions a day. Charge the reported usage, or raise the budget.
@@ -206,7 +218,7 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 
 ## Continue checklist
 
-1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (331 or more).
+1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (347 or more).
 2. Read the Stop point section above. Ask Malatesha what is next: the demo, turning on Google SSO, the LangSmith limit, or new work. Do not create tickets or promote branches unless asked.
 3. Every change: a `feature/*` branch from `origin/dev`, a PR into `dev`, merged only when CI is green.
 4. Rewrite the Stop point section before you stop.
