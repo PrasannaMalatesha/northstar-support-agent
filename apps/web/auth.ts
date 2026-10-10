@@ -1,6 +1,7 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
+import { endsSoon, renew } from "@/staff-session";
 
 const apiUrl = process.env.FASTAPI_URL ?? "http://127.0.0.1:8000";
 
@@ -75,11 +76,22 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       });
       return true;
     },
-    jwt({ token, user }) {
+    // The API token lasts 15 minutes. Shortly before it ends it is renewed, so a working specialist stays
+    // signed in. A refused renewal ends the session, and the sign-in page shows.
+    async jwt({ token, user }) {
       if (user) {
         token.role = user.role;
         token.accessToken = user.accessToken;
         token.refreshToken = user.refreshToken;
+        return token;
+      }
+      if (typeof token.accessToken === "string" && endsSoon(token.accessToken)) {
+        const renewed = typeof token.refreshToken === "string" ? await renew(token.refreshToken) : null;
+        if (!renewed) {
+          return null;
+        }
+        token.accessToken = renewed.accessToken;
+        token.refreshToken = renewed.refreshToken;
       }
       return token;
     },

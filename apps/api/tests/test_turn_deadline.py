@@ -55,6 +55,8 @@ def models(monkeypatch, clock):
     direct = Model(clock=clock, messages=iter([AIMessage(content=REWORDED)]))
     agent = Model(clock=clock, messages=iter([desk_call, AIMessage(content="Done.")]))
     monkeypatch.setattr(agent_model, "_model", lambda: direct)
+    monkeypatch.setattr(agent_model, "_wording_model", lambda: direct)
+    monkeypatch.setattr(agent_model, "_picker", lambda: direct)
     monkeypatch.setattr(agent_model, "_agent_model", lambda: agent)
     return direct, agent
 

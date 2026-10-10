@@ -34,3 +34,28 @@ def test_an_exception_to_a_deny_escalates(client):
     assert "NS-1001" in draft
     assert "exception is not in the handbook" in draft
     assert body["refund_amount_cents"] is None
+
+
+def test_a_threat_to_sue_escalates_under_esc_legal(client):
+    body = _ask(client, "The customer says she will sue us if the kettle is not refunded today.")
+    assert body["status"] == "Escalated"
+    assert "ESC-LEGAL" in body["messages"][-1]["citations"]
+    assert body["ticket_id"] is None
+
+
+def test_legal_wording_is_recognized_and_the_name_sue_is_not():
+    from northstar.escalate import handoff
+
+    for threat in (
+        "I am going to sue Northstar over this.",
+        "My attorney will contact you.",
+        "We are suing you for the damage.",
+        "I'll take you to court.",
+        "I'm filing in small claims.",
+        "I will take legal action.",
+    ):
+        found = handoff(threat)
+        assert found is not None and found.section == "ESC-LEGAL", threat
+    for calm in ("Sue from accounting asked about order NS-1001.", "Can Sue pick up the parcel?", "What is the return window?"):
+        found = handoff(calm)
+        assert found is None or found.section != "ESC-LEGAL", calm
