@@ -7,6 +7,7 @@ The server calls Gemini when GOOGLE_API_KEY is set. Refund amounts stay in code.
 from __future__ import annotations
 
 import os
+import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import timedelta
@@ -19,12 +20,18 @@ from northstar.retrieve import retrieved_answer
 AGENT_MODEL_DEFAULT = "gemini-3-flash-preview"
 
 
-def handbook_reply(question: str) -> Draft:
+def handbook_reply(question: str, earlier: str | None = None) -> Draft:
+    """The handbook draft. `earlier` is the case's previous question, so a follow-up such as
+    "what should I tell her about sending it back?" can be read in context."""
     draft = retrieved_answer(question)
-    if draft.decision != "answer" or os.environ.get("PYTEST_CURRENT_TEST"):
+    if os.environ.get("PYTEST_CURRENT_TEST"):
         return draft
     _load_local_env()
     if not os.environ.get("GOOGLE_API_KEY"):
+        return draft
+    if draft.decision == "abstain" and draft.retrieved:
+        draft = _picked(question, draft, earlier) or draft
+    if draft.decision != "answer":
         return draft
     text = _phrase(question, draft.text)
     if not text:
@@ -34,12 +41,58 @@ def handbook_reply(question: str) -> Draft:
     return Draft(draft.decision, text, draft.citations, draft.match, draft.steps)
 
 
+_SECTION_ID = re.compile(r"\b[A-Z]{2,5}(?:-[A-Z]+)+\b")
+
+
+def _picked(question: str, draft: Draft, earlier: str | None) -> Draft | None:
+    """When the reranker keeps no section, the model picks from its top few, or none.
+
+    The small reranker scores some plain questions near zero ("Can we ship an order to Canada?" gives
+    SHIP-REGIONS 0.02 against a 0.2 threshold) although it ranks the right section near the top. Picked
+    sections are only ever the reranker's own candidates, cited as weak. NONE keeps the abstain.
+    """
+    from northstar.handbook import _rule, _sections, policy_dir
+
+    attempts = attempts_left(DIRECT_ATTEMPTS)
+    if not attempts:
+        return None
+    bodies = dict(_sections(policy_dir()))
+    candidates = [section_id for section_id, _ in draft.retrieved if section_id in bodies]
+    if not candidates:
+        return None
+    lines = "\n".join(f"{section_id}: {_rule(bodies[section_id])}" for section_id in candidates)
+    context = f"Earlier question in this case: {earlier}\n" if earlier else ""
+    try:
+        reply = _picker().invoke(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You pick handbook sections for a support question. Reply with the ids of the sections "
+                        "whose rule directly answers the latest question, comma separated, or NONE if no section "
+                        "answers it. Use the earlier question only to understand what the latest one refers to. "
+                        "Do not guess."
+                    ),
+                },
+                {"role": "user", "content": f"{context}Latest question: {question}\n\nSections:\n{lines}"},
+            ],
+            max_retries=attempts,
+        )
+    except Exception:
+        return None
+    picked = [section_id for section_id in candidates if section_id in set(_SECTION_ID.findall(reply_text(reply)))]
+    if not picked:
+        return None
+    text = "\n".join(f"{_rule(bodies[section_id])} ({section_id})" for section_id in picked)
+    return Draft("answer", text, tuple(picked), {section_id: "weak" for section_id in picked}, draft.steps)
+
+
 def _phrase(question: str, handbook_lines: str) -> str:
     attempts = attempts_left(DIRECT_ATTEMPTS)
     if not attempts:  # the turn's deadline is close: the cited handbook text stands
         return ""
     try:
-        reply = _model().invoke(
+        reply = _wording_model().invoke(
             [
                 {
                     "role": "system",
@@ -127,15 +180,19 @@ def attempts_left(most: int) -> int:
     return max(0, min(most, int(left // MODEL_TIMEOUT_SECONDS)))
 
 
-def _gemini(name: str, attempts: int):
+def _gemini(name: str, attempts: int, thinking: str | None = None):
+    """`thinking` sets Gemini 3's thinking level. Unset, the model's default applies (measured: thinking was
+    80% of output tokens and 69% of the cost on 2026-10-09, results/conversation_check_2026-10-09.md)."""
     from langchain_google_genai import ChatGoogleGenerativeAI
 
+    extra = {"thinking_level": thinking} if thinking and name.startswith("gemini-3") else {}
     return ChatGoogleGenerativeAI(
         model=name,
         google_api_key=os.environ["GOOGLE_API_KEY"],
         temperature=0,
         timeout=MODEL_TIMEOUT_SECONDS,
         max_retries=attempts,
+        **extra,
     )
 
 
@@ -152,6 +209,21 @@ def _model():
 
 
 @lru_cache(maxsize=1)
+def _wording_model():
+    """For handbook wording. Low thinking kept every fact in the 2026-10-09 budget test; minimal dropped some."""
+    return _gemini(os.environ.get("AGENT_MODEL") or AGENT_MODEL_DEFAULT, DIRECT_ATTEMPTS, "low")
+
+
+@lru_cache(maxsize=1)
+def _picker():
+    """For picking sections on an abstain: a short choice among a few ids."""
+    return _gemini(os.environ.get("AGENT_MODEL") or AGENT_MODEL_DEFAULT, DIRECT_ATTEMPTS, "minimal")
+
+
+@lru_cache(maxsize=1)
 def _agent_model():
-    """For the create_agent subgraphs, whose ModelRetryMiddleware does the retrying."""
-    return _gemini(os.environ.get("AGENT_MODEL") or AGENT_MODEL_DEFAULT, AGENT_ATTEMPTS)
+    """For the create_agent subgraphs, whose ModelRetryMiddleware does the retrying.
+
+    The agent only calls the one desk tool, so it needs no thinking.
+    """
+    return _gemini(os.environ.get("AGENT_MODEL") or AGENT_MODEL_DEFAULT, AGENT_ATTEMPTS, "minimal")

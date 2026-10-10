@@ -10,11 +10,13 @@ async function googleAction() {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; expired?: string }>;
 }) {
   const params = await searchParams;
   const error =
-    params.error === "locked"
+    params.expired !== undefined && !params.error
+      ? "Your session ended. Sign in again."
+      : params.error === "locked"
       ? "This login is locked. Try again later."
       : params.error === "sso"
         ? "This Google account cannot sign in here."

@@ -121,7 +121,7 @@ def create_app(
     store = PostgresIdentityStore(pool)
     store.ensure_schema()
     seed_staff(store)
-    identity = Identity(store, clock, settings.token_secret)
+    identity = Identity(store, clock, settings.token_secret, settings.access_token_minutes)
     cases = CaseStore(
         pool,
         clock,
@@ -285,11 +285,16 @@ def create_app(
         return cases.chat(customer_id)
 
     @app.post("/chat/messages")
-    def chat_message(body: QuestionBody, customer_id=Depends(customer_from_token)) -> dict:
+    def chat_message(
+        body: QuestionBody,
+        customer_id=Depends(customer_from_token),
+        credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    ) -> dict:
         if body.photo:
             raise HTTPException(status_code=422, detail="Photos are not taken in the chat.")
         try:
-            return cases.chat_ask(customer_id, body.question)
+            # The order the chat was started with stands in when a request names none.
+            return cases.chat_ask(customer_id, body.question, identity.chat_order(credentials.credentials))
         except CaseClosed as exc:
             raise HTTPException(status_code=409, detail="A person on our team is reviewing your request.") from exc
 
@@ -460,11 +465,14 @@ def create_app(
             return {"live": None}
 
         @app.post("/chat/renew")
-        def renew_chat(customer_id=Depends(customer_from_token)) -> dict:
+        def renew_chat(
+            customer_id=Depends(customer_from_token),
+            credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+        ) -> dict:
             # The chat is not signed out while the customer waits for or talks to a specialist (R47).
             if cases.live_state(customer_id) is None:
                 raise HTTPException(status_code=409, detail="No live chat is open.")
-            return {"chat_token": identity.chat_token(customer_id)}
+            return {"chat_token": identity.chat_token(customer_id, identity.chat_order(credentials.credentials))}
 
         @app.post("/presence")
         def set_presence(body: AvailabilityBody, staff=Depends(require_specialist)) -> dict:

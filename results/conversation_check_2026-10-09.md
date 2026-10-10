@@ -99,3 +99,30 @@ Opportunities, largest first:
 4. **The judge** is about 14% of the cost. It already samples 10% of turns plus abstains and escalations, so it is reasonable as is.
 
 Every change to model settings goes through the release bar before `uat`.
+
+## After the fixes (2026-10-10, branch `feature/conversation-fixes`)
+
+The same conversations on the fixed code. Details are in `correction.md`.
+
+| # | Before | After |
+| --- | --- | --- |
+| S04 dropped speaker | abstain | WAR-EXCLUSIONS |
+| S05 lost gift card | "Which order id?" | GC-LOST |
+| S06 ship to Canada | abstain | CO-SCOPE, SHIP-REGIONS: no international shipping |
+| S12 exchange for XL | "Which size?" | "not made in size XL. Sizes: S, M, L" (EXC-STOCK) |
+| S17 "she will sue us" | abstain | escalated, ESC-LEGAL |
+| L01 follow-up after a rejection | abstain | REF-SHIP-COST |
+| C02 chat on NS-1011, "money back" | "Which order id?" twice | Refund proposal for NS-1011; then "This request is already with our team." |
+| C06 "the rain jacket leaks at the seams" | catalog row | Request for review, "Nothing is approved yet" |
+| L05 "Can I pay with cryptocurrency?" | abstain | PAY-METHODS lists the accepted methods |
+| Staff sign-out at 15 minutes | signed out mid live chat | renewed; browser test passes two renewals |
+
+Unchanged and acceptable: S02 asks which order for a price drop. S20 is a standard refund without a photo, the same amount. New and minor: "Hi, I have a question about my rain jacket order" shows the product's catalog row.
+
+| Measure | Before | After |
+| --- | --- | --- |
+| Latency p50 / p95 / max | 2.54 / 7.97 / 8.86 s | 0.85 / 4.41 / 5.02 s |
+| Gemini calls per model turn | 2.25 | 1.48 |
+| Gemini tokens in / out (thinking) | 15,927 / 16,766 (13,379) | 7,803 / 5,150 (3,491) |
+| Gemini + judge cost | $0.0583 + $0.0096 | $0.0194 + $0.0129 |
+| Cost per model turn | $0.00170 | $0.00081 (−53%) |
