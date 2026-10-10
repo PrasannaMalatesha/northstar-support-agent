@@ -58,20 +58,23 @@ def checked(data_url: str) -> tuple[str, bytes]:
 
 def describe(data_url: str, note: str) -> Photo | None:
     """What the photo shows, judged against the specialist's note. None when no model is set up."""
-    from northstar.agent_model import _load_local_env
+    from northstar.agent_model import DIRECT_ATTEMPTS, _load_local_env, attempts_left
 
     media_type, raw = checked(data_url)
     _load_local_env()
     if os.environ.get("PYTEST_CURRENT_TEST") or not os.environ.get("GOOGLE_API_KEY"):
         return None
+    attempts = attempts_left(DIRECT_ATTEMPTS)
+    if not attempts:  # the turn's deadline is close: the photo is left undescribed
+        return None
     try:
-        verdict = _ask_model(media_type, base64.b64encode(raw).decode(), note)
+        verdict = _ask_model(media_type, base64.b64encode(raw).decode(), note, attempts)
     except Exception:
         return None
     return Photo(bool(verdict["shows_item"]), bool(verdict["visible_damage"]), screen(str(verdict["description"]))[:400])
 
 
-def _ask_model(media_type: str, encoded: str, note: str) -> dict:
+def _ask_model(media_type: str, encoded: str, note: str, attempts: int) -> dict:
     from langsmith import tracing_context
     from typing_extensions import TypedDict
 
@@ -101,4 +104,4 @@ def _ask_model(media_type: str, encoded: str, note: str) -> dict:
     ]
     # The image stays out of LangSmith traces.
     with tracing_context(enabled=False):
-        return _model().with_structured_output(Verdict).invoke(message)
+        return _model().with_structured_output(Verdict).invoke(message, max_retries=attempts)

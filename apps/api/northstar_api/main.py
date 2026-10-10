@@ -2,14 +2,21 @@ from __future__ import annotations
 
 import uuid
 from contextlib import asynccontextmanager
+from typing import Literal
 
 from northstar.cases import (
+    AlreadyPickedUp,
     AmountNotEditable,
     AmountOutOfBounds,
     CaseClosed,
     CaseStore,
+    NoFollowUp,
+    NotInInbox,
+    NothingToTake,
+    NotYours,
     ProposerCannotApprove,
     ProposalNotWaiting,
+    ProposalWaiting,
 )
 from northstar.clock import Clock, SystemClock
 from northstar.photo import BadPhoto, checked
@@ -24,12 +31,13 @@ from northstar.identity.service import (
 from northstar_api.settings import Settings
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 _bearer = HTTPBearer(auto_error=False)
+_WAITING = "A proposal on this live chat is waiting for a lead."
 
 
 class LoginBody(BaseModel):
@@ -72,6 +80,28 @@ class RejectBody(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
+class ReplyBody(BaseModel):
+    # A reply of only spaces is empty, so the customer never sees a blank message.
+    model_config = ConfigDict(str_strip_whitespace=True)
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class LiveActionBody(BaseModel):
+    # What the specialist asks the agent to do in their live chat, such as "Refund order NS-1001".
+    # It is a turn for the lead's approval list, never a message the customer sees.
+    model_config = ConfigDict(str_strip_whitespace=True)
+    text: str = Field(min_length=1, max_length=2000)
+
+
+class AvailabilityBody(BaseModel):
+    state: Literal["available", "away"]
+
+
+class EscalateLiveBody(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    note: str = Field(min_length=1, max_length=2000)
+
+
 def create_app(
     settings: Settings | None = None,
     clock: Clock | None = None,
@@ -92,7 +122,28 @@ def create_app(
     store.ensure_schema()
     seed_staff(store)
     identity = Identity(store, clock, settings.token_secret)
-    cases = CaseStore(pool, clock, settings.request_limit, settings.daily_token_budget)
+    cases = CaseStore(
+        pool,
+        clock,
+        settings.request_limit,
+        settings.daily_token_budget,
+        chat_turns_per_customer=settings.chat_turns_per_customer,
+        chat_turns_per_day=settings.chat_turns_per_day,
+        turn_seconds=settings.turn_deadline_seconds,
+        failed_turns_before_follow_up=settings.failed_turns_before_follow_up,
+        live_chat=settings.live_chat_enabled,
+        chats_per_specialist=settings.live_chats_per_specialist,
+        offer_seconds=settings.offer_accept_seconds,
+        offers_before_message=settings.offers_before_leave_message,
+        missed_offers_before_away=settings.missed_offers_before_away,
+        check_in_seconds=settings.desk_check_in_seconds,
+        line_gone_minutes=settings.line_gone_minutes,
+        longest_wait_minutes=settings.longest_wait_minutes,
+        wait_history_days=settings.wait_history_days,
+        wait_history_chats=settings.wait_history_chats,
+        quiet_minutes=(settings.quiet_nudge_minutes, settings.quiet_idle_minutes, settings.quiet_close_minutes),
+        quiet_specialist_minutes=settings.quiet_specialist_minutes,
+    )
     cases.ensure_schema()
 
     @asynccontextmanager
@@ -242,6 +293,19 @@ def create_app(
         except CaseClosed as exc:
             raise HTTPException(status_code=409, detail="A person on our team is reviewing your request.") from exc
 
+    @app.get("/chat/state")
+    def chat_state(customer_id=Depends(customer_from_token)) -> dict:
+        # The chat's follow-up beside the agent (R35), and the customer's live chat request (issue #138).
+        live = cases.live_state(customer_id) if settings.live_chat_enabled else None
+        return {"follow_up": cases.chat_follow_up(customer_id), "live_enabled": settings.live_chat_enabled, "live": live}
+
+    @app.post("/chat/leave-message")
+    def leave_message(body: ReplyBody, customer_id=Depends(customer_from_token)) -> dict:
+        try:
+            return cases.leave_message(customer_id, body.text)
+        except NoFollowUp as exc:
+            raise HTTPException(status_code=409, detail="Leaving a message is offered after replies that did not help.") from exc
+
     @app.post("/cases/current/new")
     def new_case(staff=Depends(staff_from_token)) -> dict:
         return cases.start_new(staff.id)
@@ -341,6 +405,146 @@ def create_app(
             raise HTTPException(status_code=404, detail="This case is not waiting.") from exc
         identity.audit(staff.id, "reject", clock.now())
         return {"ticket_id": None}
+
+    # Escalations inbox (R38). Leads see every item. Specialists pick items up and reply into the chat.
+
+    @app.get("/inbox")
+    def escalations_inbox(staff=Depends(staff_from_token)) -> list:
+        return cases.inbox(staff.id, lead=staff.role == "lead")
+
+    def require_specialist(staff=Depends(staff_from_token)):
+        # Leads approve. Specialists talk to customers.
+        if staff.role != "specialist":
+            raise HTTPException(status_code=403, detail="Specialists talk to customers. Leads approve.")
+        return staff
+
+    # Path ids are typed, so a malformed id is 422 on every inbox and live chat route.
+    @app.post("/inbox/{case_id}/pick-up")
+    def pick_up_escalation(case_id: uuid.UUID, staff=Depends(require_specialist)) -> dict:
+        try:
+            cases.pick_up(staff.id, case_id)
+        except AlreadyPickedUp as exc:
+            raise HTTPException(status_code=409, detail="Another specialist picked this up.") from exc
+        except NotInInbox as exc:
+            raise HTTPException(status_code=404, detail="This case is not in the inbox.") from exc
+        identity.audit(staff.id, "escalation_pick_up", clock.now())
+        return {"case_id": str(case_id)}
+
+    @app.post("/inbox/{case_id}/reply")
+    def reply_to_escalation(case_id: uuid.UUID, body: ReplyBody, staff=Depends(require_specialist)) -> dict:
+        try:
+            cases.reply(staff.id, case_id, body.text)
+        except NotYours as exc:
+            raise HTTPException(status_code=403, detail="Pick up this chat case before replying.") from exc
+        identity.audit(staff.id, "escalation_reply", clock.now())
+        return {"case_id": str(case_id)}
+
+    # Live chat (issue #138). With the setting off, no live chat route exists.
+
+    if settings.live_chat_enabled:
+
+        @app.post("/chat/live")
+        def request_live_chat(customer_id=Depends(customer_from_token)) -> dict:
+            try:
+                cases.request_live(customer_id)
+            except CaseClosed as exc:
+                raise HTTPException(status_code=409, detail="A person on our team is reviewing your request.") from exc
+            # Turned away, `live` is null and /chat/state offers to leave a message (R41).
+            return {"live": cases.live_state(customer_id)}
+
+        @app.delete("/chat/live")
+        def leave_line(customer_id=Depends(customer_from_token)) -> dict:
+            # The customer can leave the line at any time and go back to the agent (issue #140).
+            if not cases.leave_line(customer_id):
+                raise HTTPException(status_code=409, detail="You are not waiting for a person.")
+            return {"live": None}
+
+        @app.post("/chat/renew")
+        def renew_chat(customer_id=Depends(customer_from_token)) -> dict:
+            # The chat is not signed out while the customer waits for or talks to a specialist (R47).
+            if cases.live_state(customer_id) is None:
+                raise HTTPException(status_code=409, detail="No live chat is open.")
+            return {"chat_token": identity.chat_token(customer_id)}
+
+        @app.post("/presence")
+        def set_presence(body: AvailabilityBody, staff=Depends(require_specialist)) -> dict:
+            cases.set_availability(staff.id, body.state)
+            return {"state": body.state}
+
+        @app.get("/live")
+        def my_live_chats(staff=Depends(require_specialist)) -> dict:
+            return cases.live(staff.id)
+
+        @app.get("/line")
+        def lead_line(staff=Depends(require_lead)) -> dict:
+            # The lead's view of the line and its alerts (R49). Read-only: nothing is reassigned from here.
+            return cases.line()
+
+        @app.post("/live/next")
+        def take_next_live_chat(staff=Depends(require_specialist)) -> dict:
+            # The specialist takes the next request in line. It is offered to them now, and they accept it as any offer.
+            try:
+                request_id = cases.take_next(staff.id)
+            except NothingToTake as exc:
+                raise HTTPException(
+                    status_code=409, detail="No request is waiting for you, or you are away or have no free slot."
+                ) from exc
+            return {"id": str(request_id)}
+
+        @app.post("/live/{request_id}/accept")
+        def accept_live_chat(request_id: uuid.UUID, staff=Depends(require_specialist)) -> dict:
+            try:
+                cases.accept(staff.id, request_id)
+            except NotYours as exc:
+                raise HTTPException(status_code=403, detail="This offer is not yours.") from exc
+            return {"id": str(request_id)}
+
+        @app.post("/live/{request_id}/decline")
+        def decline_live_chat(request_id: uuid.UUID, staff=Depends(require_specialist)) -> dict:
+            try:
+                cases.decline(staff.id, request_id)
+            except NotYours as exc:
+                raise HTTPException(status_code=403, detail="This offer is not yours.") from exc
+            return {"id": str(request_id)}
+
+        @app.post("/live/{request_id}/messages")
+        def post_live_message(request_id: uuid.UUID, body: ReplyBody, staff=Depends(require_specialist)) -> dict:
+            try:
+                cases.live_message(staff.id, request_id, body.text)
+            except NotYours as exc:
+                raise HTTPException(status_code=403, detail="This live chat is not yours.") from exc
+            return {"id": str(request_id)}
+
+        @app.post("/live/{request_id}/actions")
+        def raise_live_action(request_id: uuid.UUID, body: LiveActionBody, staff=Depends(require_specialist)) -> dict:
+            # The same turn and rules as the agent, as the specialist. A lead approves what it proposes (R45).
+            try:
+                cases.live_action(staff.id, request_id, body.text)
+            except NotYours as exc:
+                raise HTTPException(status_code=403, detail="This live chat is not yours.") from exc
+            except CaseClosed as exc:
+                raise HTTPException(status_code=409, detail=_WAITING) from exc
+            return {"id": str(request_id)}
+
+        @app.post("/live/{request_id}/resolve")
+        def resolve_live_chat(request_id: uuid.UUID, staff=Depends(require_specialist)) -> dict:
+            try:
+                cases.end_live(staff.id, request_id, "Resolved")
+            except NotYours as exc:
+                raise HTTPException(status_code=403, detail="This live chat is not yours.") from exc
+            except ProposalWaiting as exc:
+                raise HTTPException(status_code=409, detail=_WAITING) from exc
+            return {"id": str(request_id)}
+
+        @app.post("/live/{request_id}/escalate")
+        def escalate_live_chat(request_id: uuid.UUID, body: EscalateLiveBody, staff=Depends(require_specialist)) -> dict:
+            try:
+                cases.end_live(staff.id, request_id, "Escalated", body.note)
+            except NotYours as exc:
+                raise HTTPException(status_code=403, detail="This live chat is not yours.") from exc
+            except ProposalWaiting as exc:
+                raise HTTPException(status_code=409, detail=_WAITING) from exc
+            return {"id": str(request_id)}
 
     @app.post("/cases/current/customer")
     def bind_customer(body: BindBody, staff=Depends(staff_from_token)) -> dict:

@@ -73,3 +73,12 @@ def test_every_address_the_handbook_publishes_is_on_the_list():
 def test_the_contact_answer_keeps_the_support_address(client):
     body = _ask(client, "What email should a customer use to contact support?")
     assert "help@northstar.example" in body["messages"][-1]["body"]
+
+
+def test_the_agent_email_filter_keeps_the_published_address():
+    # Redacting it from the desk's answer made the model call the desk again (a slow turn).
+    from northstar.privacy import detector
+
+    find = detector("email")
+    assert find("Customers reach Northstar at help@northstar.example.") == []
+    assert [hit["value"] for hit in find("Bound to mira.shah@northstar.example.")] == ["mira.shah@northstar.example"]

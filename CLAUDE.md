@@ -16,9 +16,26 @@ git checkout dev
 git pull origin dev
 ```
 
-## Stop point (2026-10-08, after slice 3 and the end-to-end check)
+## Stop point (2026-10-09, update phase built)
 
-`dev`, `uat`, `prod`, and `main` hold the same tree: this stop point was merged into `dev` and promoted dev→uat→prod→main, CI green on each (the earlier round was #117 to #119, then #122 and #123 for the chat fix). Branch protection on all four: a PR, `Test API` and `Lint and build console`, admins included. No deploy hooks exist, so nothing deploys outside GitHub. `uv run pytest`: 185 passed. Browser suite (`npx playwright test` in `apps/web`, on a fresh `DATABASE_URL`): 3 passed with axe. **No open GitHub issues.**
+`uat`, `prod`, and `main` hold the same tree (promoted in #125 to #127). `dev` is ahead by #128 to #130 (bounded model calls, the update phase plan). The update phase itself (spec #131, tickets #132 to #145) is built on `feature/update-phase`, PR #146 into `dev`. After the code review fixes: 317 Python tests and 11 browser tests pass. Promote only when Malatesha asks.
+
+**Update phase** (`prd.md` R34 to R49, `docs/plans/update-phase.md` with "Built differently", ADR `docs/adr/0001-live-chat-line-in-postgres.md`, terms in `CONTEXT.md`, details in `correction.md`):
+- Per-customer chat limits in Postgres.
+- A 45 s turn deadline.
+- The escalations inbox.
+- The follow-up after 3 failed turns or a typed "I want a person".
+- Live chat behind `LIVE_CHAT_ENABLED` (off by default): the line, offers, the wait estimate, quiet-customer timers, money actions that still wait for a lead, and the lead's line view.
+- Experiments sized to the trace budget, plus a release-bar results file checked in CI on PRs into `uat`.
+
+Open for Malatesha:
+- Whether the agent answers while an escalation waits in the line (today it stays quiet).
+- Making "Release bar results" a required check on `uat`.
+- Setting `TOKEN_CAP` from the first real release run.
+- A follow-up PR that moves the live chat code out of `cases.py`.
+- A "done" state for the escalations inbox.
+
+Browser checks: run them from a worktree, or stop the old `next dev` on port 3000 first. It shares `apps/web/.next`, and the cache corrupts.
 
 What exists now, beyond slices 1 and 2:
 - **LangSmith evals (#101):** `make evals-sync` writes `Northstar Support: E2E` (tags `slice1` 40, `slice2` 67, `edit-20261008-054354` 68, `slice3-es` 74, `slice3-photo` 77) and `Northstar Support: Intent Classifier` (14). `uv run python -m evals.experiments run --split test --repetitions 3` runs v0, v1 (the live desk), and the router; `--version <tag>` limits to one version's cases; results go to `results/langsmith_<split>[_<version>].md`. `promote <run_id> --decision ... --sections ...` adds a reviewed specialist edit under a new tag (one done: the surfboard-wax case).
@@ -71,7 +88,7 @@ Slice 2 (P1) is built and merged into `dev` (PRs #85 to #96). Every sub-issue of
 
 Slice 2 labeled desk cases are in `SLICE2_CASES` (`evals/labeled.py`), a new dataset version beside the frozen 40.
 
-Slice 3 ([#65](https://github.com/PrasannaMalatesha/northstar-support-agent/issues/65), sub-issues #78 to #81) is next only when Malatesha asks. Its rule is "after slice 2 is in use". #79 (customer chat) still has no `ready-for-agent` label: `prd.md` must first decide how a customer identifies themselves in the chat. Do not create more tickets unless asked.
+Slice 3 ([#65](https://github.com/PrasannaMalatesha/northstar-support-agent/issues/65), sub-issues #78 to #81) is done and closed. The update phase is spec #131 with tickets #132 to #145, built on the branch `feature/update-phase`. Do not create more tickets unless asked.
 
 Seed orders for demos (customer Mira Shah). Dates hold for the tests' fixed clock (2026-10-06) and a few days after:
 - **NS-1001**, wool coat, delivered: refund, exchange to L, defect inside the window.
@@ -172,7 +189,7 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 
 ## Continue checklist
 
-1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (185 or more).
+1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (317 or more).
 2. Read the Stop point section above. Ask Malatesha what is next: the demo, turning on Google SSO, the LangSmith limit, or new work. Do not create tickets or promote branches unless asked.
 3. Every change: a `feature/*` branch from `origin/dev`, a PR into `dev`, merged only when CI is green.
 4. Rewrite the Stop point section before you stop.

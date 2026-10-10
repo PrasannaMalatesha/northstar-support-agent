@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage
 from pydantic import Field
 
 import northstar.agent_model as agent_model
+import northstar.graph as graph
 from northstar.graph import LOOKUP_FAILED_TEXT, _agent_draft
 from northstar.handbook import Draft
 from northstar.privacy import SECRET_REPLY
@@ -31,7 +32,7 @@ def _desk_call(*ids: str) -> AIMessage:
 
 def _use(monkeypatch, *replies: AIMessage) -> Scripted:
     model = Scripted(messages=iter(replies))
-    monkeypatch.setattr(agent_model, "_model", lambda: model)
+    monkeypatch.setattr(agent_model, "_agent_model", lambda: model)
     monkeypatch.delenv("AGENT_FALLBACK_MODEL", raising=False)
     return model
 
@@ -87,3 +88,24 @@ def test_a_secret_stops_the_turn_before_any_model_call(monkeypatch):
     assert draft.text == SECRET_REPLY
     assert asked == []
     assert model.seen == []
+
+
+def test_a_model_that_keeps_asking_stops_at_three_calls_inside_the_step_cap(monkeypatch):
+    # The worst case run_limit allows: three model calls, each asking for the desk again.
+    model = _use(monkeypatch, _desk_call("1"), _desk_call("2"), _desk_call("3"), _desk_call("4"))
+    asked = []
+    draft = _agent_draft("When does it ship?", _answer(asked), "support_agent")
+    assert len(model.seen) == 3
+    assert len(asked) == 1
+    assert draft.citations == ("SHIP-SLA",)
+
+
+def test_the_step_cap_is_enforced_and_the_desk_still_answers(monkeypatch):
+    # Below the 26 steps a normal agent turn needs, LangGraph stops the subgraph.
+    # The desk then decides without a model, as on any other model failure.
+    monkeypatch.setattr(graph, "AGENT_RECURSION_LIMIT", 5)
+    _use(monkeypatch, _desk_call("1"), AIMessage(content="Done."))
+    asked = []
+    draft = _agent_draft("When does it ship?", _answer(asked), "support_agent")
+    assert draft.citations == ("SHIP-SLA",)
+    assert asked == ["When does it ship?"]
