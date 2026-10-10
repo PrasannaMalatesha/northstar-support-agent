@@ -59,8 +59,9 @@ def test_three_failed_turns_in_a_row_offer_to_leave_a_message(client):
 def test_a_clarification_and_a_failed_lookup_count_as_failed_turns(client, monkeypatch):
     chat = _chat(client)
     _say(client, chat, "What is your favorite color?")
-    assert _say(client, chat, "Please refund my order.")["messages"][-1]["text"].startswith("Which order id?")
-    monkeypatch.setattr("northstar.cases.handbook_reply", lambda _q: Draft("lookup_failed", LOOKUP_FAILED_TEXT, (), {}, ()))
+    # The chat knows its order, so the clarification is the missing size.
+    assert _say(client, chat, "Exchange this for another size, please.")["messages"][-1]["text"].startswith("Which size")
+    monkeypatch.setattr("northstar.cases.handbook_reply", lambda *_args: Draft("lookup_failed", LOOKUP_FAILED_TEXT, (), {}, ()))
     _say(client, chat, "Tell me a joke.")
     assert _follow_up(client, chat) == "leave_message"
 

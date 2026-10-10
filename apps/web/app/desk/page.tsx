@@ -17,7 +17,7 @@ async function bindAction(formData: FormData) {
   }
   const access = await accessToken();
   if (!access) {
-    redirect("/login");
+    redirect("/login?expired=1");
   }
   await fetch(`${apiUrl}/cases/current/customer`, {
     method: "POST",
@@ -37,7 +37,7 @@ async function closeAction(formData: FormData) {
   }
   const access = await accessToken();
   if (!access) {
-    redirect("/login");
+    redirect("/login?expired=1");
   }
   const status = String(formData.get("status") ?? "");
   const path = status === "Escalated" ? "escalate" : "resolve";
@@ -59,7 +59,7 @@ async function editAction(formData: FormData) {
   }
   const access = await accessToken();
   if (!access) {
-    redirect("/login");
+    redirect("/login?expired=1");
   }
   const caseId = String(formData.get("case_id") ?? "");
   if (!ID.test(caseId)) {
@@ -85,7 +85,7 @@ async function rejectAction(formData: FormData) {
   }
   const access = await accessToken();
   if (!access) {
-    redirect("/login");
+    redirect("/login?expired=1");
   }
   const caseId = String(formData.get("case_id") ?? "");
   if (!ID.test(caseId)) {
@@ -109,7 +109,7 @@ async function approveAction(formData: FormData) {
   }
   const access = await accessToken();
   if (!access) {
-    redirect("/login");
+    redirect("/login?expired=1");
   }
   const caseId = String(formData.get("case_id") ?? "");
   if (!ID.test(caseId)) {
@@ -130,7 +130,7 @@ async function askAction(formData: FormData) {
   }
   const access = await accessToken();
   if (!access) {
-    redirect("/login");
+    redirect("/login?expired=1");
   }
   // An optional damaged-item photo goes to the API as a data URL. The API checks type and size.
   const file = formData.get("photo");
@@ -156,7 +156,7 @@ async function newCaseAction() {
   }
   const access = await accessToken();
   if (!access) {
-    redirect("/login");
+    redirect("/login?expired=1");
   }
   await fetch(`${apiUrl}/cases/current/new`, {
     method: "POST",
@@ -172,7 +172,7 @@ async function pickUpAction(formData: FormData) {
   }
   const access = await accessToken();
   if (!access) {
-    redirect("/login");
+    redirect("/login?expired=1");
   }
   const caseId = String(formData.get("case_id") ?? "");
   if (!ID.test(caseId)) {
@@ -192,7 +192,7 @@ async function replyAction(formData: FormData) {
   }
   const access = await accessToken();
   if (!access) {
-    redirect("/login");
+    redirect("/login?expired=1");
   }
   const caseId = String(formData.get("case_id") ?? "");
   if (!ID.test(caseId)) {
@@ -216,7 +216,7 @@ async function availabilityAction(formData: FormData) {
   }
   const access = await accessToken();
   if (!access) {
-    redirect("/login");
+    redirect("/login?expired=1");
   }
   await fetch(`${apiUrl}/presence`, {
     method: "POST",
@@ -236,7 +236,7 @@ async function acceptAction(formData: FormData) {
   }
   const access = await accessToken();
   if (!access) {
-    redirect("/login");
+    redirect("/login?expired=1");
   }
   const id = String(formData.get("id") ?? "");
   const accepted = ID.test(id)
@@ -253,7 +253,7 @@ async function declineAction(formData: FormData) {
   }
   const access = await accessToken();
   if (!access) {
-    redirect("/login");
+    redirect("/login?expired=1");
   }
   const id = String(formData.get("id") ?? "");
   const declined = ID.test(id)
@@ -270,7 +270,7 @@ async function takeNextAction() {
   }
   const access = await accessToken();
   if (!access) {
-    redirect("/login");
+    redirect("/login?expired=1");
   }
   const taken = await fetch(`${apiUrl}/live/next`, { method: "POST", headers: { Authorization: `Bearer ${access}` } });
   redirect(taken.ok ? "/desk?live=taken" : "/desk?live=none");
@@ -334,11 +334,11 @@ export default async function DeskPage({
   const ticket = params.ticket;
   const session = await auth();
   if (!session?.user) {
-    redirect("/login");
+    redirect("/login?expired=1");
   }
   const access = await accessToken();
   if (!access) {
-    redirect("/login");
+    redirect("/login?expired=1");
   }
   // A lead opens a queue row as a read-only case desk.
   const viewing = session.user.role === "lead" && typeof params.case === "string" && ID.test(params.case);
@@ -347,7 +347,7 @@ export default async function DeskPage({
     cache: "no-store",
   });
   if (!response.ok) {
-    redirect("/login");
+    redirect("/login?expired=1");
   }
   const waiting =
     session.user.role === "lead"

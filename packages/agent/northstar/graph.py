@@ -108,7 +108,9 @@ def _ask_agent(question: str, draft_fn: Callable[[str], Draft], name: str) -> Dr
     held: dict[str, Draft] = {}
     asked = question
 
-    @tool
+    # return_direct: the agent ends after the desk answers. Its own final message was never shown
+    # (the desk's draft is), so that model call only cost time and tokens.
+    @tool(return_direct=True)
     def desk(question: str) -> str:
         """Return the Northstar desk decision for this question. Call once."""
         # ponytail: ignore the model argument. The routed question is the one the desk sees.

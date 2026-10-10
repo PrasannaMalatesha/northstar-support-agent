@@ -3,6 +3,7 @@
 What each setting means is written beside it in `northstar_api.settings`.
 """
 
+ACCESS_TOKEN_MINUTES = 15
 REQUEST_LIMIT = 60
 DAILY_TOKEN_BUDGET = 20_000
 CHAT_TURNS_PER_CUSTOMER = 10

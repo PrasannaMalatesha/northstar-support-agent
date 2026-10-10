@@ -12,7 +12,13 @@ from dataclasses import dataclass
 
 from northstar.privacy import screen
 
-_LEGAL = ("chargeback", "lawyer", "lawsuit", "regulator", "legal advice")
+# ESC-LEGAL: chargebacks, lawsuits, regulator complaints, legal advice. A threat to sue counts; the name Sue does not.
+_LEGAL = re.compile(
+    r"\bchargebacks?\b|\blawyers?\b|\battorneys?\b|\blaw ?suits?\b|\bregulators?\b|\blegal (advice|action)\b"
+    r"|\bsu(e|ing|ed) (you|us|them|northstar|the company)\b|\b(will|going to|gonna|plan to|threaten(s|ed)? to) sue\b|\bsuing\b"
+    r"|\b(take|taking) (you|us|them|northstar) to court\b|\bsmall claims\b",
+    re.IGNORECASE,
+)
 _FRAUD = re.compile(
     r"\b(did not|didn't|never) (place|make|buy|order)\b|\bnot my order\b|\baccount (was |got |has been )?(hacked|taken over)\b",
     re.IGNORECASE,
@@ -76,7 +82,7 @@ def _asked(question: str, order_id: str | None) -> str:
 def handoff(question: str, tried: tuple[str, ...] = ()) -> Handoff | None:
     lowered = question.lower()
     order_id = _order_id(question)
-    if any(word in lowered for word in _LEGAL):
+    if _LEGAL.search(lowered):
         section, owner = "ESC-LEGAL", "legal"
         handbook = "Chargebacks, lawsuits, regulator complaints, and requests for legal advice are escalated."
         missing = "A person must decide. No refund is offered to stop a chargeback. No legal advice is given."
