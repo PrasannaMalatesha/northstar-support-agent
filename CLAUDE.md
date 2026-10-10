@@ -16,14 +16,18 @@ git checkout dev
 git pull origin dev
 ```
 
-## Stop point (2026-10-09, update phase promoted)
+## Stop point (2026-10-10, conversation fixes on dev)
 
-The update phase (spec #131, tickets #132 to #145) was built in #146 and promoted to `uat`, `prod`, and `main` (#149 to #151). All four branches held the same tree, apart from this stop point note on `dev`. #131 to #145 are closed. There are no open issues. 318 Python tests and 11 browser tests pass. Promote only when Malatesha asks.
+The update phase (spec #131, tickets #132 to #145) is promoted to `uat`, `prod`, and `main` (#149 to #151); #131 to #145 are closed. Since then `dev` is ahead with #152 to #155, not promoted:
+- #153: `langchain` and `langchain-openai` are runtime dependencies of `northstar-agent`. A fresh `make api` crashed without them.
+- #154: the conversation check, `results/conversation_check_2026-10-09.md`.
+- #155: the fixes it found, and about half the model cost. The chat uses its own order. Complaints that name a product are not catalog questions. Threats to sue escalate. A lost gift card goes to GC-LOST. "for an XL" is read. A model pick handles handbook misses and follow-ups when the reranker keeps nothing. Staff tokens are renewed, with no 15-minute sign-out. Thinking levels are set, and the desk tool returns directly. Details are in `correction.md` (2026-10-10).
 
-**Release bar before `uat`:**
-- The first run (8972587) failed only English p95 latency, at 10.47 s. The agent's email filter hid the published support address from the desk's answer, so the model asked the desk twice. Fixed in #147.
-- The run on d34ede8 passed every gate: action correct 100%, English p95 8.67 s, Spanish p95 16.56 s, max 4,065 tokens. Its file was committed in #148, and the "Release bar results" check passed on #149.
-- Any later change outside `results/` needs a new run (`uv run python -m evals.experiments release --no-upload`) before the next PR into `uat`.
+There are no open issues. 331 Python tests and 12 browser tests pass; run the browser suite on a fresh database. A release-bar check on #155 passed every gate: action correct 100%, English p95 5.62 s, Spanish p95 9.34 s, max 2,231 tokens. The next PR into `uat` needs a fresh run on `dev` with its results file committed. Promote only when Malatesha asks.
+
+Open for Malatesha:
+- A stronger reranker. The FlashRank MiniLM model scores some plain questions near zero; it needs a model download.
+- The LangSmith `update-handover` example `chat-three-failures` still has its old question. Re-sync it when the trace limit allows.
 
 **Update phase** (`prd.md` R34 to R49, `docs/plans/update-phase.md` with "Built differently", ADR `docs/adr/0001-live-chat-line-in-postgres.md`, terms in `CONTEXT.md`, details in `correction.md`):
 - Per-customer chat limits in Postgres.
@@ -194,7 +198,7 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 
 ## Continue checklist
 
-1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (318 or more).
+1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (331 or more).
 2. Read the Stop point section above. Ask Malatesha what is next: the demo, turning on Google SSO, the LangSmith limit, or new work. Do not create tickets or promote branches unless asked.
 3. Every change: a `feature/*` branch from `origin/dev`, a PR into `dev`, merged only when CI is green.
 4. Rewrite the Stop point section before you stop.
