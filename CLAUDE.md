@@ -16,14 +16,22 @@ git checkout dev
 git pull origin dev
 ```
 
-## Stop point (2026-10-10, conversation fixes on dev)
+## Stop point (2026-10-10, conversation fixes promoted)
 
-The update phase (spec #131, tickets #132 to #145) is promoted to `uat`, `prod`, and `main` (#149 to #151); #131 to #145 are closed. Since then `dev` is ahead with #152 to #155, not promoted:
-- #153: `langchain` and `langchain-openai` are runtime dependencies of `northstar-agent`. A fresh `make api` crashed without them.
-- #154: the conversation check, `results/conversation_check_2026-10-09.md`.
-- #155: the fixes it found, and about half the model cost. The chat uses its own order. Complaints that name a product are not catalog questions. Threats to sue escalate. A lost gift card goes to GC-LOST. "for an XL" is read. A model pick handles handbook misses and follow-ups when the reranker keeps nothing. Staff tokens are renewed, with no 15-minute sign-out. Thinking levels are set, and the desk tool returns directly. Details are in `correction.md` (2026-10-10).
+`dev`, `uat`, `prod`, and `main` hold the same tree (#158 to #160), apart from this stop point note on `dev`. That tree includes:
+- the update phase (#146);
+- the runtime dependency fix (#153);
+- the conversation check (#154);
+- its fixes and about half the model cost (#155);
+- the passing release bar for 26235f9 (#157): action correct 100%, English p95 6.14 s, Spanish p95 9.62 s, max 2,152 tokens.
 
-There are no open issues. 331 Python tests and 12 browser tests pass; run the browser suite on a fresh database. A release-bar check on #155 passed every gate: action correct 100%, English p95 5.62 s, Spanish p95 9.34 s, max 2,231 tokens. The next PR into `uat` needs a fresh run on `dev` with its results file committed. Promote only when Malatesha asks.
+There are no open issues. 331 Python tests and 12 browser tests pass; run the browser suite on a fresh database. Any later change outside `results/` needs a fresh release bar run before the next PR into `uat`. Promote only when Malatesha asks.
+
+Suggested next, not started (details in the 2026-10-10 session notes):
+- **Token budget.** Each handbook question is charged a flat 1,000 tokens (`TOKENS_PER_TURN`) against a 20,000-a-day budget, so a specialist gets only 20 handbook questions a day. Charge the reported usage, or raise the budget.
+- **`TOKEN_CAP`.** It is still the provisional 10,000; the real peak is about 2,200. Suggested 5,000. Also make "Release bar results" a required check on `uat`.
+- **The conversation check.** Move the 32-conversation check into `evals` so it can be run again.
+- **Google SSO.** It needs OAuth values. Turning it on hides the password form, and only emails in `staff_users` can sign in, so a staff row with a real Google email is needed first.
 
 Open for Malatesha:
 - A stronger reranker. The FlashRank MiniLM model scores some plain questions near zero; it needs a model download.
