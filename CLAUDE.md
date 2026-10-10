@@ -16,9 +16,14 @@ git checkout dev
 git pull origin dev
 ```
 
-## Stop point (2026-10-09, update phase built)
+## Stop point (2026-10-09, update phase promoted)
 
-`uat`, `prod`, and `main` hold the same tree (promoted in #125 to #127). `dev` is ahead by #128 to #130 (bounded model calls, the update phase plan). The update phase itself (spec #131, tickets #132 to #145) is built on `feature/update-phase`, PR #146 into `dev`. After the code review fixes: 317 Python tests and 11 browser tests pass. Promote only when Malatesha asks.
+The update phase (spec #131, tickets #132 to #145) was built in #146 and promoted to `uat`, `prod`, and `main` (#149 to #151). All four branches held the same tree, apart from this stop point note on `dev`. #131 to #145 are closed. There are no open issues. 318 Python tests and 11 browser tests pass. Promote only when Malatesha asks.
+
+**Release bar before `uat`:**
+- The first run (8972587) failed only English p95 latency, at 10.47 s. The agent's email filter hid the published support address from the desk's answer, so the model asked the desk twice. Fixed in #147.
+- The run on d34ede8 passed every gate: action correct 100%, English p95 8.67 s, Spanish p95 16.56 s, max 4,065 tokens. Its file was committed in #148, and the "Release bar results" check passed on #149.
+- Any later change outside `results/` needs a new run (`uv run python -m evals.experiments release --no-upload`) before the next PR into `uat`.
 
 **Update phase** (`prd.md` R34 to R49, `docs/plans/update-phase.md` with "Built differently", ADR `docs/adr/0001-live-chat-line-in-postgres.md`, terms in `CONTEXT.md`, details in `correction.md`):
 - Per-customer chat limits in Postgres.
@@ -88,7 +93,7 @@ Slice 2 (P1) is built and merged into `dev` (PRs #85 to #96). Every sub-issue of
 
 Slice 2 labeled desk cases are in `SLICE2_CASES` (`evals/labeled.py`), a new dataset version beside the frozen 40.
 
-Slice 3 ([#65](https://github.com/PrasannaMalatesha/northstar-support-agent/issues/65), sub-issues #78 to #81) is done and closed. The update phase is spec #131 with tickets #132 to #145, built on the branch `feature/update-phase`. Do not create more tickets unless asked.
+Slice 3 ([#65](https://github.com/PrasannaMalatesha/northstar-support-agent/issues/65), sub-issues #78 to #81) is done and closed. The update phase (spec #131, tickets #132 to #145) is done and closed. It is promoted to every branch. Do not create more tickets unless asked.
 
 Seed orders for demos (customer Mira Shah). Dates hold for the tests' fixed clock (2026-10-06) and a few days after:
 - **NS-1001**, wool coat, delivered: refund, exchange to L, defect inside the window.
@@ -189,7 +194,7 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 
 ## Continue checklist
 
-1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (317 or more).
+1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (318 or more).
 2. Read the Stop point section above. Ask Malatesha what is next: the demo, turning on Google SSO, the LangSmith limit, or new work. Do not create tickets or promote branches unless asked.
 3. Every change: a `feature/*` branch from `origin/dev`, a PR into `dev`, merged only when CI is green.
 4. Rewrite the Stop point section before you stop.
