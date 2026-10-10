@@ -16,26 +16,18 @@ git checkout dev
 git pull origin dev
 ```
 
-## Stop point (2026-10-10, end-to-end fixes on dev)
+## Stop point (2026-10-10, edge cases on dev)
 
-`uat`, `prod`, and `main` hold the conversation fixes (#158 to #160). `dev` is ahead with #161 to #163, not promoted:
-- #162: the end-to-end check, `results/e2e_check_2026-10-10.md`.
-- #163: its fixes:
-  - final sale (a reranker recheck with the model when it drops Pinecone's first section);
-  - fraud in any tense;
-  - price questions reach the handbook, while item questions stay on the catalog;
-  - wrong-item refunds;
-  - one order per request;
-  - follow-ups read the handbook;
-  - nothing changes on a cancelled order;
-  - insults and "ignore all previous instructions" get the safe reply;
-  - "torn" is a defect;
-  - chat order lookups;
-  - a consistent NS-1002 seed.
+`uat`, `prod`, and `main` hold the conversation fixes (#158 to #160). `dev` is ahead with #161 to #165, not promoted:
+- #162 and #163: the end-to-end check and its fixes.
+- #165: round 3 edge cases:
+  - whitespace-only messages are refused;
+  - "NS1006" reads as NS-1006;
+  - the chat sign-in lockout counts per order;
+  - an exchange to the owned size says so.
+- **`EDGECASES.md`** collects every edge case and error with its root cause and fix, plus the token, cost, and speed work. Use it to explain the project.
 
-  Details are in `correction.md`.
-
-There are no open issues. 347 Python tests and 12 browser tests pass; run the browser suite on a fresh database. The release bar on #163's code passed every gate (English p95 4.44 s). The next PR into `uat` needs a fresh run on `dev` with its results file committed. Promote only when Malatesha asks.
+There are no open issues. 352 Python tests and 12 browser tests pass; run the browser suite on a fresh database. The release bar on #165's code passed every gate (English p95 5.46 s). The next PR into `uat` needs a fresh run on `dev` with its results file committed. Promote only when Malatesha asks.
 
 The browser suite runs on the real clock. NS-1002 stays inside its return window through 2026-10-31, and Mira's orders follow the tests' 2026-10-06 dates. Move the seed dates, or give the browser API a fixed clock, before then.
 
@@ -218,7 +210,7 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 
 ## Continue checklist
 
-1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (347 or more).
+1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (352 or more).
 2. Read the Stop point section above. Ask Malatesha what is next: the demo, turning on Google SSO, the LangSmith limit, or new work. Do not create tickets or promote branches unless asked.
 3. Every change: a `feature/*` branch from `origin/dev`, a PR into `dev`, merged only when CI is green.
 4. Rewrite the Stop point section before you stop.
