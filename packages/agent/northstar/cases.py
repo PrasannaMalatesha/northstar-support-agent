@@ -2559,7 +2559,9 @@ _CUSTOMERS = (
 # Statuses follow the handbook: placed, packed, shipped, delivered.
 _ORDERS = (
     ("NS-1001", "mira.shah@northstar.example", "delivered", "2026-09-01", "Wool coat, size M", "none", 12800, "2026-09-20", "apparel and footwear", "2026-09-02"),
-    ("NS-1002", "jon.hale@northstar.example", "shipped", "2026-09-12", "Canvas tote", "none", 4800, None, "bags and accessories", "2026-09-12"),
+    # Jon Hale's refundable order: delivered, inside the return window for the tests' clock and for the browser
+    # suite, which runs on the real clock, through 2026-10-31.
+    ("NS-1002", "jon.hale@northstar.example", "delivered", "2026-09-28", "Canvas tote", "none", 4800, "2026-10-01", "bags and accessories", "2026-09-29"),
     ("NS-1003", "mira.shah@northstar.example", "delivered", "2026-09-01", "Wool scarf", "refunded", 2000, "2026-09-20", "apparel and footwear", "2026-09-02"),
     ("NS-1004", "mira.shah@northstar.example", "placed", "2026-10-06", "Enamel kettle", "none", 6400, None, "home and kitchen", None),
     ("NS-1005", "mira.shah@northstar.example", "packed", "2026-10-05", "Canvas tote", "none", 4800, None, "bags and accessories", None),
