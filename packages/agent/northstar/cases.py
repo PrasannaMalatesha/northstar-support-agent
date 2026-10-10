@@ -2218,7 +2218,16 @@ class CaseStore:
             return catalog
         if not self._take(now.date(), "tokens", TOKENS_PER_TURN, {limit_key: self._token_budget}):
             return _plain("quota", QUOTA_TEXT)
-        return handbook_reply(question)
+        return handbook_reply(question, self._previous_question(case_id))
+
+    def _previous_question(self, case_id: uuid.UUID) -> str | None:
+        """The case's last question before this turn, which is saved only after its draft."""
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                "SELECT body FROM case_messages WHERE case_id = %s AND role = 'user' ORDER BY created_at DESC, id DESC LIMIT 1",
+                (case_id,),
+            ).fetchone()
+        return row["body"] if row else None
 
     def _gated_draft(
         self, case_id: uuid.UUID, staff_id: uuid.UUID, question: str, now: datetime, note: str = "", chat_order: str | None = None
