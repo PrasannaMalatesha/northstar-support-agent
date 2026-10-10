@@ -173,7 +173,7 @@ Anything that moves money (refund, partial credit) stops as a proposal, and only
 - Cases: open (bound or unbound); post a message (streams step events, then one final checked draft); save final text; resolve; read the case with its history record.
 - Approvals: list pending (lead only, with age and stale flag); decide (lead only, not the proposer, approve, edit amount, or reject with a reason). Approving is idempotent.
 - Every route checks the session and loads the role from the database. Roles are never trusted from the client. Request bodies are validated with size and length caps. CORS is limited to the environment's console origin. State-changing console routes check the request Origin header.
-- Rate limits: login lockout at 5 failures in 15 minutes (stored in Postgres); per-user request limits in memory; a daily token quota in Postgres; a model-call rate limiter in process.
+- Rate limits: login lockout at 5 failures in 15 minutes (stored in Postgres); per-user and per-chat-customer request limits in Postgres (`daily_limits`, update phase #134); a daily token quota in Postgres; a model-call rate limiter in process.
 
 **Console**
 - Three screens: login, case desk, and the waiting for approval list.

@@ -13,6 +13,116 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-09 — Update phase built (#132 to #145, PR #146)
+
+Status: decision
+
+What changed:
+- **U1, quality within budget:**
+  - Experiments run one code evaluator per row (`code_scores`), one repetition by default, with `--no-upload` and `--router` options (#132).
+  - The release bar runs locally (`evals.experiments release`) and writes `results/release_bar.json`. A CI job on PRs into `uat` checks that file (#133).
+- **U2, limits and a bounded conversation:**
+  - Per-customer chat limits (10 agent turns a day, 500 for all chat customers) in a Postgres `daily_limits` table, counted atomically (#134).
+  - A 45 s turn deadline that skips optional model steps (#135).
+  - After 3 failed turns, the chat suggests a follow-up (#137).
+- **U3, escalations inbox:** leads see escalated cases, specialists pick them up, and a reply reaches the customer's chat (#136).
+- **U4 to U6, live chat** behind `LIVE_CHAT_ENABLED`, off by default:
+  - The tracer bullet (#138).
+  - Offers that move on (#139).
+  - The line and the wait estimate (#140).
+  - Escalations and three failures reach the line (#141).
+  - Quiet customers free the specialist (#142).
+  - Money actions in a live chat (#143).
+- **U7:** the lead's line view and alerts (#144), and hand-over evals and the hand-over reason (#145).
+
+Evidence:
+- After the code review fixes: 317 Python tests, 11 browser tests (axe, three-browser live chat flows), lint, types and build all pass.
+- The two-axis review covered standards and spec. Its fixes are below.
+- Every agreed setting matches its code default.
+
+Debug steps: Each ticket was built in its own worktree with its own test database and merged into `feature/update-phase` only after the full suite passed on the merged result. Browser checks ran under a shared lock, because the suite's ports are fixed.
+
+Fix: Built as planned, with the differences listed in "Built differently" in `docs/plans/update-phase.md`.
+
+Open for Malatesha:
+- Whether the agent keeps answering while an escalation waits in the line. Today it stays quiet.
+- Making "Release bar results" a required check on `uat`.
+- Setting `TOKEN_CAP` from the first real release run.
+- A follow-up PR that moves the live chat code out of `cases.py`.
+- The escalations inbox has no "done" state: an answered escalated case stays listed.
+
+## 2026-10-09 — Code review fixes for the update phase
+
+Status: bug
+
+What broke:
+- **Desk forms:** two desk server actions put the form's case id straight into the API path. A crafted value could send the request to a different route under the specialist's own token.
+- **Tie-break:** ties went by staff id, not "longest since offered".
+- **Offer card:** it lacked the reason and the language.
+- **Spec gaps:**
+  - `POST /live/next` was missing;
+  - the live chat page lacked the customer's orders and history;
+  - chats per specialist was not a setting.
+- **Names:**
+  - "offer" and "handoff" were each used for two things;
+  - the setting name used "agent" for a person.
+- **Code shape:**
+  - settings defaults lived in two places;
+  - the line's timers ran in a different order on each read path.
+
+Evidence: The standards and spec reviews, run in parallel against spec #131 and its tickets.
+
+Fix:
+- **Case ids:** checked before they reach an API path, and typed as UUIDs in the API (a malformed id gets 422).
+- **Tie-break:** `specialist_availability.last_offered_at` decides ties. It is not taken from `live_chat_requests.offered_at`, because a decline clears that row's specialist, which would make the specialist who just declined look never-offered.
+- **Offer card and end reasons:** `language` and `end_reason` columns. Offers show the reason and a Spanish label. The quiet close records `closed_quiet`.
+- **Missing pieces:** `POST /live/next` and a "Take next" button; orders and history on the live chat page; the setting `LIVE_CHATS_PER_SPECIALIST`.
+- **Renames:** `LIVE_CHAT_ENABLED`; the chat's `follow_up` (glossary: Follow-up); `record_handover` and feedback key `handover_reason`.
+- **Code shape:** one defaults module (`northstar/defaults.py`), and one `_tick()` that runs sweep, expire, quiet, then offers, on every read and write path.
+
+## 2026-10-09 — Two shared Postgres connections could open twice under a race
+
+Status: bug
+
+What broke: `preferences._store` and `memory.graph_for` cached their Postgres store and checkpointer without a lock. When the first requests to a fresh process arrived at once, each could open one, and the loser's connection was closed while still in use ("the connection is closed").
+
+Evidence: The concurrency test in #134 hit it, and a new test with eight racing threads fails without the fix.
+
+Fix: A module lock with a second check inside it, in both caches.
+
+## 2026-10-09 — `upload_results=False` still sent traces
+
+Status: bug
+
+What broke: In langsmith 0.14.4, `evaluate(..., upload_results=False)` still posts the LangChain model runs made inside the target and the evaluators. A "local" experiment would have kept using the monthly trace allowance.
+
+Evidence: Shown with a client that has no server behind it; a test fails if the fix is removed.
+
+Fix: `--no-upload` also turns tracing off around the target and passes `disable_evaluator_tracing=True` (#132).
+
+## 2026-10-09 — Ending a live chat could drop a waiting proposal
+
+Status: bug
+
+What broke: Resolving or escalating a live chat whose case waited for a lead overwrote the case status. The proposal silently left the lead's approval list.
+
+Evidence: Found while building #143.
+
+Fix: `ProposalWaiting`: a live chat cannot be ended, by hand or by the quiet-customer close, while its case waits for a lead (#143, #142).
+
+## 2026-10-09 — Browser tests failed only in the main checkout
+
+Status: bug (local setup, not product code)
+
+What broke: The first two browser tests failed on the integration branch with "Application error". The login page crashed with `__webpack_modules__[moduleId] is not a function`.
+
+Evidence:
+- An old `next dev` server on port 3000 (started 2026-10-06) runs from the same `apps/web` folder and shares its `.next` cache with the suite's dev server.
+- From a separate worktree with its own cache, all 11 browser tests pass.
+- A first guess, that a slow model turn was the cause, was wrong. Its test change was reset before it was pushed.
+
+Fix: Browser checks run from a separate worktree, or after stopping the old server. Nothing in the product changed.
+
 ## 2026-10-09 — Update phase grilled and settled
 
 Status: decision

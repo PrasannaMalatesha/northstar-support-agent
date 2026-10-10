@@ -318,7 +318,7 @@ Offline: summary checks against the previous experiment. Online: LangSmith dashb
 | Phase | What runs |
 | --- | --- |
 | Offline experiment | All four layers on the golden dataset |
-| CI on PR into `uat` (smoke subset on PR into `dev`) | The PRD release bar: `action_correct` at least 80%; zero tickets without approval; zero invalid citations; every abstain row abstains (outside handbook, unknown catalog item, missing field, order not owned); p95 turn latency under 10 s excluding approval wait; no token cap exceeded. Also: groundedness at threshold, refund trajectories include retrieve and lookup when an order id exists, zero allowlist failures |
+| Release run before a PR into `uat` (local, then checked in CI; smoke subset on PR into `dev`) | The PRD release bar: `action_correct` at least 80%; zero tickets without approval; zero invalid citations; every abstain row abstains (outside handbook, unknown catalog item, missing field, order not owned); p95 turn latency under 10 s excluding approval wait; no token cap exceeded. Also: groundedness at threshold, refund trajectories include retrieve and lookup when an order id exists, zero allowlist failures |
 | Online | Reference-free groundedness, reply quality, trajectory quality (sampled), safety code checks, dashboards and alerts |
 | Human loop | Calibrate judges on `train_judge`, then promote failures into the dataset |
 
@@ -437,11 +437,11 @@ Rate limiting:
 | Layer | Limit | Storage |
 | --- | --- | --- |
 | Login | Per IP and per email. Lockout after 5 failures in 15 minutes | Postgres (survives restarts) |
-| API requests | Per user and per IP, stricter on `/cases/*/messages` | slowapi in memory, one instance per environment ([slowapi](https://github.com/laurentS/slowapi)) |
-| LLM token quota | Daily cap per staff user. Over the cap, the case says the quota is reached | Postgres, read from LangSmith or model usage fields |
-| Model calls | `InMemoryRateLimiter`, `ModelRetryMiddleware` | In process |
+| API requests | Per staff user per day (60). Per chat customer per day (10 agent turns) and for all chat customers together (500) | Postgres `daily_limits`, counted in one atomic statement, so limits survive restarts and hold across processes (#134) |
+| LLM token quota | Daily cap per staff user and per chat customer. Over the cap, the case says the quota is reached | Postgres `daily_limits` |
+| Model calls | At most 3 attempts of at most 20 s each, one retry layer; a 45 s turn deadline that skips optional steps; step caps 10 (router) and 50 (agent subgraph) (#128, #135) | In process |
 
-If an environment scales past one instance, request limits move to a shared store. Note that slowapi's Redis path is synchronous and blocks the event loop ([issue #130](https://github.com/laurentS/slowapi/issues/130)), so that move needs its own decision.
+Request limits already live in Postgres, so a second instance needs no new store. The live chat line, availability, and offers are Postgres rows too (`docs/adr/0001-live-chat-line-in-postgres.md`).
 
 Free-host behavior: a Render free service sleeps when idle and takes about a minute to wake ([Render free](https://render.com/docs/free)). The UI shows a "waking the server" state and retries. It does not show an error.
 
@@ -493,7 +493,7 @@ A finished change is not done until it is committed and pushed to that feature b
 | PR into | Gate |
 | --- | --- |
 | `dev` | Lint, unit tests with no LLM (including "every golden citation exists in the registry"), graph checks with mocks, code graders, a 5-row smoke eval |
-| `uat` | Full offline experiment on `test` via `evaluate()` and pytest LangSmith marks. The PRD release bar must pass |
+| `uat` | The release bar runs locally (`uv run python -m evals.experiments release`, `--no-upload` while the LangSmith allowance is used up), because CI holds no keys. It writes `results/release_bar.json` with the measured commit and each gate. The CI job "Release bar results" passes only if that commit is in the PR's history, only `results/` changed since, and every gate passed (#133). Make it a required check on `uat` to enforce it |
 | `prod` | The same commit already passed the `uat` gate, plus approval from a reviewer |
 | `main` | Fast-forward from `prod` only |
 

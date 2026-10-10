@@ -136,3 +136,7 @@ _Avoid_: Online, when the specialist has stepped away
 What a customer leaves when no specialist is available or the wait is too long. It becomes an escalated case, and the reply appears in that customer's chat.
 _Avoid_: Ticket, email, voicemail
 
+**Follow-up**:
+What the customer chat suggests when the agent cannot help: leave a message, or talk to a person. The customer decides.
+_Avoid_: Offer (an offer goes to a specialist), escalation
+

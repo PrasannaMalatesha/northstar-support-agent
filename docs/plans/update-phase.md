@@ -1,6 +1,6 @@
 # Update phase: production readiness and live human support
 
-Status: planned and grilled (2026-10-09). U0 is done (#128). The other steps are not started. Every setting below was agreed with Malatesha in the grilling session.
+Status: built (2026-10-09). U0 is done in #128; U1 to U7 are built in tickets #132 to #145 on `feature/update-phase` (PR #146), plus the code review fixes. Every setting below was agreed with Malatesha in the grilling session. Where the build changed a name or a detail, this plan says so in "Built differently" at the end.
 
 Source of scope: `prd.md`, update phase, R34 to R49. Terms: `CONTEXT.md` (agent, specialist, live chat request, live chat, line, offer, available, escalations inbox, left message). The line's design: `docs/adr/0001-live-chat-line-in-postgres.md`. How each part is built: `AGENTS.md`. Defects and changes found along the way go in `correction.md`.
 
@@ -9,7 +9,7 @@ Scope: only the update-phase features. Slices 1 to 3 stay as built, apart from t
 ## Rules
 
 - **The application keeps working at every step.** Each step ships in its own PR into `dev`, merged only on green CI. The agent, the handbook rules, the duplicate guard, the lead approval gate, and the split between chat and staff tokens stay as they are. The existing tests stay green, and each step adds tests for its requirement ids.
-- **Live chat sits behind a switch.** `LIVE_AGENTS_ENABLED` is off by default. Malatesha turns it on locally and in `dev`. `prod` stays off until he chooses. With it off, the product behaves exactly as today.
+- **Live chat sits behind a switch.** `LIVE_CHAT_ENABLED` is off by default. Malatesha turns it on locally and in `dev`. `prod` stays off until he chooses. With it off, the product behaves exactly as today.
 - **Schema changes are additive.** New tables and nullable columns, in the same idempotent `SCHEMA_SQL` style. No existing column or case status changes meaning.
 - **Postgres holds shared state.** The line, presence, assignment, and limits live in the database, never in process memory (ADR 0001).
 - **Talking and approving stay separate.** Specialists take live chats. Leads approve and do not take live chats. A specialist may raise a proposal but never approve it (R4, R22, and `proposed_by`).
@@ -69,7 +69,7 @@ Why: this month's LangSmith usage was about 3,855 evaluator traces, about 1,165 
 Data, new tables only:
 
 ```text
-agent_presence  staff_id PK, state ('available' | 'away'), capacity int (default 2), last_seen timestamptz
+specialist_availability  staff_id PK, state ('available' | 'away'), capacity int (default 2), last_seen timestamptz
 live_chat_requests
                 id, case_id, customer_id, reason ('escalated' | 'requested'), language,
                 status ('waiting' | 'offered' | 'active' | 'idle' | 'ended' | 'abandoned' | 'left_message'),
@@ -121,7 +121,7 @@ Routing:
 
 - **Lead view:** specialists available, the line's length, the longest wait, the average chat length, and alerts (3 offers reached, quiet specialist).
 - **Labeled cases** for the hand-over decisions: "I want a person" and the three-failures offer.
-- **LangSmith metadata** `handoff_reason` on root runs, to see how often the agent resolves a case without a person.
+- **LangSmith feedback** `handover_reason` on traced chat turns, to see how often the agent resolves a case without a person.
 - **A browser test with three browsers:**
   1. A customer asks for a person.
   2. A specialist accepts the offer and replies.
@@ -157,7 +157,7 @@ U0 (done) → U1 → U2 → U3 → U4 → U5 → U6 → U7. U1 to U3 fix what is
 - A specialist's proposal in a live chat waits for a lead, and the specialist cannot approve it.
 - `GET /chat` keeps `{status, messages}`. A specialist's message is screened and shown as theirs. The agent does not reply while a specialist holds the chat.
 - The wait estimate for the worked example: two specialists, two slots each, a 6-minute average. Four chats end about every 6 minutes, so positions 1 and 4 wait about 1.5 and 6 minutes.
-- With `LIVE_AGENTS_ENABLED` off: no live chat control appears, and every existing chat test passes unchanged.
+- With `LIVE_CHAT_ENABLED` off: no live chat control appears, and every existing chat test passes unchanged.
 - The three-browser test from U7.
 
 ## Agreed settings
@@ -199,10 +199,41 @@ U0 (done) → U1 → U2 → U3 → U4 → U5 → U6 → U7. U1 to U3 fix what is
 ## Tasks
 
 - [x] U0: bounded model calls and graph runs (#128)
-- [ ] U1: quality within the trace budget
-- [ ] U2: fair limits and a bounded conversation
-- [ ] U3: escalations inbox
-- [ ] U4: line, availability, and offers
-- [ ] U5: talk to a person, the wait estimate, and left messages
-- [ ] U6: the specialist's live chat console
-- [ ] U7: lead view, metrics, and evals
+- [x] U1: quality within the trace budget (#132, #133)
+- [x] U2: fair limits and a bounded conversation (#134, #135, #137)
+- [x] U3: escalations inbox (#136)
+- [x] U4: line, availability, and offers (#138, #139)
+- [x] U5: talk to a person, the wait estimate, and left messages (#140, #141)
+- [x] U6: the specialist's live chat console (#138, #142, #143)
+- [x] U7: lead view, metrics, and evals (#144, #145)
+
+## Built differently
+
+What the build changed against the design above. Every item is tested, and the details are in `correction.md`.
+
+- **Names:**
+  - The availability table is `specialist_availability`, because the glossary keeps "agent" for the AI.
+  - The setting is `LIVE_CHAT_ENABLED`.
+  - What the customer chat suggests (leave a message, talk to a person) is a "follow-up" (`/chat/state` key `follow_up`), so it does not clash with a specialist's offer.
+  - The hand-over reason is LangSmith feedback `handover_reason` on traced chat turns, not run metadata, because "three failures" is known only after the turn.
+- **Lock order:** the assignment locks the available specialists first, always in the same order, and then claims the request with `SKIP LOCKED`. The opposite order could leave a customer waiting while a specialist who had just become available was free.
+- **Request statuses:** waiting, offered, active, idle, ended, refused, abandoned, left, unanswered. Each live chat records an `end_reason` and the customer's `language`.
+- **Routing:**
+  - Ties go to the specialist offered work longest ago (`last_offered_at`).
+  - A decline does not count toward away; only expired offers do.
+  - A declined request is never offered back to that specialist.
+- **Escalations in the line:**
+  - An escalation the line takes keeps its case Open with its handoff until the live chat ends. If it leaves the line without a specialist, it goes to the escalations inbox.
+  - While it waits, the agent stays quiet, so it cannot, for example, propose a refund after a chargeback. This is an exception to "the agent keeps answering while waiting", pending Malatesha's decision.
+- **Typed requests:** "I want a person" and similar phrases in the customer chat bring the same follow-up as three failed turns.
+- **Proposals in a live chat:**
+  - A live chat cannot end while its case waits for a lead.
+  - The quiet close waits until the lead decides, and records `end_reason = closed_quiet` under the Resolved status.
+- **"Take next":** `POST /live/next` lets an available specialist with a free slot take the next request now.
+- **Settings:** every default lives in one module (`northstar/defaults.py`) read by both the store and the API settings. Chats per specialist is `LIVE_CHATS_PER_SPECIALIST`.
+- **Release bar:**
+  - It runs locally and CI checks the committed results file, because CI holds no keys.
+  - `TOKEN_CAP` (10,000 per turn) is a first guess, to be set from the first real release run.
+  - Spanish turns come from `dev` and count only toward their own p95 and the zero-tolerance gates.
+- **Not done here:** splitting the case module (`cases.py` now holds the live chat code too) is a follow-up PR.
+

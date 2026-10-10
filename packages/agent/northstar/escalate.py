@@ -21,6 +21,18 @@ _CONFLICT = re.compile(
     r"\b(website|site|web page|ad|advert|another agent|your agent|last agent|a rep|chat)\b[^.]*\b(said|says|told|promised)\b",
     re.IGNORECASE,
 )
+# A customer who asks for a person in their own words (R39), not only with the button.
+# "Can someone else pick up my order?" is not one: it needs talk, speak, or chat, or want or need.
+_PERSON = re.compile(
+    r"\b(talk|speak|chat) (to|with) (a |an )?(real |live )?(person|human|agent|representative|rep|someone|somebody|specialist)\b"
+    r"|\b(want|need) (a |an )?(real |live )?(person|human|representative)\b"
+    r"|\b(real|live) (person|human)\b",
+    re.IGNORECASE,
+)
+
+
+def asks_for_person(question: str) -> bool:
+    return _PERSON.search(question) is not None
 
 
 @dataclass(frozen=True)
@@ -33,21 +45,22 @@ class Handoff:
     owner: str
     sections: tuple[str, ...] = ()
     tried: tuple[str, ...] = ()
+    # The questions and replies before a left message, so the packet stands alone.
+    recent: tuple[str, ...] = ()
 
     @property
     def text(self) -> str:
         sections = ", ".join(dict.fromkeys((*self.sections, self.section)))
-        return "\n".join(
-            (
-                f"Asked: {self.asked}",
-                f"Handbook: {self.handbook} ({self.section})",
-                f"Missing: {self.missing}",
-                f"Order: {self.order_id or 'none'}",
-                f"Sections read: {sections}",
-                f"Tried: {'; '.join(self.tried) if self.tried else 'Nothing yet.'}",
-                f"Owner: {self.owner}",
-            )
+        lines = (
+            f"Asked: {self.asked}",
+            f"Handbook: {self.handbook} ({self.section})",
+            f"Missing: {self.missing}",
+            f"Order: {self.order_id or 'none'}",
+            f"Sections read: {sections}",
+            f"Tried: {'; '.join(self.tried) if self.tried else 'Nothing yet.'}",
+            f"Owner: {self.owner}",
         )
+        return "\n".join((*lines, "Recent turns:", *self.recent) if self.recent else lines)
 
 
 def _order_id(question: str) -> str | None:
@@ -96,4 +109,25 @@ def manual_handoff(question: str, sections: tuple[str, ...], tried: tuple[str, .
         "support lead",
         sections,
         tried,
+    )
+
+
+def left_message(
+    message: str,
+    tried: tuple[str, ...],
+    recent: tuple[str, ...],
+    why: str = "The agent's recent replies did not help.",
+) -> Handoff:
+    """The packet for a left message: the customer's words, why they left it, and the recent turns (R35)."""
+    order_id = _order_id(message) or _order_id(" ".join(reversed(recent)))
+    return Handoff(
+        "ESC-WHEN",
+        _asked(message, order_id),
+        order_id,
+        "Escalate when the handbook does not cover the question.",
+        f"{why} The customer left this message for a specialist.",
+        "specialist",
+        (),
+        tried,
+        recent,
     )

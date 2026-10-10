@@ -2,7 +2,7 @@
 
 Status: accepted (2026-10-09)
 
-Live chat requests wait in a Postgres table. One assignment function claims the next request with `SELECT ... FOR UPDATE SKIP LOCKED`, and the live chat itself is rows in that table and in `case_messages`. The agent's only part is deciding to hand over: an escalation, or the "Talk to a person" offer after three failed turns. We chose Postgres because it already holds cases, tickets, and the LangGraph checkpoints, and the Postgres docs describe `SKIP LOCKED` for queue-like tables with many consumers. A message broker would add a service to run for a few dozen chats an hour. We do not keep a LangGraph run paused for the length of a human conversation. An interrupt waits for one resume value and re-runs its node on resume, which fits the lead's single approval decision (where the code uses it today), not many messages over minutes or hours.
+Live chat requests wait in a Postgres table. One assignment function locks the available specialists' rows (always in the same order, so two runs cannot deadlock) and then claims the next request with `SELECT ... FOR UPDATE SKIP LOCKED`, and the live chat itself is rows in that table and in `case_messages`. The agent's only part is deciding to hand over: an escalation, or the "Talk to a person" offer after three failed turns. We chose Postgres because it already holds cases, tickets, and the LangGraph checkpoints, and the Postgres docs describe `SKIP LOCKED` for queue-like tables with many consumers. A message broker would add a service to run for a few dozen chats an hour. We do not keep a LangGraph run paused for the length of a human conversation. An interrupt waits for one resume value and re-runs its node on resume, which fits the lead's single approval decision (where the code uses it today), not many messages over minutes or hours.
 
 ## Considered options
 
@@ -13,3 +13,7 @@ Live chat requests wait in a Postgres table. One assignment function claims the 
 
 - The line, presence, and limits are database rows, so they survive a restart and hold across server processes. The in-memory request counter is moved to the database for the same reason.
 - At much higher volume, the line can move to a broker behind the same assignment function without touching the agent.
+- The availability table is named `specialist_availability`, because the glossary keeps "agent" for the AI.
+- Locking the specialists first serializes assignment runs. That is fine at a few dozen chats an hour, and it guarantees that two offers never take a specialist's last slot and that a free specialist is never skipped.
+- The assignment and the line's timers live in the case module for now. Moving them to a broker means first moving them into their own module, which is a planned follow-up.
+

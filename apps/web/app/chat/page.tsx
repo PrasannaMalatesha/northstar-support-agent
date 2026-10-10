@@ -1,16 +1,50 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { Refresh } from "../refresh";
 import { apiUrl, sameSite } from "../same-site";
 
 // Customer chat (issue #79). The customer gives an order id and the email on that order.
 // The chat token lives in an httpOnly cookie, so browser code never reads it.
 const COOKIE = "northstar_chat";
 
-type ChatView = { status: string; messages: { role: string; text: string }[] };
+type ChatView = { status: string; messages: { role: string; name?: string; text: string }[] };
+// The chat's follow-up beside the agent (R35). After replies that did not help: "talk_to_person" with live
+// chat on (issue #141), else "leave_message". "leave_message" also when the line turned the customer away.
+// `live` is the customer's open live chat request (issue #138), null when there is none.
+// "idle" means the customer went quiet: writing again brings the person back (issue #142).
+type ChatState = {
+  follow_up: string | null;
+  live_enabled: boolean;
+  live: { status: "waiting" | "offered" | "active" | "idle"; specialist: string | null } | null;
+};
+
+function liveNote(live: NonNullable<ChatState["live"]>): string {
+  if (live.status === "active") {
+    return `${live.specialist} joined the chat.`;
+  }
+  return live.status === "idle" ? "Your chat with a person is paused. Write to carry on." : "Waiting for a person.";
+}
+
+function speaker(message: ChatView["messages"][number]): string {
+  if (message.role === "user") {
+    return "You";
+  }
+  return message.role === "specialist" ? `${message.name}, Northstar specialist` : "Northstar";
+}
 
 async function chatToken(): Promise<string | null> {
   return (await cookies()).get(COOKIE)?.value ?? null;
+}
+
+async function keepToken(token: string) {
+  (await cookies()).set(COOKIE, token, {
+    httpOnly: true,
+    sameSite: "strict",
+    secure: process.env.NODE_ENV === "production",
+    path: "/chat",
+    maxAge: 30 * 60,
+  });
 }
 
 async function startAction(formData: FormData) {
@@ -30,14 +64,58 @@ async function startAction(formData: FormData) {
     redirect(started.status === 423 ? "/chat?error=locked" : "/chat?error=nomatch");
   }
   const body = (await started.json()) as { chat_token: string };
-  (await cookies()).set(COOKIE, body.chat_token, {
-    httpOnly: true,
-    sameSite: "strict",
-    secure: process.env.NODE_ENV === "production",
-    path: "/chat",
-    maxAge: 30 * 60,
-  });
+  await keepToken(body.chat_token);
   redirect("/chat");
+}
+
+async function liveAction() {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/chat");
+  }
+  const token = await chatToken();
+  if (!token) {
+    redirect("/chat");
+  }
+  const asked = await fetch(`${apiUrl}/chat/live`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!asked.ok) {
+    redirect(asked.status === 409 ? "/chat?error=waiting" : "/chat?error=nolive");
+  }
+  redirect("/chat");
+}
+
+// The customer can leave the line at any time and go back to the agent (issue #140).
+async function leaveLineAction() {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/chat");
+  }
+  const token = await chatToken();
+  if (!token) {
+    redirect("/chat");
+  }
+  // 409 means the customer is already out of the line. Either way the chat shows where they are.
+  await fetch(`${apiUrl}/chat/live`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+  redirect("/chat");
+}
+
+// The chat is not signed out while the customer waits for or talks to a specialist (R47).
+async function renewAction() {
+  "use server";
+  const token = await chatToken();
+  if (!(await sameSite()) || !token) {
+    return;
+  }
+  const renewed = await fetch(`${apiUrl}/chat/renew`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (renewed.ok) {
+    await keepToken(((await renewed.json()) as { chat_token: string }).chat_token);
+  }
 }
 
 async function sendAction(formData: FormData) {
@@ -60,6 +138,26 @@ async function sendAction(formData: FormData) {
   redirect("/chat");
 }
 
+async function leaveAction(formData: FormData) {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/chat");
+  }
+  const token = await chatToken();
+  if (!token) {
+    redirect("/chat");
+  }
+  const left = await fetch(`${apiUrl}/chat/leave-message`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ text: String(formData.get("message") ?? "") }),
+  });
+  if (!left.ok) {
+    redirect(left.status === 409 ? "/chat?error=nofollowup" : "/chat?error=unsent");
+  }
+  redirect("/chat");
+}
+
 async function endAction() {
   "use server";
   if (!(await sameSite())) {
@@ -74,6 +172,8 @@ const ERRORS: Record<string, string> = {
   locked: "Too many tries. Try again later.",
   waiting: "Your request is with our team. You can write again once they reply.",
   unsent: "That message was not sent. Try again.",
+  nofollowup: "Leaving a message is offered after replies that did not help.",
+  nolive: "We could not ask for a person. Try again.",
 };
 
 export default async function ChatPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
@@ -83,6 +183,10 @@ export default async function ChatPage({ searchParams }: { searchParams: Promise
     ? await fetch(`${apiUrl}/chat`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
     : null;
   const view = shown?.ok ? ((await shown.json()) as ChatView) : null;
+  const stated = view
+    ? await fetch(`${apiUrl}/chat/state`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
+    : null;
+  const state = stated?.ok ? ((await stated.json()) as ChatState) : null;
 
   if (!view) {
     return (
@@ -109,17 +213,44 @@ export default async function ChatPage({ searchParams }: { searchParams: Promise
     <main>
       <h1>Northstar support chat</h1>
       {view.status ? <p role="status">{view.status}</p> : null}
+      {state?.live ? <p role="status">{liveNote(state.live)}</p> : null}
       {error && ERRORS[error] ? <p role="alert">{ERRORS[error]}</p> : null}
       <section aria-label="Conversation">
         {view.messages.length === 0 ? <p>Ask about returns, shipping, warranty, or your orders.</p> : null}
         <ol>
           {view.messages.map((message, index) => (
             <li key={index}>
-              <strong>{message.role === "user" ? "You" : "Northstar"}:</strong> {message.text}
+              <strong>{speaker(message)}:</strong> {message.text}
             </li>
           ))}
         </ol>
       </section>
+      {state?.follow_up === "talk_to_person" ? (
+        <section aria-labelledby="talk-to-person">
+          <h2 id="talk-to-person">Talk to a person</h2>
+          <p>These replies have not helped. A specialist can join this chat.</p>
+          <form action={liveAction}>
+            <button type="submit">Talk to a person</button>
+          </form>
+        </section>
+      ) : null}
+      {state?.follow_up === "leave_message" ? (
+        <section aria-labelledby="leave-message">
+          <h2 id="leave-message">Leave a message for a specialist</h2>
+          {/* With a status shown (the line turned the customer away), it says why already. */}
+          <p>
+            {view.status ? "" : "These replies have not helped. "}Leave a message, and a specialist will reply in this
+            chat.
+          </p>
+          <form action={leaveAction}>
+            <label>
+              Message for a specialist
+              <textarea name="message" required maxLength={2000} />
+            </label>
+            <button type="submit">Leave message</button>
+          </form>
+        </section>
+      ) : null}
       <form action={sendAction}>
         <label>
           Your message
@@ -127,6 +258,17 @@ export default async function ChatPage({ searchParams }: { searchParams: Promise
         </label>
         <button type="submit">Send</button>
       </form>
+      {state?.live_enabled && !state.live && state.follow_up !== "talk_to_person" ? (
+        <form action={liveAction}>
+          <button type="submit">Talk to a person</button>
+        </form>
+      ) : null}
+      {state?.live && (state.live.status === "waiting" || state.live.status === "offered") ? (
+        <form action={leaveLineAction}>
+          <button type="submit">Leave the line</button>
+        </form>
+      ) : null}
+      {state?.live ? <Refresh renew={renewAction} /> : null}
       <form action={endAction}>
         <button type="submit">End chat</button>
       </form>

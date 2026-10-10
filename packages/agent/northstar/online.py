@@ -74,6 +74,23 @@ def record_judge(
     return score
 
 
+HANDOVER_KEY = "handover_reason"
+NO_HANDOVER = "none"
+
+
+def record_handover(run_id: str, reason: str, post=None) -> int:
+    """Why a customer chat turn handed over to a person, on its LangGraph root run (issue #145, R35, R39).
+
+    The reason is feedback, not run metadata: "three_failures" is known only from the turn's own decision,
+    and metadata is fixed when the run starts. Every chat turn gets one, "none" when the agent kept the
+    customer, so the key's mean score is the share of chat turns handed to a person.
+    https://docs.langchain.com/langsmith/attach-user-feedback
+    """
+    score = int(reason != NO_HANDOVER)
+    (post or _post_feedback)(run_id, score, key=HANDOVER_KEY, value=reason)
+    return score
+
+
 EDIT_QUEUE = "Northstar specialist edits"
 
 
@@ -109,12 +126,12 @@ def _send_edit(run_id: str, pair: dict) -> None:
     client.add_runs_to_annotation_queue(queue.id, run_ids=[run_id])
 
 
-def _post_feedback(run_id: str, score: int) -> None:
+def _post_feedback(run_id: str, score: int, key: str = "policy_groundedness", value: str | None = None) -> None:
     from langsmith import Client
 
     client = Client()
     project = client.read_project(project_name=os.environ["LANGSMITH_PROJECT"])
-    client.create_feedback(run_id, key="policy_groundedness", score=score, session_id=project.id)
+    client.create_feedback(run_id, key=key, score=score, value=value, session_id=project.id)
 
 
 def _live_grounded(question: str, text: str, citations: tuple[str, ...]) -> bool:

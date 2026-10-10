@@ -1,29 +1,55 @@
 """The golden dataset and the offline experiments, in LangSmith.
 
     uv run python -m evals.experiments sync
+    uv run python -m evals.experiments run --split dev --no-upload
     uv run python -m evals.experiments run --split test --repetitions 3
+    uv run python -m evals.experiments run --split dev --tag update-handover --version update-handover --no-upload
+    uv run python -m evals.experiments release
     uv run python -m evals.experiments promote <run_id> --decision answer --sections REF-CATEGORY
+
+A run costs LangSmith traces, and the month has a fixed allowance. One repetition is the default;
+three are for the release run on test. --no-upload is a local check that uploads nothing.
+--router adds the router experiment, for when routing changed.
+
+release is the run before a promotion into uat: test with three repetitions, plus the Spanish turns.
+It writes results/release_bar.json with the commit it measured and each gate. CI on a PR into uat
+checks that file (evals/release_check.py), so no keys go into GitHub.
 
 An experiment is a dataset, a target, and evaluators:
 https://docs.langchain.com/langsmith/evaluate-complex-agent
 The targets are synchronous (v1 drives the desk through the API, one case at a time),
-so this uses client.evaluate, the sync form of aevaluate.
+so this uses client.evaluate, the sync form of aevaluate. A hand-over case (issue #145) drives
+the customer chat instead, and its decision is what the chat offers.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import subprocess
 import sys
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from evals.labeled import CASES, INTENT_CASES, PHOTO_CASES, SLICE2_CASES, SPANISH_CASES, judges_may_score_test, matches
+from evals.labeled import (
+    CASES,
+    HANDOVER_CASES,
+    INTENT_CASES,
+    PHOTO_CASES,
+    SLICE2_CASES,
+    SPANISH_CASES,
+    judges_may_score_test,
+    matches,
+)
 
 E2E = "Northstar Support: E2E"
 INTENT = "Northstar Support: Intent Classifier"
 START = datetime(2026, 10, 6, 15, 0, tzinfo=timezone.utc)
+RELEASE_REPETITIONS = 3
+RELEASE_FILE = Path("results/release_bar.json")
 
 
 def _example_id(case_id: str) -> str:
@@ -57,6 +83,11 @@ def e2e_example(case: dict, version: str) -> dict:
             "customer": case.get("customer"),
             "advance_days": case.get("advance_days", 0),
             **({"photo": photo_url(case["photo"])} if case.get("photo") else {}),
+            **(
+                {"channel": "chat", "order_id": case["order_id"], "earlier": list(case["earlier"]), "live": case["live"]}
+                if channel == "chat"
+                else {}
+            ),
         },
         "outputs": {
             "decision": case["decision"],
@@ -106,6 +137,7 @@ def sync(client) -> None:
     added += _add(client, E2E, about, [e2e_example(case, "slice2") for case in SLICE2_CASES], "slice2")
     added += _add(client, E2E, about, [e2e_example(case, "slice3-es") for case in SPANISH_CASES], "slice3-es")
     added += _add(client, E2E, about, [e2e_example(case, "slice3-photo") for case in PHOTO_CASES], "slice3-photo")
+    added += _add(client, E2E, about, [e2e_example(case, "update-handover") for case in HANDOVER_CASES], "update-handover")
     routes = _add(client, INTENT, "Hand-labeled routes. The latest user message decides.", [intent_example(case) for case in INTENT_CASES])
     print(f"{E2E}: {added} added. {INTENT}: {routes} added.")
 
@@ -113,12 +145,47 @@ def sync(client) -> None:
 # Targets ------------------------------------------------------------------
 
 
+@contextmanager
+def _meter():
+    """The seconds and model tokens of one turn, for the release bar's latency and token gates.
+
+    Tokens are what the chat models report (usage_metadata), summed over every call in the turn.
+    https://docs.langchain.com/oss/python/langchain/models#token-usage
+    """
+    from langchain_core.callbacks import get_usage_metadata_callback
+
+    used: dict = {}
+    started = time.perf_counter()
+    with get_usage_metadata_callback() as usage:
+        yield used
+    used["seconds"] = round(time.perf_counter() - started, 3)
+    used["tokens"] = sum(model["total_tokens"] for model in usage.usage_metadata.values())
+
+
+def chat_turns(client, inputs: dict) -> dict:
+    """A hand-over case in the customer chat (issue #145), through the chat API as a customer uses it.
+
+    The earlier turns set the case up, and only the last turn is timed. The decision is the chat's
+    follow-up after it: talk_to_person, leave_message, or none.
+    """
+    started = client.post("/chat/start", json={"order_id": inputs["order_id"], "email": inputs["customer"]})
+    chat = {"Authorization": f"Bearer {started.json()['chat_token']}"}
+    for earlier in inputs["earlier"]:
+        client.post("/chat/messages", headers=chat, json={"question": earlier})
+    with _meter() as used:
+        body = client.post("/chat/messages", headers=chat, json={"question": inputs["question"]}).json()
+    follow_up = client.get("/chat/state", headers=chat).json()["follow_up"]
+    reply = body["messages"][-1]["text"]
+    return {"decision": follow_up or "none", "citations": [], "response": reply, "status": None, "ticket": False, **used}
+
+
 def v0(inputs: dict) -> dict:
     """v0: the handbook answerer sees every question. It does not look up an order."""
     from northstar.handbook import answer
 
-    draft = answer(inputs["question"])
-    return {"decision": draft.decision, "citations": list(draft.citations), "response": draft.text, "status": None}
+    with _meter() as used:
+        draft = answer(inputs["question"])
+    return {"decision": draft.decision, "citations": list(draft.citations), "response": draft.text, "status": None, **used}
 
 
 class Desk:
@@ -152,32 +219,50 @@ class Desk:
         _ensure_test_database()
         self.clock = Clock()
         self.pool = ConnectionPool(TEST_URL, min_size=1, max_size=2, kwargs={"row_factory": dict_row}, open=True)
-        app = create_app(
-            settings=Settings(database_url=TEST_URL, token_secret="eval-token-secret-at-least-32-characters"),
-            clock=self.clock,
-            pool=self.pool,
-        )
+        secret = "eval-token-secret-at-least-32-characters"
+        # A hand-over case with live chat on runs on its own app, since the switch is a setting.
+        apps = [
+            create_app(
+                settings=Settings(database_url=TEST_URL, token_secret=secret, live_chat_enabled=live),
+                clock=self.clock,
+                pool=self.pool,
+            )
+            for live in (False, True)
+        ]
         PostgresIdentityStore(self.pool).truncate()
         seed_staff(PostgresIdentityStore(self.pool))
-        self.client = TestClient(app).__enter__()
+        self.client, self.live_client = (TestClient(app).__enter__() for app in apps)
 
     def __call__(self, inputs: dict) -> dict:
         from test_labeled_set import _clear_cases, _fresh, _login
 
         _clear_cases()
         self.clock.moment = START + timedelta(days=inputs.get("advance_days") or 0)
+        if inputs.get("channel") == "chat":
+            return chat_turns(self.live_client if inputs["live"] else self.client, inputs)
         specialist = _login(self.client, "specialist@northstar.example", "northstar-specialist")
         lead = _login(self.client, "lead@northstar.example", "northstar-lead")
         _fresh(self.client, specialist, lead, self.clock)
         if inputs.get("customer"):
             self.client.post("/cases/current/customer", headers=specialist, json={"query": inputs["customer"]})
         message = {"question": inputs["question"], **({"photo": inputs["photo"]} if inputs.get("photo") else {})}
-        body = self.client.post("/cases/current/messages", headers=specialist, json=message).json()
+        # Only the turn is timed. The case reset and the logins above are not part of it.
+        with _meter() as used:
+            body = self.client.post("/cases/current/messages", headers=specialist, json=message).json()
         draft = body["messages"][-1]
-        return {"decision": draft["decision"], "citations": draft["citations"], "response": draft["body"], "status": body["status"]}
+        return {
+            "decision": draft["decision"],
+            "citations": draft["citations"],
+            "response": draft["body"],
+            "status": body["status"],
+            # Nothing is approved during an experiment, so any ticket is a ticket without approval.
+            "ticket": body["ticket_id"] is not None,
+            **used,
+        }
 
     def close(self) -> None:
         self.client.__exit__(None, None, None)
+        self.live_client.__exit__(None, None, None)
         self.pool.close()
 
 
@@ -250,7 +335,16 @@ def correct(inputs: dict, outputs: dict, reference_outputs: dict) -> bool:
     return outputs["route"] == reference_outputs["route"]
 
 
-E2E_EVALUATORS = [label_match, citation_valid, status_correct, reply_language, photo_verdict, answer_correct]
+def code_scores(inputs: dict, outputs: dict, reference_outputs: dict) -> list[dict]:
+    """Every code check of a row from one evaluator, so a row adds one evaluator trace, not five.
+
+    The scores keep their own names. https://docs.langchain.com/langsmith/multiple-scores
+    """
+    checks = (label_match, citation_valid, status_correct, reply_language, photo_verdict)
+    return [check(inputs, outputs, reference_outputs) for check in checks]
+
+
+E2E_EVALUATORS = [code_scores, answer_correct]
 
 
 # Commands -----------------------------------------------------------------
@@ -274,7 +368,54 @@ def _misses(results) -> list[str]:
     return sorted(set(missed))
 
 
-def run(client, split: str, repetitions: int, tag: str, judge: bool = True, version: str | None = None) -> str:
+def _section(name: str, results) -> list[str]:
+    lines = [f"### {name}: `{results.experiment_name}`", "", f"Mean scores: {_means(results)}", "", "Misses:"]
+    return lines + ([f"- {miss}" for miss in _misses(results)] or ["- none"]) + [""]
+
+
+def gate_row(row) -> dict:
+    """One recorded experiment row as the release bar reads it: the labels, the scores, the seconds, the tokens."""
+    outputs, wanted = row["run"].outputs, row["example"].outputs
+    scores = {result.key: result.score for result in row["evaluation_results"]["results"]}
+    return {
+        "passed": scores.get("label_match") == 1 and scores.get("status_correct") != 0,
+        "decision": outputs["decision"],
+        "wanted": wanted["decision"],
+        "citations": list(outputs["citations"]),
+        "bad_citation": scores.get("citation_valid") == 0,
+        "ticket": bool(outputs.get("ticket")),
+        "seconds": outputs["seconds"],
+        "tokens": outputs["tokens"],
+        "language": wanted.get("language", "en"),
+    }
+
+
+def _evaluate(client, target, upload: bool, **kwargs):
+    """One experiment. Without upload, LangSmith gets no experiment, no feedback, and no trace."""
+    if upload:
+        return client.evaluate(target, upload_results=True, **kwargs)
+    from langsmith import tracing_context
+
+    # upload_results=False still posts the LangChain model runs inside the target and the evaluators
+    # (langsmith 0.14.4), so a local check also turns tracing off around both.
+    def untraced(inputs: dict) -> dict:
+        with tracing_context(enabled=False):
+            return target(inputs)
+
+    return client.evaluate(untraced, upload_results=False, disable_evaluator_tracing=True, **kwargs)
+
+
+def run(
+    client,
+    split: str,
+    repetitions: int = 1,
+    tag: str = "slice1",
+    judge: bool = True,
+    version: str | None = None,
+    upload: bool = True,
+    router: bool = False,
+) -> tuple[str, list[dict]]:
+    """The report, and the live desk's rows for the release bar."""
     if judge and split == "test" and not judges_may_score_test(Path("results/judge_calibration.md").read_text()):
         raise SystemExit("the judge is not calibrated for the test split")
     data = list(client.list_examples(dataset_name=E2E, splits=[split], as_of=tag))
@@ -282,12 +423,16 @@ def run(client, split: str, repetitions: int, tag: str, judge: bool = True, vers
         data = [example for example in data if example.metadata.get("version") == version]
     evaluators = E2E_EVALUATORS if judge else [e for e in E2E_EVALUATORS if e is not answer_correct]
     judged = "with the quiz judge" if judge else "code checks only, no judge"
-    lines = [f"## {split} split, dataset tag {tag}, {len(data)} cases, {repetitions} repetition(s), {judged}", ""]
+    uploaded = "" if upload else ", not uploaded"
+    lines = [f"## {split} split, dataset tag {tag}, {len(data)} cases, {repetitions} repetition(s), {judged}{uploaded}", ""]
+    rows: list[dict] = []
     desk = Desk()
     try:
         for name, target, concurrency in (("v0", v0, 4), ("v1", desk, 1)):
-            results = client.evaluate(
+            results = _evaluate(
+                client,
                 target,
+                upload,
                 data=data,
                 evaluators=evaluators,
                 experiment_prefix=f"northstar-{name}-{split}",
@@ -295,15 +440,61 @@ def run(client, split: str, repetitions: int, tag: str, judge: bool = True, vers
                 num_repetitions=repetitions,
                 max_concurrency=concurrency,
             )
-            lines += [f"### {name}: `{results.experiment_name}`", "", f"Mean scores: {_means(results)}", "", "Misses:"]
-            lines += [f"- {miss}" for miss in _misses(results)] or ["- none"]
-            lines.append("")
+            lines += _section(name, results)
+            if target is desk:
+                rows += [gate_row(row) for row in results]
     finally:
         desk.close()
-    routed = client.evaluate(route, data=INTENT, evaluators=[correct], experiment_prefix="northstar-router")
-    lines += [f"### router: `{routed.experiment_name}`", "", f"Mean scores: {_means(routed)}", "", "Misses:"]
-    lines += [f"- {miss}" for miss in _misses(routed)] or ["- none"]
-    return "\n".join(lines) + "\n"
+    if router:
+        routed = _evaluate(client, route, upload, data=INTENT, evaluators=[correct], experiment_prefix="northstar-router")
+        lines += _section("router", routed)
+    return "\n".join(lines), rows
+
+
+def release(client, commit: str, tag: str = "slice1", judge: bool = True, upload: bool = True) -> tuple[str, dict]:
+    """The release run: test with three repetitions, then the Spanish turns on the live desk.
+
+    The Spanish cases sit in dev (the test split has none), so they count only toward their own latency
+    target and the zero-tolerance gates, never toward action correct. They get code checks only, no judge.
+    """
+    from evals.release_bar import record
+
+    report, rows = run(client, "test", RELEASE_REPETITIONS, tag, judge=judge, upload=upload)
+    spanish = [e for e in client.list_examples(dataset_name=E2E, splits=["dev"], as_of="slice3-es") if e.metadata.get("version") == "slice3-es"]
+    desk = Desk()
+    try:
+        results = _evaluate(
+            client,
+            desk,
+            upload,
+            data=spanish,
+            evaluators=[code_scores],
+            experiment_prefix="northstar-v1-es-dev",
+            metadata={"version": "v1", "split": "dev", "dataset_tag": "slice3-es"},
+            num_repetitions=RELEASE_REPETITIONS,
+            max_concurrency=1,
+        )
+    finally:
+        desk.close()
+    rows += [gate_row(row) for row in results]
+    bar = {**record(rows, commit), "uploaded": upload}
+    lines = [report, f"## Release bar on {commit}", "", f"{len(spanish)} Spanish cases from dev, {RELEASE_REPETITIONS} repetition(s).", ""]
+    lines += _section("v1 Spanish turns", results)
+    lines += [f"Gates: {bar['gates']}", "", f"Measured: {bar['measured']}", ""]
+    return "\n".join(lines), bar
+
+
+def measured_commit() -> str:
+    """The commit a release run measures. Uncommitted code changes would make that name untrue."""
+
+    def git(*args: str) -> str:
+        return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+
+    changed = [line[3:] for line in git("status", "--porcelain", "--untracked-files=no").splitlines()]
+    code = [path for path in changed if not path.startswith("results/")]
+    if code:
+        raise SystemExit(f"commit or stash these first, so the results file names the code it measured: {code}")
+    return git("rev-parse", "HEAD").strip()
 
 
 def promote(client, run_id: str, decision: str, sections: list[str], split: str, status: str | None) -> str:
@@ -352,10 +543,16 @@ def main(argv: list[str] | None = None) -> None:
     commands.add_parser("sync")
     ran = commands.add_parser("run")
     ran.add_argument("--split", default="test", choices=("train_judge", "dev", "test"))
-    ran.add_argument("--repetitions", type=int, default=1)
+    ran.add_argument("--repetitions", type=int, default=1, help="3 for the release run on test")
     ran.add_argument("--tag", default="slice1")
     ran.add_argument("--no-judge", action="store_true", help="code checks only, when the judge model is unavailable")
     ran.add_argument("--version", help="only the examples added under this version, for example slice3-photo")
+    ran.add_argument("--no-upload", action="store_true", help="a local check: nothing is uploaded to LangSmith, no results file")
+    ran.add_argument("--router", action="store_true", help="also run the router experiment, when routing changed")
+    released = commands.add_parser("release", help="the release bar before a promotion into uat")
+    released.add_argument("--tag", default="slice1")
+    released.add_argument("--no-judge", action="store_true", help="code checks only, when the judge model is unavailable")
+    released.add_argument("--no-upload", action="store_true", help="nothing uploaded to LangSmith; the results file is still written")
     promoted = commands.add_parser("promote")
     promoted.add_argument("run_id")
     promoted.add_argument("--decision", required=True)
@@ -366,10 +563,29 @@ def main(argv: list[str] | None = None) -> None:
     client = Client()
     if args.command == "sync":
         sync(client)
-    elif args.command == "run":
-        report = run(client, args.split, args.repetitions, args.tag, judge=not args.no_judge, version=args.version)
+    elif args.command == "release":
+        commit = measured_commit()
+        report, bar = release(client, commit, args.tag, judge=not args.no_judge, upload=not args.no_upload)
         print(report)
-        Path(f"results/langsmith_{args.split}{'_' + args.version if args.version else ''}.md").write_text("# LangSmith experiments\n\n" + report)
+        if not args.no_upload:
+            Path("results/langsmith_test.md").write_text("# LangSmith experiments\n\n" + report)
+        RELEASE_FILE.write_text(json.dumps(bar, indent=2) + "\n")
+        print(f"{RELEASE_FILE}: {'passed' if all(bar['gates'].values()) else 'FAILED'}. Commit it, then open the PR into uat.")
+    elif args.command == "run":
+        report, _ = run(
+            client,
+            args.split,
+            args.repetitions,
+            args.tag,
+            judge=not args.no_judge,
+            version=args.version,
+            upload=not args.no_upload,
+            router=args.router,
+        )
+        print(report)
+        # A local check names experiments that LangSmith never saw, so it leaves the results files alone.
+        if not args.no_upload:
+            Path(f"results/langsmith_{args.split}{'_' + args.version if args.version else ''}.md").write_text("# LangSmith experiments\n\n" + report)
     else:
         sections = [section for section in args.sections.split(",") if section]
         print(promote(client, args.run_id, args.decision, sections, args.split, args.status))
