@@ -12,6 +12,7 @@ from northstar.cases import (
     CaseStore,
     NoFollowUp,
     NotInInbox,
+    NothingToTake,
     NotYours,
     ProposerCannotApprove,
     ProposalNotWaiting,
@@ -478,6 +479,17 @@ def create_app(
         def lead_line(staff=Depends(require_lead)) -> dict:
             # The lead's view of the line and its alerts (R49). Read-only: nothing is reassigned from here.
             return cases.line()
+
+        @app.post("/live/next")
+        def take_next_live_chat(staff=Depends(require_specialist)) -> dict:
+            # The specialist takes the next request in line. It is offered to them now, and they accept it as any offer.
+            try:
+                request_id = cases.take_next(staff.id)
+            except NothingToTake as exc:
+                raise HTTPException(
+                    status_code=409, detail="No request is waiting for you, or you are away or have no free slot."
+                ) from exc
+            return {"id": str(request_id)}
 
         @app.post("/live/{request_id}/accept")
         def accept_live_chat(request_id: uuid.UUID, staff=Depends(require_specialist)) -> dict:

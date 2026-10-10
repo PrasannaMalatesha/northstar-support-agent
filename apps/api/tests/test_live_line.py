@@ -13,7 +13,7 @@ from northstar.cases import LINE_REFUSED_TEXT, OFFERED_TEXT, CaseStore, wait_min
 from northstar.identity.service import staff_id_for
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
-from test_live_chat import JON, LIVE, MIRA, _add_sam, _avery, _chat, _customers, _db, _lead, _sam, _say
+from test_live_chat import JON, LIVE, MIRA, _add_sam, _avery, _chat, _customers, _db, _ends, _lead, _sam, _say
 
 FEW = "The wait is a few minutes."
 
@@ -168,7 +168,7 @@ def test_with_no_specialist_available_the_customer_may_leave_a_message(client):
     assert left.json()["status"].startswith("A specialist will follow up with you.")
     [item] = client.get("/inbox", headers=_lead(client)).json()
     assert "Please call me about my coat." in item["handoff"]
-    assert _line() == ["refused"]
+    assert _ends() == [("refused", "refused")]
 
 
 @pytest.mark.parametrize("client", LIVE, indirect=True)
@@ -223,6 +223,7 @@ def test_a_chat_that_stops_refreshing_leaves_the_line_and_rejoins_at_the_back(cl
     clock.advance(seconds=1)
     assert _status(client, jon) == f"You are number 1 in line. {FEW}"
     assert _line()[2:] == ["abandoned", "waiting"]
+    assert _ends()[2] == ("abandoned", "abandoned")
 
     # A freed slot skips her. Back, she joins at the back.
     assert _status(client, mira) == f"You are number 2 in line. {FEW}"
@@ -258,6 +259,7 @@ def test_the_customer_can_leave_the_line_and_go_back_to_the_agent(client, clock)
     assert client.delete("/chat/live", headers=mira).json() == {"live": None}
     assert client.get("/chat/state", headers=mira).json() == {"follow_up": None, "live_enabled": True, "live": None}
     assert client.delete("/chat/live", headers=mira).status_code == 409
+    assert ("left", "left") in _ends()
     assert _status(client, jon) == f"You are number 1 in line. {FEW}"
     view = _say(client, mira, "How long is the return window?")
     assert view["status"] == "" and view["messages"][-1]["role"] == "assistant"

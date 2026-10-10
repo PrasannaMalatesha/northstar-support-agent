@@ -14,6 +14,7 @@ from conftest import TEST_URL
 from northstar.cases import CaseStore
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
+from test_live_chat import _ends
 
 from northstar_api.settings import Settings
 
@@ -141,6 +142,8 @@ def test_the_nudge_comes_at_2_minutes_the_slot_frees_at_3_and_the_chat_closes_at
     assert view["messages"][-1] == {"role": "specialist", "name": "Avery", "text": ANSWER}
     assert _state(client, chat) is None
     assert client.get(f"/cases/{held['case_id']}", headers=lead).json()["status"] == "Resolved"
+    # Resolved, as after a specialist's Resolve, and the end reason tells the quiet close apart.
+    assert _ends()[0] == ("ended", "closed_quiet")
     assert _chats(client, avery) == []
     assert [e for e in _events() if e in ("live_chat_idle", "live_chat_closed")] == ["live_chat_idle", "live_chat_closed"]
 

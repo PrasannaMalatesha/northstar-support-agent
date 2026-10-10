@@ -19,6 +19,9 @@ type LiveChat = {
   spanish: boolean;
   // The agent's handoff when its escalation joined the line, else empty (issue #141).
   handoff: string;
+  // The customer's orders and the history panel, as on the case desk (user story 32).
+  orders: { id: string; summary: string; purchased_on: string; refunds: string }[];
+  history: { id: string; status: string; outcome: string; refunded_lines: string[] }[];
 };
 
 const ID = /^[0-9a-f-]{36}$/;
@@ -206,6 +209,36 @@ export default async function LiveChatPage({
           </form>
         </>
       )}
+      <section aria-labelledby="orders">
+        <h2 id="orders">Orders</h2>
+        {chat.orders.length === 0 ? (
+          <p>No orders.</p>
+        ) : (
+          <ul>
+            {chat.orders.map((order) => (
+              <li key={order.id}>
+                {order.id}: {order.summary} Purchased {order.purchased_on}.
+                {order.refunds !== "none" ? ` Prior refunds: ${order.refunds}.` : ""}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <section aria-labelledby="past-cases">
+        <h2 id="past-cases">Past cases</h2>
+        {chat.history.length === 0 ? (
+          <p>No past cases.</p>
+        ) : (
+          <ul>
+            {chat.history.map((item) => (
+              <li key={item.id}>
+                {item.id}. {item.status}. {item.outcome}.
+                {item.refunded_lines.length > 0 ? ` Refunded: ${item.refunded_lines.join(", ")}.` : ""}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
       <Refresh />
     </main>
   );

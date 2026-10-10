@@ -5,6 +5,7 @@ specialist is available and the wait is under the cap. Otherwise it goes to the 
 before. Three failed turns offer "Talk to a person", and a customer the line turns away may leave a message.
 """
 
+import northstar.cases as cases_module
 import pytest
 from northstar.cases import COME_BACK_TEXT, LINE_REFUSED_TEXT, OFFERED_TEXT, CaseStore
 from test_leave_message import OFF_TOPIC
@@ -41,7 +42,7 @@ def test_a_chat_escalation_joins_the_line_and_the_specialist_reads_the_handoff_a
     assert client.get("/inbox", headers=lead).json() == []
 
     [offer] = client.get("/live", headers=avery).json()["offers"]
-    assert offer["customer"] == "Mira Shah"
+    assert (offer["customer"], offer["reason"], offer["language"]) == ("Mira Shah", "escalated", "en")
     assert client.post(f"/live/{offer['id']}/accept", headers=avery).status_code == 200
     [held] = client.get("/live", headers=avery).json()["chats"]
     assert held["handoff"].startswith(f"Asked: {CHARGEBACK}")
@@ -227,3 +228,17 @@ def test_three_failed_turns_then_talk_to_a_person_joins_the_line(client):
     assert client.post("/chat/live", headers=chat).json() == {"live": {"status": "offered", "specialist": None}}
     assert _state(client, chat)["follow_up"] is None
     assert _requests() == [("requested", "offered")]
+
+
+@pytest.mark.parametrize("client", LIVE, indirect=True)
+def test_an_escalation_in_spanish_is_offered_with_its_language(client, monkeypatch):
+    avery = _avery(client)
+    client.post("/presence", headers=avery, json={"state": "available"})
+    chat = _chat(client)
+    spanish = "Abriré un contracargo con mi banco."
+    # pytest makes no model call, so the translation is set here. The escalating message is not saved yet
+    # when its request joins the line, and the offer still has its language.
+    monkeypatch.setattr(cases_module, "to_english", lambda text: CHARGEBACK if text == spanish else text)
+    _say(client, chat, spanish)
+    [offer] = client.get("/live", headers=avery).json()["offers"]
+    assert (offer["reason"], offer["language"]) == ("escalated", "es")

@@ -10,7 +10,7 @@ from northstar.identity.postgres import PostgresIdentityStore
 from northstar.identity.service import hash_password, staff_id_for
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
-from test_live_chat import JON, _add_sam, _avery, _chat, _customers, _db, _lead, _live_events, _sam, _say, _staff
+from test_live_chat import JON, _add_sam, _avery, _chat, _customers, _db, _ends, _lead, _live_events, _sam, _say, _staff
 
 LIVE = [{"live_chat_enabled": True}]
 AVERY = "specialist@northstar.example"
@@ -128,6 +128,7 @@ def test_after_three_offers_the_customer_is_offered_to_leave_a_message_which_rea
     # The request leaves the line, and the customer is offered to leave a message instead.
     assert all(_offers(client, staff) == [] for staff in specialists)
     assert _request()["status"] == "unanswered" and _request()["offers"] == 3
+    assert _ends() == [("unanswered", "unanswered")]
     assert client.get("/chat/state", headers=chat).json() == {"follow_up": "leave_message", "live_enabled": True, "live": None}
     assert client.get("/chat", headers=chat).json()["status"] == LINE_REFUSED_TEXT
     assert _live_events()[-2:] == ["live_chat_declined", "live_chat_unanswered"]

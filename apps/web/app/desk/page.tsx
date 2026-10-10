@@ -262,10 +262,26 @@ async function declineAction(formData: FormData) {
   redirect(declined?.ok ? "/desk?live=declined" : "/desk?live=gone");
 }
 
+// Take the next customer in line now: the request is offered to this specialist, who accepts it as any offer.
+async function takeNextAction() {
+  "use server";
+  if (!(await sameSite())) {
+    redirect("/desk");
+  }
+  const access = await accessToken();
+  if (!access) {
+    redirect("/login");
+  }
+  const taken = await fetch(`${apiUrl}/live/next`, { method: "POST", headers: { Authorization: `Bearer ${access}` } });
+  redirect(taken.ok ? "/desk?live=taken" : "/desk?live=none");
+}
+
 // Shown after a live chat action sends the specialist back to the desk.
 const LIVE_NOTES: Record<string, string> = {
   gone: "That live chat is no longer yours.",
   declined: "Offer declined. It goes to the next specialist.",
+  taken: "The next customer in line is offered to you. Accept the offer to join the chat.",
+  none: "No customer is waiting for you, or you have no free slot.",
   resolved: "Live chat resolved.",
   escalated: "Live chat escalated. It is in the escalations inbox.",
 };
@@ -407,7 +423,7 @@ export default async function DeskPage({
             ? ((await liveResponse.json()) as {
                 state: "available" | "away";
                 auto_away_at: string | null;
-                offers: { id: string; customer: string }[];
+                offers: { id: string; customer: string; reason: "requested" | "escalated"; language: "en" | "es" | null }[];
                 chats: { id: string; customer: string; idle: boolean }[];
               })
             : null,
@@ -568,9 +584,24 @@ export default async function DeskPage({
             </p>
           ) : null}
           {live.offers.length === 0 && live.chats.length === 0 ? <p>No live chat is offered to you.</p> : null}
+          {live.state === "available" ? (
+            <form action={takeNextAction}>
+              <button type="submit">Take next</button>
+            </form>
+          ) : null}
           {live.offers.map((offer) => (
             <article key={offer.id}>
-              <p>{offer.customer} asked to talk to a person.</p>
+              {/* Why the customer is in the line, and their language (user story 27). */}
+              <p>
+                {offer.reason === "escalated"
+                  ? `${offer.customer}'s chat was escalated by the agent.`
+                  : `${offer.customer} asked to talk to a person.`}
+              </p>
+              {offer.language === "es" ? (
+                <p>
+                  <strong>Spanish</strong>. The customer writes in Spanish.
+                </p>
+              ) : null}
               <form action={acceptAction}>
                 <input type="hidden" name="id" value={offer.id} />
                 <button type="submit">Accept</button>

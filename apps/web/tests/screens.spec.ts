@@ -302,6 +302,9 @@ test("a customer talks to a specialist in a live chat, and the specialist resolv
   await noViolations(specialist);
   await offer.getByRole("button", { name: "Accept" }).click();
   await expect(specialist.getByRole("heading", { name: "Live chat with Jon Hale" })).toBeVisible();
+  // Jon's orders and his past cases are beside the chat (user story 32).
+  await expect(specialist.getByText(/^NS-1002: Canvas tote\. Status: shipped\./)).toBeVisible();
+  await expect(specialist.getByRole("heading", { name: "Past cases" })).toBeVisible();
   await noViolations(specialist);
   await tabTo(specialist, "text");
   await specialist.keyboard.type("Hi Jon, this is Avery. How can I help?");
@@ -443,7 +446,8 @@ test("an escalation in the chat joins the line, and the specialist who accepts r
   await expect(customer.getByText(/Owner:|ESC-LEGAL/)).toHaveCount(0);
   await noViolations(customer);
 
-  const offer = specialist.getByRole("article").filter({ hasText: "Jon Hale asked to talk to a person." });
+  // The offer says why Jon is in the line (user story 27).
+  const offer = specialist.getByRole("article").filter({ hasText: "Jon Hale's chat was escalated by the agent." });
   await offer.getByRole("button", { name: "Accept" }).click({ timeout: 10_000 });
   await expect(specialist.getByRole("heading", { name: "Live chat with Jon Hale" })).toBeVisible();
   await expect(specialist.getByRole("heading", { name: "Handoff" })).toBeVisible();
@@ -561,6 +565,10 @@ test("a specialist declines a live chat offer, and the customer keeps waiting", 
   await expect(customer.getByText("Waiting for a person.")).toBeVisible();
   await expect(customer.getByText(/^You are number 1 in line\./)).toBeVisible();
   await expect(specialist.getByText("No live chat is offered to you.")).toBeVisible();
+  // Taking the next customer does not bring back the one Avery declined.
+  await specialist.getByRole("button", { name: "Take next" }).click();
+  await expect(specialist.getByText("No customer is waiting for you, or you have no free slot.")).toBeVisible();
+  await noViolations(specialist);
 
   await specialistContext.close();
 });
