@@ -303,7 +303,7 @@ test("a customer talks to a specialist in a live chat, and the specialist resolv
   await offer.getByRole("button", { name: "Accept" }).click();
   await expect(specialist.getByRole("heading", { name: "Live chat with Jon Hale" })).toBeVisible();
   // Jon's orders and his past cases are beside the chat (user story 32).
-  await expect(specialist.getByText(/^NS-1002: Canvas tote\. Status: shipped\./)).toBeVisible();
+  await expect(specialist.getByText(/^NS-1002: Canvas tote\. Status: delivered\./)).toBeVisible();
   await expect(specialist.getByRole("heading", { name: "Past cases" })).toBeVisible();
   await noViolations(specialist);
   await tabTo(specialist, "text");

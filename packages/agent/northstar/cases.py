@@ -577,8 +577,8 @@ class CaseStore:
             tools = TurnTools(refund=lambda _text: fixed, support=lambda _text: fixed)
             return self._save(case_id, asked_with, reply(self._turn(case_id, asked, tools, handover)), now, by)
         tools = TurnTools(
-            refund=lambda text: self._gated_draft(case_id, staff_id, text, now, note, chat_order),
-            support=lambda text: self._support_draft(case_id, key, text, now),
+            refund=lambda text: self._gated_draft(case_id, staff_id, text, now, note, chat_order, key),
+            support=lambda text: self._support_draft(case_id, key, text, now, chat_order),
         )
         return self._save(case_id, asked_with, reply(_noted(self._turn(case_id, asked, tools, handover), note)), now, by)
 
@@ -2206,8 +2206,11 @@ class CaseStore:
     def _resume(self, case_id: uuid.UUID, decision: str) -> None:
         resume_turn(graph_for(self._pool.conninfo), str(case_id), decision)
 
-    def _support_draft(self, case_id: uuid.UUID, limit_key: str, question: str, now: datetime) -> Draft:
-        order_id = _order_id(question)
+    def _support_draft(
+        self, case_id: uuid.UUID, limit_key: str, question: str, now: datetime, chat_order: str | None = None
+    ) -> Draft:
+        # "Where is my order?" in a customer chat means the order the chat was started with.
+        order_id = _order_id(question) or (chat_order if chat_order and _asks_for_an_order(question) else None)
         if order_id or (self._customer(case_id) is None and _asks_for_an_order(question)):
             if self._customer(case_id) is None:
                 return _plain("unbound", UNBOUND_ORDER_TEXT)
@@ -2216,9 +2219,19 @@ class CaseStore:
         catalog = self._catalog_draft(question)
         if catalog is not None:
             return catalog
+        lowered = question.lower()
+        # "Do you sell surfboard wax?" asks about an item. Only a handbook section the reranker itself keeps
+        # answers it ("How much is standard shipping?"); the model pick is not asked, so an unknown item abstains.
+        if any(phrase in lowered for phrase in _ITEM_PHRASES) and retrieved_answer(question).decision != "answer":
+            return _plain("abstain", NOT_IN_CATALOG_TEXT)
         if not self._take(now.date(), "tokens", TOKENS_PER_TURN, {limit_key: self._token_budget}):
             return _plain("quota", QUOTA_TEXT)
-        return handbook_reply(question, self._previous_question(case_id))
+        draft = handbook_reply(question, self._previous_question(case_id))
+        # "The site showed a wrong price by mistake" is a handbook question that says "price": the handbook,
+        # with the model pick, goes first, and the catalog answers only when it finds nothing.
+        if draft.decision == "abstain" and any(phrase in lowered for phrase in _CATALOG_PHRASES):
+            return _plain("abstain", NOT_IN_CATALOG_TEXT)
+        return draft
 
     def _previous_question(self, case_id: uuid.UUID) -> str | None:
         """The case's last question before this turn, which is saved only after its draft."""
@@ -2230,17 +2243,31 @@ class CaseStore:
         return row["body"] if row else None
 
     def _gated_draft(
-        self, case_id: uuid.UUID, staff_id: uuid.UUID, question: str, now: datetime, note: str = "", chat_order: str | None = None
+        self,
+        case_id: uuid.UUID,
+        staff_id: uuid.UUID,
+        question: str,
+        now: datetime,
+        note: str = "",
+        chat_order: str | None = None,
+        limit_key: str | None = None,
     ) -> Draft:
         """Any request that waits for a lead. The handbook rule for each action lives in northstar.actions.
 
         In a customer chat, the order the chat was started with stands in when the request names none.
         """
+        orders = sorted(set(order_id.upper() for order_id in _ORDER_IDS.findall(question)))
+        if len(orders) > 1:
+            # One proposal is one order and one action. Acting on the first id and dropping the rest is worse.
+            return _plain("ask_clarification", f"This asks about more than one order ({', '.join(orders)}). Send one request per order. Nothing is proposed.")
         action = gated(question)
         if action is None:
             return _plain("ask_clarification", "Which action and which order id? Nothing is proposed.")
         order_id = _order_id(question) or chat_order
         if order_id is None:
+            # "And what if she lost it?" after a gift card question is a handbook follow-up, not a request.
+            if limit_key is not None and _FOLLOW_UP.match(question) and self._previous_question(case_id):
+                return self._support_draft(case_id, limit_key, question, now, chat_order)
             return _plain("ask_clarification", action.missing_order)
         if self._customer(case_id) is None:
             return _plain("unbound", UNBOUND_ORDER_TEXT)
@@ -2278,6 +2305,15 @@ class CaseStore:
             item_in_stock=catalog["in_stock"] if catalog else None,
             item_final_sale=catalog["final_sale"] if catalog else None,
         )
+        if "cancel" in order.ticket_actions and action.kind not in ("cancel", "refund"):
+            # The order was cancelled; nothing else is changed on it. A refund gets REF-DENY in its own rule.
+            return Draft(
+                "answer",
+                f"Order {order_id} was cancelled. Nothing else is changed on a cancelled order. (ORD-CANCEL)",
+                ("ORD-CANCEL",),
+                {"ORD-CANCEL": "strong"},
+                (),
+            )
         planned = action.rule(question, order, now.date())
         if isinstance(planned, Reply):
             match = {section_id: "strong" for section_id in planned.citations}
@@ -2372,11 +2408,7 @@ class CaseStore:
             return None
         if named:
             return _plain("catalog", "\n".join(_catalog_line(row) for row in named))
-        if any(phrase in lowered for phrase in _CATALOG_PHRASES):
-            # "How much is standard shipping?" names no item. A handbook section answers it.
-            if retrieved_answer(question).decision == "answer":
-                return None
-            return _plain("abstain", "I don't have that item in the catalog.")
+        # No item named: the handbook answers first ("How much is standard shipping?"), see _support_draft.
         return None
 
     def _take(self, day, column: str, amount: int, limits: dict[str, int]) -> bool:
@@ -2533,7 +2565,9 @@ _CUSTOMERS = (
 # Statuses follow the handbook: placed, packed, shipped, delivered.
 _ORDERS = (
     ("NS-1001", "mira.shah@northstar.example", "delivered", "2026-09-01", "Wool coat, size M", "none", 12800, "2026-09-20", "apparel and footwear", "2026-09-02"),
-    ("NS-1002", "jon.hale@northstar.example", "shipped", "2026-09-12", "Canvas tote", "none", 4800, "2026-09-12", "bags and accessories", "2026-09-12"),
+    # Jon Hale's refundable order: delivered, inside the return window for the tests' clock and for the browser
+    # suite, which runs on the real clock, through 2026-10-31.
+    ("NS-1002", "jon.hale@northstar.example", "delivered", "2026-09-28", "Canvas tote", "none", 4800, "2026-10-01", "bags and accessories", "2026-09-29"),
     ("NS-1003", "mira.shah@northstar.example", "delivered", "2026-09-01", "Wool scarf", "refunded", 2000, "2026-09-20", "apparel and footwear", "2026-09-02"),
     ("NS-1004", "mira.shah@northstar.example", "placed", "2026-10-06", "Enamel kettle", "none", 6400, None, "home and kitchen", None),
     ("NS-1005", "mira.shah@northstar.example", "packed", "2026-10-05", "Canvas tote", "none", 4800, None, "bags and accessories", None),
@@ -2556,6 +2590,12 @@ _CATALOG = (
     ("Linen shirt", "apparel and footwear", 5400, "S, M, L", True, False),
 )
 _MISSING_FIELDS = ("material", "review", "rating", "weight", "fabric", "color")
+_ORDER_IDS = re.compile(r"\bNS-\d+\b", re.IGNORECASE)
+# A short follow-up that leans on the question before it.
+_FOLLOW_UP = re.compile(r"^\s*(and|also|but|so|then|ok(ay)?|what if|what about|how about)\b", re.IGNORECASE)
+NOT_IN_CATALOG_TEXT = "I don't have that item in the catalog."
+# Phrases that ask about an item. "price" and "final sale" also appear in handbook questions.
+_ITEM_PHRASES = ("in stock", "how much", "what size", "do you sell", "do you carry", "do you stock", "do you have")
 _CATALOG_PHRASES = ("in stock", "how much", "price", "final sale", "what size", "do you sell", "do you carry", "do you stock", "do you have")
 
 
@@ -2583,6 +2623,18 @@ def _asks_for_an_order(question: str) -> bool:
 _ONE_ORDER = re.compile(r"\b(my|our|your|his|her|their|this|that)\s+orders?\b|\borders?\s*(#|no\.?|number)?\s*\d", re.IGNORECASE)
 
 
+# ESC-ABUSE: an instruction to ignore the rules ("ignore all previous instructions"), and insults aimed at a
+# person. "This stupid zipper broke" is about an item and is not blocked.
+_IGNORE_RULES = re.compile(
+    r"\b(ignore|disregard|forget)\s+(?:\w+\s+){0,3}(instructions|rules|handbook|manual|policy|policies|guidelines|prompt)\b",
+    re.IGNORECASE,
+)
+_INSULT = re.compile(
+    r"\byou(?:'re| are)?\s+(?:\w+\s+)?(idiots?|morons?|stupid|useless|incompetent|dumb)\b|\b(idiots|morons)\b",
+    re.IGNORECASE,
+)
+
+
 def _blocked(question: str) -> bool:
     lowered = question.lower()
-    return any(phrase in lowered for phrase in _BLOCKED)
+    return any(phrase in lowered for phrase in _BLOCKED) or bool(_IGNORE_RULES.search(question) or _INSULT.search(question))

@@ -77,12 +77,22 @@ class GatedAction:
     missing_order: str
 
 
+DAMAGE_REPORT_DAYS = 14  # REF-DAMAGED, also the REF-WRONG-ITEM report window
+
 RETURN_DAYS = {
     "apparel and footwear": 30,
     "bags and accessories": 30,
     "home and kitchen": 30,
     "small electronics": 15,
 }
+
+
+# REF-WRONG-ITEM: the item in hand is a different item from the line on the order.
+_WRONG_ITEM = re.compile(
+    r"\bwrong (item|product|thing)\b|\b(received|got|sent|shipped)( me| her| him| us| them)? (a |an |the )?(different|wrong) (item|product|one)\b"
+    r"|\bdifferent (item|product) (than|from|instead)\b|\bnot what (i|she|he|we|they) ordered\b",
+    re.IGNORECASE,
+)
 
 
 def refund(question: str, order: Order, today: date) -> Proposal | Reply:
@@ -98,9 +108,18 @@ def refund(question: str, order: Order, today: date) -> Proposal | Reply:
     if order.refunds != "none" or order.ticket_actions & {"approve_refund", "partial_credit", "cancel"}:
         return Proposal("deny", 0, ("REF-DENY",), "Deny. Amount: 0 cents. The line was already refunded. (REF-DENY)")
     age = (today - order.delivered_on).days
+    # REF-WRONG-ITEM uses the REF-DAMAGED report window: a full refund of the line and its outbound shipping.
+    if _WRONG_ITEM.search(question) and age <= DAMAGE_REPORT_DAYS:
+        return Proposal(
+            "approve_refund",
+            order.total_cents,
+            ("REF-WRONG-ITEM",),
+            f"Approve. Amount: {order.total_cents} cents, the line and its outbound shipping. "
+            f"A different item arrived, reported {age} days after delivery. Northstar pays return shipping. (REF-WRONG-ITEM)",
+        )
     # REF-DAMAGED: damage reported within 14 days of delivery is a full refund of the line and its
     # outbound shipping. After 14 days the ordinary return window below applies.
-    if _DAMAGED.search(question) and age <= 14:
+    if _DAMAGED.search(question) and age <= DAMAGE_REPORT_DAYS:
         return Proposal(
             "approve_refund",
             order.total_cents,
@@ -261,7 +280,7 @@ _DAMAGED = re.compile(
 )
 _DEFECT = re.compile(
     r"\bdefect|\bbroke|\bstopped working\b|\bfault|\bcrack|\b(does not|doesn't|won't) (work|turn on|charge)\b|\bseams?\b|\bzipper\b"
-    r"|\bleak(s|ed|ing)?\b",
+    r"|\bleak(s|ed|ing)?\b|\btorn\b|\bripped\b",
     re.IGNORECASE,
 )
 
@@ -389,7 +408,9 @@ ACTIONS: tuple[GatedAction, ...] = (
     GatedAction("exchange", re.compile(r"\bexchange\b|\bswap\b"), exchange, "Which order id? Nothing is exchanged."),
     GatedAction("warranty_claim", re.compile(r"\bwarranty\b|" + _DEFECT.pattern), warranty, "Which order id? No claim is drafted."),
     GatedAction("shipment", re.compile(_NOT_ARRIVED), shipment, "Which order id? Nothing is proposed."),
-    GatedAction("refund", re.compile(r"\brefunds?\b|\bcredit\b|" + _DAMAGED.pattern), refund, "Which order id? No amount is proposed."),
+    GatedAction(
+        "refund", re.compile(r"\brefunds?\b|\bcredit\b|" + _DAMAGED.pattern + "|" + _WRONG_ITEM.pattern), refund, "Which order id? No amount is proposed."
+    ),
 )
 
 # Every decision that is a proposal, and the action family it belongs to. A proposal

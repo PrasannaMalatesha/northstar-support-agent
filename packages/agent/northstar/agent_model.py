@@ -31,6 +31,8 @@ def handbook_reply(question: str, earlier: str | None = None) -> Draft:
         return draft
     if draft.decision == "abstain" and draft.retrieved:
         draft = _picked(question, draft, earlier) or draft
+    elif draft.decision == "answer" and draft.unsure:
+        draft = _rechecked(question, draft, earlier)
     if draft.decision != "answer":
         return draft
     text = _phrase(question, draft.text)
@@ -51,15 +53,40 @@ def _picked(question: str, draft: Draft, earlier: str | None) -> Draft | None:
     SHIP-REGIONS 0.02 against a 0.2 threshold) although it ranks the right section near the top. Picked
     sections are only ever the reranker's own candidates, cited as weak. NONE keeps the abstain.
     """
+    picked = _pick(question, [section_id for section_id, _ in draft.retrieved], earlier)
+    return _from_sections(picked, {}, draft.steps) if picked else None
+
+
+def _rechecked(question: str, draft: Draft, earlier: str | None) -> Draft:
+    """The reranker kept sections but dropped the vector search's first one: the model chooses among both.
+
+    "Can final sale items be returned?" gave SHIP-REFUSED 0.998 and REF-FINAL-SALE 0.987, fifth, under the
+    four kept. Kept sections keep their strength; the added one is weak. NONE or a failure keeps the draft.
+    """
+    picked = _pick(question, [*draft.citations, *draft.unsure], earlier)
+    return _from_sections(picked, draft.match, draft.steps) if picked else draft
+
+
+def _from_sections(section_ids: list[str], match: dict[str, str], steps) -> Draft:
+    from northstar.handbook import _rule, _sections, policy_dir
+
+    bodies = dict(_sections(policy_dir()))
+    text = "\n".join(f"{_rule(bodies[section_id])} ({section_id})" for section_id in section_ids)
+    strengths = {section_id: match.get(section_id, "weak") for section_id in section_ids}
+    return Draft("answer", text, tuple(section_ids), strengths, steps)
+
+
+def _pick(question: str, candidates: list[str], earlier: str | None) -> list[str]:
+    """The candidates whose rule answers the question, in candidate order. Empty for NONE or a failure."""
     from northstar.handbook import _rule, _sections, policy_dir
 
     attempts = attempts_left(DIRECT_ATTEMPTS)
     if not attempts:
-        return None
+        return []
     bodies = dict(_sections(policy_dir()))
-    candidates = [section_id for section_id, _ in draft.retrieved if section_id in bodies]
+    candidates = [section_id for section_id in dict.fromkeys(candidates) if section_id in bodies and _rule(bodies[section_id])]
     if not candidates:
-        return None
+        return []
     lines = "\n".join(f"{section_id}: {_rule(bodies[section_id])}" for section_id in candidates)
     context = f"Earlier question in this case: {earlier}\n" if earlier else ""
     try:
@@ -79,12 +106,9 @@ def _picked(question: str, draft: Draft, earlier: str | None) -> Draft | None:
             max_retries=attempts,
         )
     except Exception:
-        return None
-    picked = [section_id for section_id in candidates if section_id in set(_SECTION_ID.findall(reply_text(reply)))]
-    if not picked:
-        return None
-    text = "\n".join(f"{_rule(bodies[section_id])} ({section_id})" for section_id in picked)
-    return Draft("answer", text, tuple(picked), {section_id: "weak" for section_id in picked}, draft.steps)
+        return []
+    named = set(_SECTION_ID.findall(reply_text(reply)))
+    return [section_id for section_id in candidates if section_id in named]
 
 
 def _phrase(question: str, handbook_lines: str) -> str:
