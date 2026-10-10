@@ -13,6 +13,31 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-10 — Fixes from the end-to-end check
+
+Status: bug
+
+Root causes and fixes for the problems in `results/e2e_check_2026-10-10.md`:
+- **Final sale answered wrongly.** The reranker gave five sections 0.99 or more on the shared word "returned". REF-FINAL-SALE was fifth and the draft keeps four. Pinecone ranked it first. Now, when the reranker drops Pinecone's first section, the draft is marked `unsure` and the model (thinking `minimal`) chooses among the kept sections plus that one. NONE or a failure keeps the reranker's draft. On the 24 labeled handbook questions, the reranker always kept Pinecone's first section, so the extra call is rare.
+- **"never placed" not escalated.** The ESC-FRAUD pattern matched only the present tense. It now matches placed, made, bought, ordered, and authorized.
+- **Questions with "price" went to the catalog.** The catalog's handbook check used the reranker alone, which scores "wrong price by mistake" 0.0 everywhere. Item questions ("do you sell", "in stock", "how much", "what size", "do you carry/stock/have") keep the old path, so an unknown item still abstains. The first fix let the model pick answer "Do you sell surfboard wax?"; the release bar's abstain gate caught it, and that version was never merged. Questions that only say "price" or "final sale" now go to the handbook, with the model pick, before the catalog.
+- **Wrong item.** No action matched "received a different item". It is a refund now: REF-WRONG-ITEM within the REF-DAMAGED report window (14 days), a full refund of the line and its outbound shipping.
+- **Two orders in one message.** The first order id and one action were read, and the rest dropped. A request that names more than one order now asks for one request per order and proposes nothing.
+- **Follow-up "And what if she lost it?".** "lost" picked the lost-package action, which asked for an order. A short follow-up (and, so, what if, what about, …) with no order now reads the handbook with the previous question.
+- **Address change after an approved cancel.** Tickets do not change an order's status. Nothing but a refund (which REF-DENY already refuses) or a duplicate cancel is proposed on an order with a cancel ticket.
+- **Insults and "ignore all previous instructions".** The block list matched "ignore previous" but not "ignore all previous", and had no insults. A pattern now matches ignore, disregard, or forget followed by instructions, rules, the handbook, and similar words, and insults aimed at a person (ESC-ABUSE). "This stupid zipper broke" is not blocked.
+- **"torn"** is a defect word.
+- **"Where is my order?" in a chat** reads the order the chat was started with.
+- **NS-1002 seed.** It was "shipped" with a delivery date, so the refund rule treated it as delivered. It is now a consistent delivered order (delivered 2026-10-01), refundable for the tests' clock and for the browser suite's real clock through 2026-10-31. Its old date would have broken the live chat refund browser test after 2026-10-12. A new test checks that only delivered orders carry a delivery date.
+
+Changed tests:
+- `test_a_completed_cancel_blocks_a_second_cancel_but_not_another_action` used an address change on a cancelled order as its "another action". That is the bug above, so it now expects ORD-CANCEL, and a new test checks family scoping with an address change followed by a cancel.
+- The live chat browser test now expects NS-1002 with its real status, "delivered".
+
+Left as is:
+- **The judge's reasoning effort.** At effort `low`, DeepSeek used 44% fewer tokens and still failed every ungrounded reply in a 12-case check. But it also failed a correct escalation handoff: 9 of 12 against 10 of 12 at the default. A cheaper quality monitor that is less accurate is not a clean fix.
+- **"Do you price match competitors?"** gets the catalog miss. No handbook section covers it, and the model pick says NONE.
+
 ## 2026-10-10 — Fixes from the conversation check
 
 Status: bug
