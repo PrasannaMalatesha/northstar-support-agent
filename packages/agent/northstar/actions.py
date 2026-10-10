@@ -245,8 +245,13 @@ def exchange(question: str, order: Order, today: date) -> Proposal | Reply:
             ("EXC-ELIGIBILITY",),
         )
     wanted = _wanted_size(question)
-    if wanted is None or wanted == order.size:
+    if wanted is None:
         return Reply("ask_clarification", "Which size does the customer want? Nothing is proposed.")
+    if wanted == order.size:
+        return Reply(
+            "ask_clarification",
+            f"The {order.item} on order {order.id} is already size {order.size}. Which size does the customer want instead? Nothing is proposed.",
+        )
     if order.item_sizes and wanted not in order.item_sizes:
         return Reply(
             "answer",
@@ -431,7 +436,8 @@ def family_decisions(decision: str) -> list[str]:
     """Every proposal decision in the same family as this one."""
     return sorted(other for other, family in FAMILIES.items() if family == FAMILIES[decision])
 
-_ORDER_ID = re.compile(r"\bNS-\d+\b", re.IGNORECASE)
+# "NS-1006", "ns-1006", or "NS1006". Every order id is read here and written back as NS-1006.
+_ORDER_ID = re.compile(r"\bNS-?(\d{4,})\b", re.IGNORECASE)
 # A policy question with no order id is a handbook question, not a request to act.
 _POLICY_QUESTION = re.compile(
     r"^\s*(can|could|how|what|when|why|is|are|does|do|will|if)\b.*\?\s*$|^.*,\s*right\?\s*$",
@@ -441,7 +447,12 @@ _POLICY_QUESTION = re.compile(
 
 def order_id(question: str) -> str | None:
     match = _ORDER_ID.search(question)
-    return match.group(0).upper() if match else None
+    return f"NS-{match.group(1)}" if match else None
+
+
+def order_ids(question: str) -> list[str]:
+    """Every distinct order id in the text, in order."""
+    return list(dict.fromkeys(f"NS-{digits}" for digits in _ORDER_ID.findall(question)))
 
 
 # A lost gift card is a GC-LOST question for the handbook, not a lost package.

@@ -71,8 +71,9 @@ class Handoff:
 
 
 def _order_id(question: str) -> str | None:
-    found = re.search(r"\bNS-\d+\b", question.upper())
-    return found.group(0) if found else None
+    from northstar.actions import order_id
+
+    return order_id(question)
 
 
 def _asked(question: str, order_id: str | None) -> str:
