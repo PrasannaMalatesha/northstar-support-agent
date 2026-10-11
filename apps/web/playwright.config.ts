@@ -31,6 +31,9 @@ export default defineConfig({
         LIVE_CHAT_ENABLED: "true",
         QUIET_SPECIALIST_MINUTES: "0.05",
         ACCESS_TOKEN_MINUTES: "1.5",
+        // No Langfuse traces from the suite: the free plan's units are for real turns and experiments.
+        LANGFUSE_PUBLIC_KEY: "",
+        LANGFUSE_SECRET_KEY: "",
       },
     },
     {

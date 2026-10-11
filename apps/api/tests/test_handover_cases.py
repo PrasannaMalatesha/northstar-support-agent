@@ -122,10 +122,10 @@ def test_a_traced_turn_hands_its_handover_reason_to_the_upload(monkeypatch):
     unused = TurnTools(refund=lambda _q: None, support=lambda _q: None)
     draft = run_turn("Tell me a joke.", unused, graph=Graph(), handover=lambda decision: f"reason for {decision}")
     assert draft.run_id is not None
-    assert jobs == [(graph._upload_then_judge, (draft.run_id, "Tell me a joke.", "abstain", "No.", [], "reason for abstain"))]
+    assert jobs == [(graph._upload_then_judge, (draft.run_id, "Tell me a joke.", "abstain", "No.", [], "reason for abstain", True))]
     jobs.clear()
     run_turn("Tell me a joke.", unused, graph=Graph())
-    assert jobs[0][1][-1] is None  # no hand-over to record
+    assert jobs[0][1][-2] is None  # no hand-over to record
 
 
 def test_the_upload_posts_the_handover_reason_then_the_judge(monkeypatch):

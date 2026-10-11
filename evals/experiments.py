@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -537,6 +538,9 @@ def main(argv: list[str] | None = None) -> None:
     from langsmith import Client
     from northstar.agent_model import _load_local_env
 
+    # These runs trace to LangSmith. Langfuse stays off here so a release run does not spend its units twice.
+    os.environ.setdefault("LANGFUSE_PUBLIC_KEY", "")
+    os.environ.setdefault("LANGFUSE_SECRET_KEY", "")
     _load_local_env()
     parser = argparse.ArgumentParser(prog="evals.experiments")
     commands = parser.add_subparsers(dest="command", required=True)

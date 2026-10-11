@@ -300,14 +300,21 @@ def _turn_input(question: str) -> dict:
 
 
 def _upload_then_judge(
-    run_id: str, question: str, decision: str, followup: str, citations: list[str], handover: str | None = None
+    run_id: str,
+    question: str,
+    decision: str,
+    followup: str,
+    citations: list[str],
+    handover: str | None = None,
+    langsmith_on: bool = True,
 ) -> None:
     from langchain_core.tracers.langchain import wait_for_all_tracers
 
     from northstar import online
 
-    wait_for_all_tracers()
-    _scrubbed_client().flush()
+    if langsmith_on:
+        wait_for_all_tracers()
+        _scrubbed_client().flush()
     if handover is not None:
         online.record_handover(run_id, handover)
     online.record_judge(run_id, question, decision, followup, citations, random.random())
@@ -325,32 +332,45 @@ def run_turn(
     from northstar.agent_model import _load_local_env
 
     _load_local_env()
+    from northstar import langfuse_tracing
+
     graph = graph or GRAPH
     traced = os.environ.get("LANGSMITH_TRACING", "").lower() == "true" and not os.environ.get("PYTEST_CURRENT_TEST")
     config: dict = {"recursion_limit": TURN_RECURSION_LIMIT}
     if thread_id is not None:
         config["configurable"] = {"thread_id": thread_id}
     run_id = None
-    if traced:
+    if traced or langfuse_tracing.enabled():
         import langsmith
 
         # Name the LangGraph root run up front. Collected runs can list a child model call first.
+        # Langfuse derives the turn's trace id from it, so both platforms share one turn identity.
         root = langsmith.uuid7()
         config["run_id"] = root
         run_id = str(root)
-        with langsmith.tracing_context(client=_scrubbed_client()):
+    # Only a customer chat turn records a hand-over, so it tells the chat from the specialist desk.
+    with langfuse_tracing.turn(run_id, thread_id, question, "chat" if handover else "desk") as observed:
+        if observed.callbacks:
+            config["callbacks"] = observed.callbacks
+        if traced:
+            import langsmith
+
+            with langsmith.tracing_context(client=_scrubbed_client()):
+                result = graph.invoke(_turn_input(question), config, context=tools)
+        else:
             result = graph.invoke(_turn_input(question), config, context=tools)
-    else:
-        result = graph.invoke(_turn_input(question), config, context=tools)
-    # A turn that pauses for approval stops before compile_followup writes followup.
-    followup = result.get("followup") or result["text"]
-    if traced and run_id is not None:
+        # A turn that pauses for approval stops before compile_followup writes followup.
+        followup = result.get("followup") or result["text"]
+        observed.finish({"decision": result["decision"], "reply": followup, "citations": list(result["citations"])})
+    if run_id is not None:
         from northstar import online
 
         # After the turn, off the request: the trace upload (slow when LangSmith rate-limits), then the
-        # hand-over reason and the judge on the uploaded root run. A failure is logged by background().
+        # hand-over reason and the judge on the root run. A failure is logged by background().
         reason = handover(result["decision"]) if handover else None
-        online.background(_upload_then_judge, run_id, question, result["decision"], followup, list(result["citations"]), reason)
+        online.background(
+            _upload_then_judge, run_id, question, result["decision"], followup, list(result["citations"]), reason, traced
+        )
     return Draft(
         result["decision"],
         followup,
