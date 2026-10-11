@@ -16,18 +16,22 @@ git checkout dev
 git pull origin dev
 ```
 
-## Stop point (2026-10-10, edge cases on dev)
+## Stop point (2026-10-11, Langfuse on dev)
 
-`uat`, `prod`, and `main` hold the conversation fixes (#158 to #160). `dev` is ahead with #161 to #165, not promoted:
-- #162 and #163: the end-to-end check and its fixes.
-- #165: round 3 edge cases:
-  - whitespace-only messages are refused;
-  - "NS1006" reads as NS-1006;
-  - the chat sign-in lockout counts per order;
-  - an exchange to the owned size says so.
-- **`EDGECASES.md`** collects every edge case and error with its root cause and fix, plus the token, cost, and speed work. Use it to explain the project.
+`uat`, `prod`, and `main` hold the conversation fixes (#158 to #160). `dev` is ahead with #161 to #168, not promoted:
+- #162 to #166: the end-to-end fixes, the edge cases, and `EDGECASES.md`.
+- #167: **Langfuse tracing beside LangSmith** (`northstar/langfuse_tracing.py`):
+  - one masked root span, "support-turn", per turn, with agent steps, tools, and generations (model, tokens, cost) nested;
+  - online scores on the trace;
+  - middleware hook spans not exported, so a turn is about 10 to 12 units.
+- #168: **the golden dataset and experiments in Langfuse** (`evals/langfuse_experiments.py`: `sync`, `run`, `release`, `promote`). It uses the same cases, targets, evaluators, and release bar as the LangSmith runner. Datasets: `northstar-e2e` (84), `northstar-intent` (14).
 
-There are no open issues. 352 Python tests and 12 browser tests pass; run the browser suite on a fresh database. The release bar on #165's code passed every gate (English p95 5.46 s). The next PR into `uat` needs a fresh run on `dev` with its results file committed. Promote only when Malatesha asks.
+Langfuse:
+- **Setup.** The keys and `LANGFUSE_BASE_URL` (US cloud) are only in the gitignored `.env`; never print or commit them. It is off when the keys are empty. Tests, the browser suite, and LangSmith runs send nothing.
+- **Free plan.** 50,000 units a month. A test-split experiment with the judge and the router is about 545 units, and a release run about 1,600. `LANGFUSE_SAMPLE_RATE` lowers the share of turns traced.
+- **Reading data.** This organization only has the v2 read API (`api.observations.get_many`, `api.scores_v3`); the legacy trace endpoints return 410.
+
+There are no open issues. 363 Python tests and 12 browser tests pass; run the browser suite on a fresh database. The release bar on #165's code passed every gate (English p95 5.46 s). The next PR into `uat` needs a fresh run on `dev` with its results file committed. Promote only when Malatesha asks.
 
 The browser suite runs on the real clock. NS-1002 stays inside its return window through 2026-10-31, and Mira's orders follow the tests' 2026-10-06 dates. Move the seed dates, or give the browser API a fixed clock, before then.
 
@@ -210,7 +214,7 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 
 ## Continue checklist
 
-1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (352 or more).
+1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (363 or more).
 2. Read the Stop point section above. Ask Malatesha what is next: the demo, turning on Google SSO, the LangSmith limit, or new work. Do not create tickets or promote branches unless asked.
 3. Every change: a `feature/*` branch from `origin/dev`, a PR into `dev`, merged only when CI is green.
 4. Rewrite the Stop point section before you stop.
