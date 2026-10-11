@@ -13,6 +13,32 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-11 — The golden dataset and experiments in Langfuse
+
+Status: decision
+
+What changed: `evals/langfuse_experiments.py` runs the golden dataset and the experiments in Langfuse, beside the LangSmith runner. It reuses everything platform-neutral from `evals.experiments`: the labeled cases and their example shape, the four targets (v0, the live desk v1, the router, the customer chat), every evaluator including the calibrated quiz judge, and the release bar's `record()`. The LangSmith runner did not change, apart from `gate_row`'s field mapping moving into `gate_fields`, which both runners use.
+
+Commands:
+- `sync`: one dataset item per case, with a stable id. A second sync adds 0.
+- `run --split … [--tag] [--version] [--no-judge] [--router]`
+- `release`: writes the same `results/release_bar.json`, so the CI check is unchanged.
+- `promote <trace_id> --decision … --sections …`: a specialist's edit, from the trace's `specialist_edit` score, becomes a new golden case under version "edit-<UTC time>".
+
+How it maps onto Langfuse:
+- **Versions.** They follow the LangSmith tags: each item's metadata names its version, and `--tag X` selects every version up to X.
+- **Scorers.** Each evaluator is wrapped in Langfuse's evaluator shape; a list keeps every score name, and a score of None is skipped.
+- **Nesting.** The desk target reaches the API through a test client on another thread, so the experiment task hands its item's trace and span to `langfuse_tracing.nested_under_current()`. The turn nests under the item: `experiment-item-run > experiment-item-task > support-turn > LangGraph > … > tools > desk`.
+
+First real run (test split, one repetition, with the judge, plus the router): the same as LangSmith's.
+- v0: label_match 0.733 with the same four misses.
+- v1: 1.0 on every check, including answer_correct.
+- Router: 1.0.
+
+Units: about 545 (389 observations, 46 traces, about 110 scores), about 1% of the month. Datasets: northstar-e2e (84 items), northstar-intent (14).
+
+Not carried over: the promoted LangSmith edit case (`edit-20261008-054354`, the surfboard wax question) lives only in the LangSmith dataset, not in `evals/labeled.py`. It can be promoted again from a Langfuse trace.
+
 ## 2026-10-11 — Langfuse tracing beside LangSmith
 
 Status: decision

@@ -376,8 +376,14 @@ def _section(name: str, results) -> list[str]:
 
 def gate_row(row) -> dict:
     """One recorded experiment row as the release bar reads it: the labels, the scores, the seconds, the tokens."""
-    outputs, wanted = row["run"].outputs, row["example"].outputs
     scores = {result.key: result.score for result in row["evaluation_results"]["results"]}
+    return gate_fields(row["run"].outputs, row["example"].outputs, scores)
+
+
+def gate_fields(outputs: dict, wanted: dict, scores: dict) -> dict:
+    """The release bar's row from a target's outputs, the reference outputs, and the scores by name.
+
+    Shared by the LangSmith runner here and the Langfuse runner (evals.langfuse_experiments)."""
     return {
         "passed": scores.get("label_match") == 1 and scores.get("status_correct") != 0,
         "decision": outputs["decision"],

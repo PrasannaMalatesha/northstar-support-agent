@@ -92,6 +92,27 @@ def _mask(*, params):
     return MaskOtelSpansResult(span_patches=patches)
 
 
+# Inside a Langfuse experiment item, the item's trace and span. The desk target reaches the API through a test
+# client on another thread, where the item's context is gone; a turn started meanwhile nests under the item.
+_experiment_parent: dict | None = None
+
+
+@contextmanager
+def nested_under_current():
+    """Nest the turns started inside this block under the current Langfuse observation (an experiment item).
+
+    A module variable, not a context variable, because the turn runs on the test client's thread. Experiment
+    items on the desk run one at a time, so one value at a time is enough."""
+    global _experiment_parent
+    langfuse = client() if enabled() else None
+    trace, span = (langfuse.get_current_trace_id(), langfuse.get_current_observation_id()) if langfuse else (None, None)
+    _experiment_parent = {"trace_id": trace, "parent_span_id": span} if trace and span else None
+    try:
+        yield
+    finally:
+        _experiment_parent = None
+
+
 class Turn:
     """One agent turn: the callbacks to pass to the graph, and the reply to record when it ends."""
 
@@ -120,7 +141,7 @@ def turn(run_id: str | None, thread_id: str | None, question: str = "", channel:
 
     langfuse = client()
     with langfuse.start_as_current_observation(
-        trace_context={"trace_id": trace_id(run_id)},
+        trace_context=_experiment_parent or {"trace_id": trace_id(run_id)},
         name=TRACE_NAME,
         as_type="agent",
         input={"question": question},
