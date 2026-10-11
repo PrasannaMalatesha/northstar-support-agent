@@ -13,6 +13,31 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-11 — Langfuse tracing beside LangSmith
+
+Status: decision
+
+What changed: every agent turn is also traced to Langfuse (SDK 4.17, US cloud) when `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set. LangSmith stays the contract, and nothing changes when the keys are absent. `northstar/langfuse_tracing.py` holds it all. `run_turn` opens one root span per turn and passes the Langfuse LangChain handler to the graph. `online._post_feedback` writes each online score (groundedness, hand-over reason, specialist edit) to Langfuse as well, and to LangSmith only when LangSmith tracing is on.
+
+The trace, audited against https://langfuse.com/docs/observability/best-practices:
+- **Root and session.** One trace, "support-turn", per turn. Input is the question; output is the decision, reply, and citations. The session is the case id. Tags are the environment and the channel (desk or chat).
+- **Structure.** `LangGraph > intent_classifier`, `support_agent`/`refund_agent` (agent type) `> model > generation`, `> tools > desk (tool) > generation` (the wording and the section pick), and `compile_followup`. Each generation carries the model, tokens, and cost.
+- **Identity.** The trace id is derived from the LangSmith root run id (`Langfuse.create_trace_id(seed=run_id)`), so a score written later finds the trace.
+- **Masking.** `mask_otel_spans` runs `privacy.screen()` on every exported attribute. A customer email shows as "[email]", even in the root input.
+
+Debug steps:
+- **Model calls and the desk tool started extra roots in the trace.** Capturing spans locally with an in-memory exporter showed the handler sometimes got a LangChain parent run it never saw start (inside a node's middleware or tool executor), and opened a fresh root under the trace id. An explicit root span per turn, with the handler running inside it, gives those spans a parent.
+- **The unexported parents were FastAPI's own OpenTelemetry spans.** That is correct: Langfuse exports only LLM spans.
+
+Trace budget (free plan: 50,000 units a month; a unit is a trace, an observation, or a score):
+- A turn was 20 to 22 observations. 16 of them were create_agent middleware hooks (`PIIMiddleware[email].before_model` and the like): leaves with nothing to debug. `should_export_span` drops them, so a turn is now 10 to 12 units, about 4,000 turns a month.
+- `LANGFUSE_SAMPLE_RATE` lowers the share of turns traced.
+- Tests never send. An autouse fixture removes the keys, and `enabled()` is false under pytest. The browser suite's API runs with empty keys. LangSmith experiment and release runs keep Langfuse off.
+
+Not captured: Gemini's thinking text. It is only returned when asked for, and that adds output tokens.
+
+Keys: only in the gitignored `.env`. A scan of tracked files and the diff found none.
+
 ## 2026-10-10 — Edge cases from round 3 of the conversation checks
 
 Status: bug

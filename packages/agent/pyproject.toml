@@ -13,6 +13,7 @@ dependencies = [
     "langgraph>=1.0",
     "pyjwt>=2.10.0",
     "psycopg[binary]>=3.2.0",
+    "langfuse>=4.17,<5",
 ]
 
 [build-system]
