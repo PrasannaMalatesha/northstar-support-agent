@@ -126,6 +126,7 @@ Rule of thumb: find the root cause, fix it there, and add a test that fails with
 | Experiments sized to the trace budget: one code evaluator per row, `--no-upload` truly local | The LangSmith limit was used up by evaluator traces (3,855), not by chats | Experiments fit the monthly allowance |
 | Per-customer daily turn limits, a daily token budget, and a token cap gate in the release bar | Cost ceilings that cannot be talked around | The largest turn is now 2,000 to 3,000 tokens, under the 10,000 cap |
 | The reranker model is loaded once per process | Avoids reloading the model on each question | — |
+| Langfuse beside LangSmith, sized to its free plan | The LangSmith trace limit ran out; Langfuse gives 50,000 units a month | Middleware hook spans are not exported: 22 units a turn down to 10 to 12. Tests, the browser suite, and LangSmith runs send nothing. An experiment on the test split is about 545 units. `LANGFUSE_SAMPLE_RATE` lowers the traced share |
 
 ### Before and after (the same 41 conversations, real models)
 
