@@ -1,4 +1,4 @@
-# Northstar, for the next session
+# Northstar handoff notes
 
 Read `AGENTS.md` before changing behavior. Product: `prd.md`. Spec: `docs/spec.md`. Build order: `docs/plans/slice-1-build-phases.md`. This file is only the stop point. It is not a second spec.
 
@@ -16,9 +16,13 @@ git checkout dev
 git pull origin dev
 ```
 
-## Stop point (2026-10-11, Langfuse on dev)
+## Stop point (2026-10-13, README and promotion)
 
-`uat`, `prod`, and `main` hold the conversation fixes (#158 to #160). `dev` is ahead with #161 to #168, not promoted:
+The README is rewritten for a first-time reader, and these notes moved from the repo root to `docs/handoff.md`. `dev` carries #161 onward. Its promotion to `uat`, `prod`, and `main` follows a fresh release bar run on this code; check `git log origin/main` to see whether it has landed.
+
+A PR into `uat` needs `results/release_bar.json` measured on the promoted code, and only files under `results/` may change after that run. So any later change, a README line included, needs a new release run before it can be promoted.
+
+What `dev` added since the conversation fixes (#158 to #160):
 - #162 to #166: the end-to-end fixes, the edge cases, and `EDGECASES.md`.
 - #167: **Langfuse tracing beside LangSmith** (`northstar/langfuse_tracing.py`):
   - one masked root span, "support-turn", per turn, with agent steps, tools, and generations (model, tokens, cost) nested;
@@ -31,7 +35,7 @@ Langfuse:
 - **Free plan.** 50,000 units a month. A test-split experiment with the judge and the router is about 545 units, and a release run about 1,600. `LANGFUSE_SAMPLE_RATE` lowers the share of turns traced.
 - **Reading data.** This organization only has the v2 read API (`api.observations.get_many`, `api.scores_v3`); the legacy trace endpoints return 410.
 
-There are no open issues. 363 Python tests and 12 browser tests pass; run the browser suite on a fresh database. The release bar on #165's code passed every gate (English p95 5.46 s). The next PR into `uat` needs a fresh run on `dev` with its results file committed. Promote only when Malatesha asks.
+There are no open issues. 363 Python tests and 12 browser tests pass; run the browser suite on a fresh database. Promote only when Malatesha asks.
 
 The browser suite runs on the real clock. NS-1002 stays inside its return window through 2026-10-31, and Mira's orders follow the tests' 2026-10-06 dates. Move the seed dates, or give the browser API a fixed clock, before then.
 
@@ -79,7 +83,7 @@ Keep: every LangSmith experiment (do not delete). `:memory:.ses` stays untracked
 
 How to run the demo:
 - **Servers:** restart any API or console started before PR #98, because they run old code (`make api`, `make web`).
-- **Database:** use a fresh one, so old cases and tickets do not trigger duplicate blocks. Set `DATABASE_URL` to a new database. The dry run used `northstar_demo`, with the API on 8020 and the console on 3020 via the untracked `.claude/launch.json`.
+- **Database:** use a fresh one, so old cases and tickets do not trigger duplicate blocks. Set `DATABASE_URL` to a new database. The dry run used `northstar_demo`, with the API on 8020 and the console on 3020.
 - **Two logins at once:** use two hostnames, specialist on `specialist.localhost:3020` and lead on `127.0.0.1:3020`.
 - **Pace:** live turns take up to about 10 s.
 
