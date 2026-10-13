@@ -186,15 +186,17 @@ class Identity:
     def start_chat(self, email: str, order_id: str, find_customer) -> str:
         """A chat token for the customer who owns this order and email, or LoginInvalid.
 
-        Failures count toward the same lockout as staff logins, keyed by the email.
+        Failures count toward the same lockout as staff logins, keyed by the email and by the order: guessing
+        many emails for one order locks that order's chat start too.
         """
-        key = f"chat:{email.strip().lower()}"
+        keys = (f"chat:{email.strip().lower()}", f"chat-order:{order_id.strip().upper()}")
         now = self._clock.now()
-        if self._is_locked(key, now):
+        if any(self._is_locked(key, now) for key in keys):
             self._store.audit(None, "chat_locked", now)
             raise LoginLocked()
         customer_id = find_customer(order_id, email)
-        self._store.record_attempt(key, customer_id is not None, now)
+        for key in keys:
+            self._store.record_attempt(key, customer_id is not None, now)
         if customer_id is None:
             self._store.audit(None, "chat_failure", now)
             raise LoginInvalid()

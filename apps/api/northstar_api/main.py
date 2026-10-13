@@ -18,6 +18,7 @@ from northstar.cases import (
     ProposalNotWaiting,
     ProposalWaiting,
 )
+from northstar.actions import order_id
 from northstar.clock import Clock, SystemClock
 from northstar.photo import BadPhoto, checked
 from northstar.identity.postgres import PostgresIdentityStore
@@ -59,6 +60,8 @@ class ChatStartBody(BaseModel):
 
 
 class QuestionBody(BaseModel):
+    # A message of only spaces is empty: it is refused, not answered as a question.
+    model_config = ConfigDict(str_strip_whitespace=True)
     question: str = Field(min_length=1, max_length=2000)
     # Optional damaged-item photo as a data URL (issue #80). Checked again in northstar.photo.
     photo: str | None = Field(default=None, max_length=6_000_000)
@@ -265,7 +268,9 @@ def create_app(
     @app.post("/chat/start")
     def start_chat(body: ChatStartBody) -> dict:
         try:
-            return {"chat_token": identity.start_chat(body.email, body.order_id, cases.chat_customer)}
+            # "ns1006" and "NS-1006" are the same order: one spelling for the lookup, the lockout, and the token.
+            order = order_id(body.order_id) or body.order_id.strip()
+            return {"chat_token": identity.start_chat(body.email, order, cases.chat_customer)}
         except LoginLocked as exc:
             raise HTTPException(status_code=423, detail="Too many tries. Try again later.") from exc
         except LoginInvalid as exc:

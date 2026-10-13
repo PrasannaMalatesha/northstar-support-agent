@@ -1,6 +1,6 @@
 # Explanation
 
-How to talk through this project. The build has not started. What follows is the design, in the order it was decided, and why.
+How to talk through this project. What follows is the design, in the order it was decided, and why.
 
 Walk the pictures in [`architecture.md`](architecture.md) in the order that file lists. Each diagram cites the LangChain, LangGraph, or LangSmith page it comes from. Product scope, including later support features, is in [`prd.md`](prd.md). The technical requirements document is not written until it is asked for.
 
@@ -107,4 +107,4 @@ Every later ticket cites a section id. The handbook was written and frozen as `n
 
 ## What is not built yet
 
-Slice 1 (#1 to #22) and slice 2 (#64, #66 to #77) are built and closed. Slice 3 is tickets under #65, waiting until slice 2 is in use. The console part of the walkthrough recording is scripted. The LangSmith part is recorded by hand. `correction.md` is where later bugs and approach changes go.
+Slices 1, 2, and 3 and the update phase are built and closed. Nothing is deployed publicly, and Google sign-in is off until OAuth values are set. What is still open is listed in `docs/handoff.md`. `correction.md` is where later bugs and approach changes go.

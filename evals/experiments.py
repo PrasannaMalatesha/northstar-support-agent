@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -375,8 +376,14 @@ def _section(name: str, results) -> list[str]:
 
 def gate_row(row) -> dict:
     """One recorded experiment row as the release bar reads it: the labels, the scores, the seconds, the tokens."""
-    outputs, wanted = row["run"].outputs, row["example"].outputs
     scores = {result.key: result.score for result in row["evaluation_results"]["results"]}
+    return gate_fields(row["run"].outputs, row["example"].outputs, scores)
+
+
+def gate_fields(outputs: dict, wanted: dict, scores: dict) -> dict:
+    """The release bar's row from a target's outputs, the reference outputs, and the scores by name.
+
+    Shared by the LangSmith runner here and the Langfuse runner (evals.langfuse_experiments)."""
     return {
         "passed": scores.get("label_match") == 1 and scores.get("status_correct") != 0,
         "decision": outputs["decision"],
@@ -537,6 +544,9 @@ def main(argv: list[str] | None = None) -> None:
     from langsmith import Client
     from northstar.agent_model import _load_local_env
 
+    # These runs trace to LangSmith. Langfuse stays off here so a release run does not spend its units twice.
+    os.environ.setdefault("LANGFUSE_PUBLIC_KEY", "")
+    os.environ.setdefault("LANGFUSE_SECRET_KEY", "")
     _load_local_env()
     parser = argparse.ArgumentParser(prog="evals.experiments")
     commands = parser.add_subparsers(dest="command", required=True)
