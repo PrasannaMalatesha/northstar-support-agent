@@ -77,3 +77,11 @@ def client(clock: FakeClock, request: pytest.FixtureRequest):
     with TestClient(app) as test_client:
         yield test_client
     pool.close()
+
+
+@pytest.fixture(autouse=True)
+def _no_langfuse(monkeypatch):
+    # A test never sends a trace or a score to Langfuse, even one that clears PYTEST_CURRENT_TEST:
+    # the free plan's units are for real turns and experiments.
+    for name in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
+        monkeypatch.delenv(name, raising=False)

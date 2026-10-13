@@ -1,4 +1,4 @@
-# Northstar, for the next session
+# Northstar handoff notes
 
 Read `AGENTS.md` before changing behavior. Product: `prd.md`. Spec: `docs/spec.md`. Build order: `docs/plans/slice-1-build-phases.md`. This file is only the stop point. It is not a second spec.
 
@@ -16,14 +16,34 @@ git checkout dev
 git pull origin dev
 ```
 
-## Stop point (2026-10-10, conversation fixes on dev)
+## Stop point (2026-10-13, README and promotion)
 
-The update phase (spec #131, tickets #132 to #145) is promoted to `uat`, `prod`, and `main` (#149 to #151); #131 to #145 are closed. Since then `dev` is ahead with #152 to #155, not promoted:
-- #153: `langchain` and `langchain-openai` are runtime dependencies of `northstar-agent`. A fresh `make api` crashed without them.
-- #154: the conversation check, `results/conversation_check_2026-10-09.md`.
-- #155: the fixes it found, and about half the model cost. The chat uses its own order. Complaints that name a product are not catalog questions. Threats to sue escalate. A lost gift card goes to GC-LOST. "for an XL" is read. A model pick handles handbook misses and follow-ups when the reranker keeps nothing. Staff tokens are renewed, with no 15-minute sign-out. Thinking levels are set, and the desk tool returns directly. Details are in `correction.md` (2026-10-10).
+The README is rewritten for a first-time reader, and these notes moved from the repo root to `docs/handoff.md`. `dev` carries #161 onward. Its promotion to `uat`, `prod`, and `main` follows a fresh release bar run on this code; check `git log origin/main` to see whether it has landed.
 
-There are no open issues. 331 Python tests and 12 browser tests pass; run the browser suite on a fresh database. A release-bar check on #155 passed every gate: action correct 100%, English p95 5.62 s, Spanish p95 9.34 s, max 2,231 tokens. The next PR into `uat` needs a fresh run on `dev` with its results file committed. Promote only when Malatesha asks.
+A PR into `uat` needs `results/release_bar.json` measured on the promoted code, and only files under `results/` may change after that run. So any later change, a README line included, needs a new release run before it can be promoted.
+
+What `dev` added since the conversation fixes (#158 to #160):
+- #162 to #166: the end-to-end fixes, the edge cases, and `EDGECASES.md`.
+- #167: **Langfuse tracing beside LangSmith** (`northstar/langfuse_tracing.py`):
+  - one masked root span, "support-turn", per turn, with agent steps, tools, and generations (model, tokens, cost) nested;
+  - online scores on the trace;
+  - middleware hook spans not exported, so a turn is about 10 to 12 units.
+- #168: **the golden dataset and experiments in Langfuse** (`evals/langfuse_experiments.py`: `sync`, `run`, `release`, `promote`). It uses the same cases, targets, evaluators, and release bar as the LangSmith runner. Datasets: `northstar-e2e` (84), `northstar-intent` (14).
+
+Langfuse:
+- **Setup.** The keys and `LANGFUSE_BASE_URL` (US cloud) are only in the gitignored `.env`; never print or commit them. It is off when the keys are empty. Tests, the browser suite, and LangSmith runs send nothing.
+- **Free plan.** 50,000 units a month. A test-split experiment with the judge and the router is about 545 units, and a release run about 1,600. `LANGFUSE_SAMPLE_RATE` lowers the share of turns traced.
+- **Reading data.** This organization only has the v2 read API (`api.observations.get_many`, `api.scores_v3`); the legacy trace endpoints return 410.
+
+There are no open issues. 363 Python tests and 12 browser tests pass; run the browser suite on a fresh database. Promote only when Malatesha asks.
+
+The browser suite runs on the real clock. NS-1002 stays inside its return window through 2026-10-31, and Mira's orders follow the tests' 2026-10-06 dates. Move the seed dates, or give the browser API a fixed clock, before then.
+
+Suggested next, not started (details in the 2026-10-10 session notes):
+- **Token budget.** Each handbook question is charged a flat 1,000 tokens (`TOKENS_PER_TURN`) against a 20,000-a-day budget, so a specialist gets only 20 handbook questions a day. Charge the reported usage, or raise the budget.
+- **`TOKEN_CAP`.** It is still the provisional 10,000; the real peak is about 2,200. Suggested 5,000. Also make "Release bar results" a required check on `uat`.
+- **The conversation check.** Move the 32-conversation check into `evals` so it can be run again.
+- **Google SSO.** It needs OAuth values. Turning it on hides the password form, and only emails in `staff_users` can sign in, so a staff row with a real Google email is needed first.
 
 Open for Malatesha:
 - A stronger reranker. The FlashRank MiniLM model scores some plain questions near zero; it needs a model download.
@@ -63,7 +83,7 @@ Keep: every LangSmith experiment (do not delete). `:memory:.ses` stays untracked
 
 How to run the demo:
 - **Servers:** restart any API or console started before PR #98, because they run old code (`make api`, `make web`).
-- **Database:** use a fresh one, so old cases and tickets do not trigger duplicate blocks. Set `DATABASE_URL` to a new database. The dry run used `northstar_demo`, with the API on 8020 and the console on 3020 via the untracked `.claude/launch.json`.
+- **Database:** use a fresh one, so old cases and tickets do not trigger duplicate blocks. Set `DATABASE_URL` to a new database. The dry run used `northstar_demo`, with the API on 8020 and the console on 3020.
 - **Two logins at once:** use two hostnames, specialist on `specialist.localhost:3020` and lead on `127.0.0.1:3020`.
 - **Pace:** live turns take up to about 10 s.
 
@@ -198,7 +218,7 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 
 ## Continue checklist
 
-1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (331 or more).
+1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (363 or more).
 2. Read the Stop point section above. Ask Malatesha what is next: the demo, turning on Google SSO, the LangSmith limit, or new work. Do not create tickets or promote branches unless asked.
 3. Every change: a `feature/*` branch from `origin/dev`, a PR into `dev`, merged only when CI is green.
 4. Rewrite the Stop point section before you stop.
