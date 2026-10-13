@@ -106,6 +106,11 @@ def record_edit(run_id: str, question: str, citations, before: str, after: str, 
 
 def _send_edit(run_id: str, pair: dict) -> None:
     # https://docs.langchain.com/langsmith/annotation-queues
+    from northstar import langfuse_tracing
+
+    langfuse_tracing.score(run_id, "specialist_edit", "edited", comment=f"Before:\n{pair['before']}\n\nAfter:\n{pair['after']}")
+    if os.environ.get("LANGSMITH_TRACING", "").lower() != "true":
+        return
     from langsmith import Client
 
     client = Client()
@@ -127,6 +132,13 @@ def _send_edit(run_id: str, pair: dict) -> None:
 
 
 def _post_feedback(run_id: str, score: int, key: str = "policy_groundedness", value: str | None = None) -> None:
+    """The one place an online score is written: on the turn's Langfuse trace when Langfuse is on, and as
+    LangSmith feedback on the root run when LangSmith tracing is on."""
+    from northstar import langfuse_tracing
+
+    langfuse_tracing.score(run_id, key, score, comment=value)
+    if os.environ.get("LANGSMITH_TRACING", "").lower() != "true":
+        return
     from langsmith import Client
 
     client = Client()

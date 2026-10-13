@@ -38,6 +38,9 @@ class Draft:
     run_id: str | None = None
     # On an abstain: the reranked sections that fell under the threshold, with scores (R19).
     retrieved: tuple[tuple[str, float], ...] = ()
+    # On an answer: the vector search's first section when the reranker dropped it. The reranker can give many
+    # sections 0.99 on a shared word and cut the right one; handbook_reply then lets the model choose.
+    unsure: tuple[str, ...] = ()
 
 
 ABSTAIN_TEXT = (

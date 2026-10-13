@@ -20,7 +20,8 @@ _LEGAL = re.compile(
     re.IGNORECASE,
 )
 _FRAUD = re.compile(
-    r"\b(did not|didn't|never) (place|make|buy|order)\b|\bnot my order\b|\baccount (was |got |has been )?(hacked|taken over)\b",
+    r"\b(did not|didn't|never) (place|placed|make|made|buy|bought|order|ordered|authorize|authorized)\b"
+    r"|\bnot my order\b|\baccount (was |got |has been )?(hacked|taken over)\b",
     re.IGNORECASE,
 )
 _CONFLICT = re.compile(
@@ -70,8 +71,9 @@ class Handoff:
 
 
 def _order_id(question: str) -> str | None:
-    found = re.search(r"\bNS-\d+\b", question.upper())
-    return found.group(0) if found else None
+    from northstar.actions import order_id
+
+    return order_id(question)
 
 
 def _asked(question: str, order_id: str | None) -> str:

@@ -2,7 +2,7 @@
 
 Northstar Support Agent. Read `AGENTS.md` for the contract.
 
-The presentation board is the canvas **Northstar architecture** (open it beside the chat). During implementation, export that board to `diagrams/northstar-architecture.png` in this repo. A JPEG was not written yet because plan mode cannot create image files.
+The presentation image of one user turn is `diagrams/northstar-architecture.png` (a JPEG copy sits beside it, and `diagrams/northstar-architecture.mmd` is its source).
 
 The mermaid sections below are the same picture in source form, each box cited to a doc.
 

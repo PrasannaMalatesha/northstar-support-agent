@@ -13,6 +13,95 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-11 — The golden dataset and experiments in Langfuse
+
+Status: decision
+
+What changed: `evals/langfuse_experiments.py` runs the golden dataset and the experiments in Langfuse, beside the LangSmith runner. It reuses everything platform-neutral from `evals.experiments`: the labeled cases and their example shape, the four targets (v0, the live desk v1, the router, the customer chat), every evaluator including the calibrated quiz judge, and the release bar's `record()`. The LangSmith runner did not change, apart from `gate_row`'s field mapping moving into `gate_fields`, which both runners use.
+
+Commands:
+- `sync`: one dataset item per case, with a stable id. A second sync adds 0.
+- `run --split … [--tag] [--version] [--no-judge] [--router]`
+- `release`: writes the same `results/release_bar.json`, so the CI check is unchanged.
+- `promote <trace_id> --decision … --sections …`: a specialist's edit, from the trace's `specialist_edit` score, becomes a new golden case under version "edit-<UTC time>".
+
+How it maps onto Langfuse:
+- **Versions.** They follow the LangSmith tags: each item's metadata names its version, and `--tag X` selects every version up to X.
+- **Scorers.** Each evaluator is wrapped in Langfuse's evaluator shape; a list keeps every score name, and a score of None is skipped.
+- **Nesting.** The desk target reaches the API through a test client on another thread, so the experiment task hands its item's trace and span to `langfuse_tracing.nested_under_current()`. The turn nests under the item: `experiment-item-run > experiment-item-task > support-turn > LangGraph > … > tools > desk`.
+
+First real run (test split, one repetition, with the judge, plus the router): the same as LangSmith's.
+- v0: label_match 0.733 with the same four misses.
+- v1: 1.0 on every check, including answer_correct.
+- Router: 1.0.
+
+Units: about 545 (389 observations, 46 traces, about 110 scores), about 1% of the month. Datasets: northstar-e2e (84 items), northstar-intent (14).
+
+Not carried over: the promoted LangSmith edit case (`edit-20261008-054354`, the surfboard wax question) lives only in the LangSmith dataset, not in `evals/labeled.py`. It can be promoted again from a Langfuse trace.
+
+## 2026-10-11 — Langfuse tracing beside LangSmith
+
+Status: decision
+
+What changed: every agent turn is also traced to Langfuse (SDK 4.17, US cloud) when `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set. LangSmith stays the contract, and nothing changes when the keys are absent. `northstar/langfuse_tracing.py` holds it all. `run_turn` opens one root span per turn and passes the Langfuse LangChain handler to the graph. `online._post_feedback` writes each online score (groundedness, hand-over reason, specialist edit) to Langfuse as well, and to LangSmith only when LangSmith tracing is on.
+
+The trace, audited against https://langfuse.com/docs/observability/best-practices:
+- **Root and session.** One trace, "support-turn", per turn. Input is the question; output is the decision, reply, and citations. The session is the case id. Tags are the environment and the channel (desk or chat).
+- **Structure.** `LangGraph > intent_classifier`, `support_agent`/`refund_agent` (agent type) `> model > generation`, `> tools > desk (tool) > generation` (the wording and the section pick), and `compile_followup`. Each generation carries the model, tokens, and cost.
+- **Identity.** The trace id is derived from the LangSmith root run id (`Langfuse.create_trace_id(seed=run_id)`), so a score written later finds the trace.
+- **Masking.** `mask_otel_spans` runs `privacy.screen()` on every exported attribute. A customer email shows as "[email]", even in the root input.
+
+Debug steps:
+- **Model calls and the desk tool started extra roots in the trace.** Capturing spans locally with an in-memory exporter showed the handler sometimes got a LangChain parent run it never saw start (inside a node's middleware or tool executor), and opened a fresh root under the trace id. An explicit root span per turn, with the handler running inside it, gives those spans a parent.
+- **The unexported parents were FastAPI's own OpenTelemetry spans.** That is correct: Langfuse exports only LLM spans.
+
+Trace budget (free plan: 50,000 units a month; a unit is a trace, an observation, or a score):
+- A turn was 20 to 22 observations. 16 of them were create_agent middleware hooks (`PIIMiddleware[email].before_model` and the like): leaves with nothing to debug. `should_export_span` drops them, so a turn is now 10 to 12 units, about 4,000 turns a month.
+- `LANGFUSE_SAMPLE_RATE` lowers the share of turns traced.
+- Tests never send. An autouse fixture removes the keys, and `enabled()` is false under pytest. The browser suite's API runs with empty keys. LangSmith experiment and release runs keep Langfuse off.
+
+Not captured: Gemini's thinking text. It is only returned when asked for, and that adds output tokens.
+
+Keys: only in the gitignored `.env`. A scan of tracked files and the diff found none.
+
+## 2026-10-10 — Edge cases from round 3 of the conversation checks
+
+Status: bug
+
+- **Whitespace-only messages.** "   " passed `min_length=1`, was saved as an empty question, and got a model-written refund-eligibility answer. `QuestionBody` now strips whitespace first, so it is refused with 422 and nothing is saved.
+- **Order ids without the dash.** "NS1006" and "ns-1006" were not read as an order. `actions.order_id` reads every spelling and writes back NS-1006. The escalation packet, the more-than-one-order check, and the chat sign-in use it too.
+- **Chat sign-in lockout per order.** Failures counted per email only, so many guessed emails for one order were never locked. Failures now count per email and per order. Trade-off: someone guessing can block one order's chat start for 15 minutes, like any account lockout.
+- **Exchange to the size already owned.** It got "Which size does the customer want?". It now says the item is already that size.
+
+Checked and correct: approving twice is idempotent (the same ticket, one row); script tags are stored as text and React escapes them; SQL-looking text changes nothing; a lead-only route returns 403 to a specialist; a bad case id gives 404; a chat token expires after 30 minutes.
+
+`EDGECASES.md` collects every edge case and error from the project, with the token, cost, and speed work.
+
+## 2026-10-10 — Fixes from the end-to-end check
+
+Status: bug
+
+Root causes and fixes for the problems in `results/e2e_check_2026-10-10.md`:
+- **Final sale answered wrongly.** The reranker gave five sections 0.99 or more on the shared word "returned". REF-FINAL-SALE was fifth and the draft keeps four. Pinecone ranked it first. Now, when the reranker drops Pinecone's first section, the draft is marked `unsure` and the model (thinking `minimal`) chooses among the kept sections plus that one. NONE or a failure keeps the reranker's draft. On the 24 labeled handbook questions, the reranker always kept Pinecone's first section, so the extra call is rare.
+- **"never placed" not escalated.** The ESC-FRAUD pattern matched only the present tense. It now matches placed, made, bought, ordered, and authorized.
+- **Questions with "price" went to the catalog.** The catalog's handbook check used the reranker alone, which scores "wrong price by mistake" 0.0 everywhere. Item questions ("do you sell", "in stock", "how much", "what size", "do you carry/stock/have") keep the old path, so an unknown item still abstains. The first fix let the model pick answer "Do you sell surfboard wax?"; the release bar's abstain gate caught it, and that version was never merged. Questions that only say "price" or "final sale" now go to the handbook, with the model pick, before the catalog.
+- **Wrong item.** No action matched "received a different item". It is a refund now: REF-WRONG-ITEM within the REF-DAMAGED report window (14 days), a full refund of the line and its outbound shipping.
+- **Two orders in one message.** The first order id and one action were read, and the rest dropped. A request that names more than one order now asks for one request per order and proposes nothing.
+- **Follow-up "And what if she lost it?".** "lost" picked the lost-package action, which asked for an order. A short follow-up (and, so, what if, what about, …) with no order now reads the handbook with the previous question.
+- **Address change after an approved cancel.** Tickets do not change an order's status. Nothing but a refund (which REF-DENY already refuses) or a duplicate cancel is proposed on an order with a cancel ticket.
+- **Insults and "ignore all previous instructions".** The block list matched "ignore previous" but not "ignore all previous", and had no insults. A pattern now matches ignore, disregard, or forget followed by instructions, rules, the handbook, and similar words, and insults aimed at a person (ESC-ABUSE). "This stupid zipper broke" is not blocked.
+- **"torn"** is a defect word.
+- **"Where is my order?" in a chat** reads the order the chat was started with.
+- **NS-1002 seed.** It was "shipped" with a delivery date, so the refund rule treated it as delivered. It is now a consistent delivered order (delivered 2026-10-01), refundable for the tests' clock and for the browser suite's real clock through 2026-10-31. Its old date would have broken the live chat refund browser test after 2026-10-12. A new test checks that only delivered orders carry a delivery date.
+
+Changed tests:
+- `test_a_completed_cancel_blocks_a_second_cancel_but_not_another_action` used an address change on a cancelled order as its "another action". That is the bug above, so it now expects ORD-CANCEL, and a new test checks family scoping with an address change followed by a cancel.
+- The live chat browser test now expects NS-1002 with its real status, "delivered".
+
+Left as is:
+- **The judge's reasoning effort.** At effort `low`, DeepSeek used 44% fewer tokens and still failed every ungrounded reply in a 12-case check. But it also failed a correct escalation handoff: 9 of 12 against 10 of 12 at the default. A cheaper quality monitor that is less accurate is not a clean fix.
+- **"Do you price match competitors?"** gets the catalog miss. No handbook section covers it, and the model pick says NONE.
+
 ## 2026-10-10 — Fixes from the conversation check
 
 Status: bug
