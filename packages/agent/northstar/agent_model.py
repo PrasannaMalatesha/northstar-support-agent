@@ -132,7 +132,8 @@ def _phrase(question: str, handbook_lines: str) -> str:
                         "You answer Northstar support questions. Use only the handbook lines. "
                         "Keep every section id that appears in parentheses. "
                         "Do not add a rule that is not in the lines. "
-                        f"If the lines do not answer the question, reply with the single word {NO_ANSWER}."
+                        f"If no line is about what the question asks, reply with the single word {NO_ANSWER}. "
+                        "If a line is about it and leaves a detail open, answer with what the lines say."
                     ),
                 },
                 {

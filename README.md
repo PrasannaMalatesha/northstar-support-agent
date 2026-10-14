@@ -56,7 +56,7 @@ The agent is measured the same way before every release.
 
 | Piece | What it is | Where |
 | --- | --- | --- |
-| Golden dataset | 84 labeled end-to-end cases and 14 router cases, versioned by tag, split into dev and held-out test | [`evals/labeled.py`](evals/labeled.py) |
+| Golden dataset | 125 labeled end-to-end cases (41 of them from live turns) and 14 router cases, versioned by tag, split into dev and held-out test | [`evals/labeled.py`](evals/labeled.py) |
 | Experiments | v0 (handbook answerer only), v1 (the live desk), and the router alone, on the same held-out cases | [`evals/experiments.py`](evals/experiments.py), [`evals/langfuse_experiments.py`](evals/langfuse_experiments.py) |
 | Code checks | Decision matches the label, citations are real, ticket status is right, reply language and photo verdict are right, steps happen in order | [`evals/experiments.py`](evals/experiments.py), [`evals/trajectory.py`](evals/trajectory.py) |
 | LLM judge | A different model from the agent, a majority of three, calibrated against human labels (5 of 5) | [`evals/judge.py`](evals/judge.py), [`results/judge_calibration.md`](results/judge_calibration.md) |
@@ -113,7 +113,7 @@ The API listens on `127.0.0.1:8000` and the console on `127.0.0.1:3000`. Postgre
 Check it:
 
 ```
-make test                                                # 366 Python tests, no keys needed
+make test                                                # 372 Python tests, no keys needed
 cd apps/web && npx playwright test                       # 12 browser tests with accessibility checks, on a fresh database
 uv run python -m evals.experiments release --no-upload   # the release bar, with real models
 ```

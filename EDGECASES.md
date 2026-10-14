@@ -6,7 +6,7 @@ This file covers what went wrong while building Northstar, how each problem was 
 
 | Method | What it catches |
 | --- | --- |
-| Unit and API tests (`uv run pytest`, 366 tests) | Rules, gates, and limits, on a fixed clock. Each bug fix adds a test that fails without the fix |
+| Unit and API tests (`uv run pytest`, 372 tests) | Rules, gates, and limits, on a fixed clock. Each bug fix adds a test that fails without the fix |
 | Golden dataset and LangSmith experiments | Answer quality on held-out cases, scored by code checks and a calibrated LLM judge |
 | Release bar (`evals.experiments release`) | A gate before every promotion into `uat`: action correct of at least 80%, zero tickets without approval, zero invalid or missing citations, every abstain case abstains, p95 latency, and a token cap. CI checks its results file |
 | Browser suite (Playwright, 12 tests, axe accessibility checks) | Full flows across three browsers: customer, specialist, and lead |
@@ -56,6 +56,10 @@ Rule of thumb: find the root cause, fix it there, and add a test that fails with
 | "Can we ship an order to Canada?", "speaker she dropped" | Abstained, though the handbook covers both | Pinecone ranked the right section first. The small reranker scored it 0.02 to 0.04, under the 0.2 threshold. A threshold on Pinecone similarity cannot separate it: an abstain case scored the same 0.633 | When the reranker keeps nothing, the model (no thinking) picks among the reranker's top four, or says NONE. It picked the right section on every miss and NONE on every should-abstain question |
 | "Can final sale items be returned?" | Answered as eligible for a refund, which is wrong | The reranker saturated: five sections at 0.99 or more on "returned", and the right one fifth, under the four kept | When the reranker drops Pinecone's first section, the model chooses between them. On the labeled set this never happens on good answers, so the extra call is rare |
 | Follow-ups ("what should I tell her about sending it back?", "And what if she lost it?") | Abstained, or "Which order id?" | Each turn was retrieved alone; "lost" picked the lost-package action | The case's previous question is given to the section pick. A short follow-up with no order reads the handbook instead of an action |
+| "Forgot password, and the reset email never arrives" (after the NONE fix above) | Abstained, though FAQ-PASSWORD answers most of it | The first NONE instruction let the model refuse when a line was related but left a detail open. Found on the next live run | NONE only when no line is about the question; a related line is answered with what it says |
+| "…says it never came. What is the rule?", "Under warranty, do we repair, replace, or refund?" | "Which order id?" | A policy question was recognized only when the whole message started with a question word | A staff question about the rule ("what is the rule", "do we", "can we") in the last sentence, with no order id, reads the handbook. A customer's "can you help?" still asks which order |
+| "Part of her order was missing from the box. What is the rule?" | "Pick a customer first" | "her order" counted as one particular order | A rule question is not a request about an order |
+| "The speaker on NS-1007 died", "NS-1009 still has not shown up", "my money back for NS-1003" | The order status, with no proposal | "died", "shown up", and "money back" were not action phrases | Added to the defect, not-arrived, and refund phrases |
 | "Can someone pay with two different cards on one order?" | A cited "answer" whose text said the handbook does not say | The reranker kept sections that share words with the question, and the wording model said so in prose; the decision stayed `answer` | The wording step may reply NONE, which becomes an abstain. Found on live turns, corrected by a specialist, promoted into the golden dataset, and fixed against that case |
 | "The site showed a wrong price by mistake" | "I don't have that item in the catalog" | The word "price" sent the question to the catalog, whose handbook check used the reranker alone | Questions that only say "price" or "final sale" try the handbook, with the section pick, first |
 | **Regression caught:** "Do you sell surfboard wax?" | After the fix above, it was answered from the store's product categories | The section pick also ran on item questions | The release bar's abstain gate caught it before the merge. Item questions ("do you sell", "in stock", "how much") keep the catalog path without the section pick, and a test now guards it |
@@ -160,7 +164,7 @@ Latest runs on the final code: round 2 (60 turns) p50 0.85 s and $0.00097 per tu
 ## How to check it yourself
 
 ```
-uv run pytest                                          # 366 tests
+uv run pytest                                          # 372 tests
 cd apps/web && npx playwright test                     # 12 browser tests, on a fresh database
 uv run python -m evals.experiments release --no-upload # the release bar, with real models
 ```
