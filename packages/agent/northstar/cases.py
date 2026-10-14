@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 from psycopg import sql
 
-from northstar.actions import FAMILIES, PROPOSALS, Order, Proposal, Reply, family_decisions, gated, order_id as _order_id, order_ids as _order_ids, reports_problem
+from northstar.actions import FAMILIES, PROPOSALS, Order, Proposal, Reply, family_decisions, gated, order_id as _order_id, order_ids as _order_ids, policy_question, reports_problem
 from northstar.clock import Clock
 from northstar.escalate import asks_for_person, handoff, left_message, manual_handoff
 from northstar.graph import TurnTools, resume_turn, run_turn
@@ -2211,7 +2211,9 @@ class CaseStore:
     ) -> Draft:
         # "Where is my order?" in a customer chat means the order the chat was started with.
         order_id = _order_id(question) or (chat_order if chat_order and _asks_for_an_order(question) else None)
-        if order_id or (self._customer(case_id) is None and _asks_for_an_order(question)):
+        # "Part of her order was missing from the box. What is the rule?" asks the handbook, not for an order.
+        names_an_order = _asks_for_an_order(question) and not policy_question(question)
+        if order_id or (self._customer(case_id) is None and names_an_order):
             if self._customer(case_id) is None:
                 return _plain("unbound", UNBOUND_ORDER_TEXT)
             if order_id:

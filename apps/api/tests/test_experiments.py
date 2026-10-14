@@ -76,7 +76,7 @@ class Datasets:
 def test_sync_publishes_the_handover_cases_under_their_own_tag():
     client = Datasets()
     experiments.sync(client)
-    assert client.tags == ["slice1", "slice2", "slice3-es", "slice3-photo", "update-handover"]
+    assert client.tags == ["slice1", "slice2", "slice3-es", "slice3-photo", "update-handover", "online-20261013"]
     handover = [row for row in client.examples[experiments.E2E] if row["metadata"]["version"] == "update-handover"]
     assert [row["metadata"]["case_id"] for row in handover] == [case["id"] for case in HANDOVER_CASES]
     assert all(row["inputs"]["channel"] == "chat" and row["split"] == "dev" for row in handover)
@@ -85,7 +85,7 @@ def test_sync_publishes_the_handover_cases_under_their_own_tag():
     first = client.examples[experiments.E2E][: len(CASES)]
     assert [row["split"] for row in first] == [case["split"] for case in CASES]
     experiments.sync(client)  # stable ids: a second sync adds nothing and tags nothing
-    assert len(client.tags) == 5
+    assert len(client.tags) == 6
 
 
 def test_the_judge_reference_is_the_gold_rule_or_the_abstain_text():

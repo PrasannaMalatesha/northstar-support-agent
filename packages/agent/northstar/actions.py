@@ -285,7 +285,7 @@ _DAMAGED = re.compile(
 )
 _DEFECT = re.compile(
     r"\bdefect|\bbroke|\bstopped working\b|\bfault|\bcrack|\b(does not|doesn't|won't) (work|turn on|charge)\b|\bseams?\b|\bzipper\b"
-    r"|\bleak(s|ed|ing)?\b|\btorn\b|\bripped\b",
+    r"|\bleak(s|ed|ing)?\b|\btorn\b|\bripped\b|\bdied\b|\bdead\b|\bno longer works?\b",
     re.IGNORECASE,
 )
 
@@ -339,7 +339,7 @@ def add_business_days(start: date, days: int) -> date:
 
 
 _NOT_ARRIVED = (
-    r"\bnever (arrived|came)\b|\bhas(n't| not) (arrived|come)\b|\bdid(n't| not) (arrive|get|receive)\b"
+    r"\bnever (arrived|came|showed up)\b|\bhas(n't| not) (arrived|come|shown up)\b|\bdid(n't| not) (arrive|get|receive|show up)\b"
     r"|\bnot (received|arrived)\b|\blost\b|\blate\b|\bdelayed?\b|\bwhere is my package\b"
 )
 
@@ -414,7 +414,7 @@ ACTIONS: tuple[GatedAction, ...] = (
     GatedAction("warranty_claim", re.compile(r"\bwarranty\b|" + _DEFECT.pattern), warranty, "Which order id? No claim is drafted."),
     GatedAction("shipment", re.compile(_NOT_ARRIVED), shipment, "Which order id? Nothing is proposed."),
     GatedAction(
-        "refund", re.compile(r"\brefunds?\b|\bcredit\b|" + _DAMAGED.pattern + "|" + _WRONG_ITEM.pattern), refund, "Which order id? No amount is proposed."
+        "refund", re.compile(r"\brefunds?\b|\bmoney back\b|\bcredit\b|" + _DAMAGED.pattern + "|" + _WRONG_ITEM.pattern), refund, "Which order id? No amount is proposed."
     ),
 )
 
@@ -443,6 +443,20 @@ _POLICY_QUESTION = re.compile(
     r"^\s*(can|could|how|what|when|why|is|are|does|do|will|if)\b.*\?\s*$|^.*,\s*right\?\s*$",
     re.IGNORECASE | re.DOTALL,
 )
+# A specialist asking about the rule after describing the situation: "…says it never came. What is the rule?",
+# "Under warranty, do we repair, replace, or refund?". Staff say "we"; a customer's request says "you" or "I".
+_STAFF_POLICY = re.compile(
+    r"^(?:[^,?]{0,40},\s*)?((do|can|should|may|must) we\b|what(?:'s| is) the (rule|policy)\b|what does the (handbook|policy) say\b)[^?]*\?$",
+    re.IGNORECASE,
+)
+
+
+def policy_question(question: str) -> bool:
+    """A question about the handbook with no order id, not a request to act on an order."""
+    if order_id(question) is not None:
+        return False
+    last = re.split(r"(?<=[.!?])\s+", question.strip())[-1]
+    return bool(_POLICY_QUESTION.match(question) or _STAFF_POLICY.match(last))
 
 
 def order_id(question: str) -> str | None:
@@ -466,7 +480,7 @@ def reports_problem(text: str) -> bool:
 
 
 def gated(question: str) -> GatedAction | None:
-    if order_id(question) is None and _POLICY_QUESTION.match(question):
+    if policy_question(question):
         return None
     lowered = question.lower()
     for action in ACTIONS:

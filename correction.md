@@ -13,6 +13,37 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-13 — Online evaluation, round 2: 42 live turns, 41 stable cases added to the golden dataset
+
+Status: bug
+
+What changed or broke: 42 new live turns ran through the desk with tracing and online scoring on, each twice. Every label was written from the handbook before the turn ran. First run: 33 passed on both runs, 8 failed on both, none flipped.
+- Two were made worse by the NONE fix from round 1. "Forgot password, reset email never arrives" and the other-store price match abstained, because the model replied NONE when a line was related but left a detail open.
+- Three staff questions about the rule were read as requests: "…never came. What is the rule?", "Under warranty, do we repair, replace, or refund?", and "…store credit instead of a refund. Can we do that?" asked "Which order id?". "Part of her order was missing. What is the rule?" asked for a customer.
+- Three requests were not recognized: "the speaker died", "still has not shown up", "my money back". Each showed the order status with no proposal.
+
+Evidence: The traces show each turn's path: the action matched (or not), the order lookup, the handbook search, and the wording reply. A policy question was recognized only when the whole message began with a question word. "her order" counted as one particular order.
+
+Debug steps: Ran every turn twice to separate a stable failure from noise. Tuned the NONE instruction and checked ten borderline questions three times each, with tracing off.
+
+Fix:
+- NONE only when no line is about the question; a related line is answered with what it says.
+- `policy_question`: a staff question about the rule in the last sentence ("what is the rule", "do we", "can we"), with no order id, reads the handbook. A customer's "can you help?" and any message with an order id still act.
+- "died", "dead", "no longer works", "shown up", "showed up", and "money back" join the action phrases.
+- Second run on the fixed code: 41 of 42 passed on both runs.
+
+The one left out: "Do you price match if another store sells the same kettle cheaper?" still abstains. The handbook's answer is in PAY-PRICE-ADJUST's "Agent must not" line, and the wording step sees only the rule line. That is a change to what the model reads and was not made here.
+
+A CI run of this change failed `test_duplicates` with "ticket: ************4379-b915-…": the card mask still cut ticket ids whose first three groups are all digits (random, about one run in 40). The mask now skips anything inside a UUID; a test uses such ids and fails on the old mask.
+
+The 41 stable turns are a new labeled version, `online-20261013`, in `evals/labeled.py` (split dev), synced to Langfuse and LangSmith. The LangSmith sync also added the 8 hand-over cases it was missing.
+
+Experiments in Langfuse:
+- New version: v1 `label_match` 41 of 41. v0 0.463. Judge `answer_correct` 0.938 on v1; two judge misses, not gates.
+- Test split: 15 of 15. Router: 14 of 14.
+- Whole dev split (100 cases, code checks): 100 of 100.
+- 372 Python tests pass.
+
 ## 2026-10-13 — A full pass of the online loop in Langfuse: live turns, an edit, a promotion, a fix
 
 Status: bug
