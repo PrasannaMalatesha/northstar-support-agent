@@ -12,6 +12,9 @@ _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _PHONE = re.compile(r"(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}")
 # Not glued to a letter or digit, so the digit runs inside an id such as a UUID stay intact.
 _CARD = re.compile(r"(?<![0-9A-Za-z])(?:\d[ -]?){12,18}\d(?![0-9A-Za-z])")
+# A ticket or case id. Its leading groups can be all digits ("00148603-0358-4379-…"), which the card
+# pattern would mask, so a reply naming the ticket lost part of its id.
+_UUID = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
 _SECRET = re.compile(r"sk-[A-Za-z0-9-]{8,}|api[_-]?key\s*[:=]\s*\S+", re.IGNORECASE)
 
 # Northstar's own addresses, published in the handbook (FAQ-CONTACT). Not personal data, so never masked.
@@ -43,7 +46,11 @@ def detector(kind: str):
 
 
 def screen(text: str) -> str:
+    ids: list[tuple[int, int]] = []
+
     def mask_card(match: re.Match[str]) -> str:
+        if any(start <= match.start() and match.end() <= end for start, end in ids):
+            return match.group(0)
         digits = re.sub(r"\D", "", match.group(0))
         if not 13 <= len(digits) <= 19:
             return match.group(0)
@@ -52,4 +59,5 @@ def screen(text: str) -> str:
     text = _SECRET.sub("[secret]", text)
     text = _EMAIL.sub(lambda m: m.group(0) if m.group(0).lower() in PUBLISHED_EMAILS else "[email]", text)
     text = _PHONE.sub("[phone]", text)
+    ids.extend(found.span() for found in _UUID.finditer(text))
     return _CARD.sub(mask_card, text)

@@ -82,3 +82,16 @@ def test_the_agent_email_filter_keeps_the_published_address():
     find = detector("email")
     assert find("Customers reach Northstar at help@northstar.example.") == []
     assert [hit["value"] for hit in find("Bound to mira.shah@northstar.example.")] == ["mira.shah@northstar.example"]
+
+
+def test_a_ticket_id_whose_leading_groups_are_digits_is_shown_whole():
+    """Flaky in CI on 2026-10-13: a random ticket id came back as "************4379-b915-…"."""
+    from northstar.privacy import screen
+
+    for ticket in ("00148603-0358-4379-b915-b1e478657bec", "43205285-8797-4756-93de-d04ce80dad44", "12345678-1234-1234-1234-123456789012"):
+        text = f"Order NS-1004 already has a cancel ticket: {ticket}. No new proposal was made."
+        assert screen(text) == text
+    # A card number next to an id is still masked.
+    assert screen("Card 4111 1111 1111 1111, ticket 00148603-0358-4379-b915-b1e478657bec.") == (
+        "Card ************1111, ticket 00148603-0358-4379-b915-b1e478657bec."
+    )

@@ -34,6 +34,8 @@ Fix:
 
 The one left out: "Do you price match if another store sells the same kettle cheaper?" still abstains. The handbook's answer is in PAY-PRICE-ADJUST's "Agent must not" line, and the wording step sees only the rule line. That is a change to what the model reads and was not made here.
 
+A CI run of this change failed `test_duplicates` with "ticket: ************4379-b915-…": the card mask still cut ticket ids whose first three groups are all digits (random, about one run in 40). The mask now skips anything inside a UUID; a test uses such ids and fails on the old mask.
+
 The 41 stable turns are a new labeled version, `online-20261013`, in `evals/labeled.py` (split dev), synced to Langfuse and LangSmith. The LangSmith sync also added the 8 hand-over cases it was missing.
 
 Experiments in Langfuse:

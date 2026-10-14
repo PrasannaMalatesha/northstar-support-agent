@@ -37,7 +37,7 @@ Langfuse:
 - **Free plan.** 50,000 units a month. A test-split experiment with the judge and the router is about 545 units, and a release run about 1,600. `LANGFUSE_SAMPLE_RATE` lowers the share of turns traced.
 - **Reading data.** This organization only has the v2 read API (`api.observations.get_many`, `api.scores_v3`); the legacy trace endpoints return 410.
 
-There are no open issues. 372 Python tests and 12 browser tests pass; run the browser suite on a fresh database. Promote only when Malatesha asks.
+There are no open issues. 373 Python tests and 12 browser tests pass; run the browser suite on a fresh database. Promote only when Malatesha asks.
 
 The browser suite runs on the real clock. NS-1002 stays inside its return window through 2026-10-31, and Mira's orders follow the tests' 2026-10-06 dates. Move the seed dates, or give the browser API a fixed clock, before then.
 
@@ -220,7 +220,7 @@ Unfinished work, not GitHub tickets unless Malatesha opens them:
 
 ## Continue checklist
 
-1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (372 or more).
+1. `git checkout dev && git pull origin dev`. Confirm `uv run pytest` passes (373 or more).
 2. Read the Stop point section above. Ask Malatesha what is next: the demo, turning on Google SSO, the LangSmith limit, or new work. Do not create tickets or promote branches unless asked.
 3. Every change: a `feature/*` branch from `origin/dev`, a PR into `dev`, merged only when CI is green.
 4. Rewrite the Stop point section before you stop.
