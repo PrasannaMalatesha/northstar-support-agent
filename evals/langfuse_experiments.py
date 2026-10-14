@@ -28,12 +28,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from evals.labeled import CASES, HANDOVER_CASES, INTENT_CASES, ONLINE_CASES, ONLINE_VERSION, PHOTO_CASES, SLICE2_CASES, SPANISH_CASES
+from evals.labeled import CASES, HANDOVER_CASES, INTENT_CASES, ONLINE_ROUNDS, PHOTO_CASES, SLICE2_CASES, SPANISH_CASES
 
 E2E = "northstar-e2e"
 INTENT = "northstar-intent"
 # The order versions were added in. Promoted edits ("edit-<UTC time>") come after, in time order.
-VERSIONS = ("slice1", "slice2", "slice3-es", "slice3-photo", "update-handover", ONLINE_VERSION)
+VERSIONS = ("slice1", "slice2", "slice3-es", "slice3-photo", "update-handover", *ONLINE_ROUNDS)
 RELEASE_FILE = Path("results/release_bar.json")
 
 
@@ -87,7 +87,7 @@ def sync(langfuse) -> str:
         "slice3-es": SPANISH_CASES,
         "slice3-photo": PHOTO_CASES,
         "update-handover": HANDOVER_CASES,
-        ONLINE_VERSION: ONLINE_CASES,
+        **ONLINE_ROUNDS,
     }
     added = sum(_add(langfuse, E2E, about, [_item(e2e_example(case, version)) for case in cases]) for version, cases in by_version.items())
     routes = _add(langfuse, INTENT, "Hand-labeled routes. The latest user message decides.", [_item(intent_example(case)) for case in INTENT_CASES])

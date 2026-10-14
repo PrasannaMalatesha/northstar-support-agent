@@ -2635,7 +2635,15 @@ _INSULT = re.compile(
     re.IGNORECASE,
 )
 
+# ESC-ABUSE: a threat of harm. "or I will come to your office and hurt someone" was a refund proposal.
+_THREAT = re.compile(
+    r"\b(hurt|harm|kill|shoot|attack|beat up)\s+(someone|somebody|you|people|staff|them|your)\b",
+    re.IGNORECASE,
+)
+
 
 def _blocked(question: str) -> bool:
     lowered = question.lower()
-    return any(phrase in lowered for phrase in _BLOCKED) or bool(_IGNORE_RULES.search(question) or _INSULT.search(question))
+    return any(phrase in lowered for phrase in _BLOCKED) or bool(
+        _IGNORE_RULES.search(question) or _INSULT.search(question) or _THREAT.search(question)
+    )
