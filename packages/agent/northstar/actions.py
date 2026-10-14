@@ -134,7 +134,7 @@ def refund(question: str, order: Order, today: date) -> Proposal | Reply:
             ("REF-DENY", "REF-CATEGORY"),
             "Deny. Amount: 0 cents. The request is outside the return window. (REF-DENY, REF-CATEGORY)",
         )
-    if re.search(r"\b(used|washed)\b", question.lower()):
+    if _USED.search(question):
         amount = order.total_cents // 2
         return Proposal("partial_credit", amount, ("REF-PARTIAL",), f"Partial credit. Amount: {amount} cents. (REF-PARTIAL)")
     amount = order.total_cents
@@ -165,6 +165,10 @@ def cancel(question: str, order: Order, today: date) -> Proposal | Reply:
 
 
 # The text after the last "to", when it holds a street number.
+# "The wool coat was used", "She wore the coat a few times". "Never worn" and "not used" are not used.
+_USED = re.compile(r"(?<!never )(?<!not )(?<!un)\b(used|washed|wore|worn)\b", re.IGNORECASE)
+# "Send order NS-1001 to 9 Pine Rd": a new address without the word "address".
+_SEND_TO = r"\b(ship|send|deliver)\b[^.?!]*\bto\s+\d+\s+\w"
 _NEW_ADDRESS = re.compile(r".*\bto\s+(.*\d.*?)\s*\.?\s*$", re.IGNORECASE | re.DOTALL)
 
 
@@ -409,7 +413,7 @@ def shipment(question: str, order: Order, today: date) -> Proposal | Reply:
 # First match wins, so a narrower request sits above a broader one.
 ACTIONS: tuple[GatedAction, ...] = (
     GatedAction("cancel", re.compile(r"\bcancel"), cancel, "Which order id? Nothing is cancelled."),
-    GatedAction("address_change", re.compile(r"\baddress\b"), address_change, "Which order id? No address is changed."),
+    GatedAction("address_change", re.compile(r"\baddress\b|" + _SEND_TO), address_change, "Which order id? No address is changed."),
     GatedAction("exchange", re.compile(r"\bexchange\b|\bswap\b"), exchange, "Which order id? Nothing is exchanged."),
     GatedAction("warranty_claim", re.compile(r"\bwarranty\b|" + _DEFECT.pattern), warranty, "Which order id? No claim is drafted."),
     GatedAction("shipment", re.compile(_NOT_ARRIVED), shipment, "Which order id? Nothing is proposed."),
@@ -440,13 +444,15 @@ def family_decisions(decision: str) -> list[str]:
 _ORDER_ID = re.compile(r"\bNS-?(\d{4,})\b", re.IGNORECASE)
 # A policy question with no order id is a handbook question, not a request to act.
 _POLICY_QUESTION = re.compile(
-    r"^\s*(can|could|how|what|when|why|is|are|does|do|will|if)\b.*\?\s*$|^.*,\s*right\?\s*$",
+    r"^\s*(can|could|how|what|when|why|is|are|does|do|will|would|should|if)\b.*\?\s*$|^.*,\s*right\?\s*$",
     re.IGNORECASE | re.DOTALL,
 )
 # A specialist asking about the rule after describing the situation: "…says it never came. What is the rule?",
-# "Under warranty, do we repair, replace, or refund?". Staff say "we"; a customer's request says "you" or "I".
+# "Under warranty, do we repair, replace, or refund?", "…calling about her order. Can I tell him the details?".
+# Staff say "we", or "can I" for what they may do; a customer's request says "you".
 _STAFF_POLICY = re.compile(
-    r"^(?:[^,?]{0,40},\s*)?((do|can|should|may|must) we\b|what(?:'s| is) the (rule|policy)\b|what does the (handbook|policy) say\b)[^?]*\?$",
+    r"^(?:[^,?]{0,40},\s*)?((do|can|should|may|must) (we|i)\b|(what|how|when|which) (do|does|can|should) we\b"
+    r"|what(?:'s| is) the (rule|policy)\b|what does the (handbook|policy) say\b)[^?]*\?$",
     re.IGNORECASE,
 )
 

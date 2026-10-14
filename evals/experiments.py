@@ -39,8 +39,7 @@ from evals.labeled import (
     CASES,
     HANDOVER_CASES,
     INTENT_CASES,
-    ONLINE_CASES,
-    ONLINE_VERSION,
+    ONLINE_ROUNDS,
     PHOTO_CASES,
     SLICE2_CASES,
     SPANISH_CASES,
@@ -141,7 +140,8 @@ def sync(client) -> None:
     added += _add(client, E2E, about, [e2e_example(case, "slice3-es") for case in SPANISH_CASES], "slice3-es")
     added += _add(client, E2E, about, [e2e_example(case, "slice3-photo") for case in PHOTO_CASES], "slice3-photo")
     added += _add(client, E2E, about, [e2e_example(case, "update-handover") for case in HANDOVER_CASES], "update-handover")
-    added += _add(client, E2E, about, [e2e_example(case, ONLINE_VERSION) for case in ONLINE_CASES], ONLINE_VERSION)
+    for version, cases in ONLINE_ROUNDS.items():
+        added += _add(client, E2E, about, [e2e_example(case, version) for case in cases], version)
     routes = _add(client, INTENT, "Hand-labeled routes. The latest user message decides.", [intent_example(case) for case in INTENT_CASES])
     print(f"{E2E}: {added} added. {INTENT}: {routes} added.")
 

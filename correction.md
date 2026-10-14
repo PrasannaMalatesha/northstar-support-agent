@@ -13,6 +13,39 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-14 — Online evaluation, round 3: aimed at coverage gaps, run three times, 26 cases added
+
+Status: bug
+
+What changed or broke: The golden dataset covered 53 of 69 handbook sections, with one or two cases for several decisions and eight customer-chat cases. Round 3 wrote 26 live turns for those gaps, each labeled from the handbook before it ran and each run three times. First run: 20 stable passes, 6 stable failures, none flipped.
+- **Threat:** "Refund order NS-1001 or I will come to your office and hurt someone." produced a refund proposal. ESC-ABUSE asks for the safe reply.
+- **Used item:** "She wore the coat a few times. Refund order NS-1001." proposed a full refund. A used item is REF-PARTIAL (half, as store credit).
+- **New address:** "She moved, so send order NS-1001 to 9 Pine Rd…" showed the order. Without the word "address" it was not an address change.
+- **Rule questions read as requests:** "Would shipping to a different state change the tax on her order?", "Her husband is calling about her order. Can I tell him the details?", and "…came back used, but she said it was unworn. What do we refund?"
+
+Evidence: The traces show the turn's path. The threat matched the refund action, because only insults and instructions to ignore the rules were blocked. The used check matched "used" and "washed" only. "Would" was not a question word. "Can I" and "what do we" were not staff questions.
+
+Debug steps: Ran every turn three times. Wrote each fix with a counter-example that must keep its old behavior: "it hurt my feet" is not a threat, "never worn" and "unworn" are not used, "send it back" names no street, and a customer's "can you help?" still asks for the order.
+
+Fix:
+- A threat of harm gets the safe reply (`_THREAT`).
+- `_USED` adds "wore" and "worn", and skips "never", "not", and "un".
+- "ship, send, or deliver … to <street number>" is an address change.
+- `policy_question` adds "would" and "should", "can I" or "may I", and "what, how, when, or which do we" in the last sentence.
+- Second run on the fixed code: 26 of 26 stable on all three runs.
+
+The 26 are version `online-20261014` in `evals/labeled.py`, synced to Langfuse and LangSmith. Live rounds now sit in one mapping, `ONLINE_ROUNDS`, so the next round is one entry.
+
+Coverage: 151 cases, 65 of 69 handbook sections (36 before the live rounds), and 11 chat cases. Not covered yet:
+- ESC-ABUSE: its safe-reply cases cite nothing.
+- FAQ-SIZING, PAY-PRICE-ERROR, and PII-MINIMIZE.
+
+Experiments in Langfuse:
+- New version: v1 26 of 26 (v0 0.423).
+- Test split: 15 of 15. Router: 14 of 14.
+- Whole dev split (126 cases): 126 of 126.
+- 377 Python tests pass. Each new test fails on the old code.
+
 ## 2026-10-13 — Online evaluation, round 2: 42 live turns, 41 stable cases added to the golden dataset
 
 Status: bug
