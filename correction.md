@@ -13,6 +13,24 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-13 — A full pass of the online loop in Langfuse: live turns, an edit, a promotion, a fix
+
+Status: bug
+
+What changed or broke: Fourteen new handbook questions were sent through the live desk with Langfuse on. Two were wrong in the same way. "Can someone pay with two different cards on one order?" and "Can a gift card be used to buy another gift card?" came back as `answer` with citations, and the text said the handbook lines do not contain that. An answer that says the handbook does not say is an abstain: it should carry no citation and reach the lead's handbook gaps list.
+
+Evidence: The traces show the reranker kept sections that share words with the question (PAY-DUPLICATE, PII-PAYMENT; GC-LOST, REF-GIFT), and the wording model, told to use only the handbook lines, said so in prose. The sampled groundedness judge scored one of the two as grounded (1.0): nothing in the reply is unsupported. Only the specialist's edit marked it wrong. Promoting the edits failed first: `promote` said "that trace has no specialist edit", because the Langfuse score list leaves out the comment unless `fields` includes `details`.
+
+Debug steps: Read the two traces. Resolved both cases with a corrected text, so each trace got a `specialist_edit` score. Fixed `promote`, then promoted both as new dataset versions (`edit-20261014-022446`, `edit-20261014-022450`, decision `abstain`, split dev), each linked to its source trace. Ran the experiment on each new version on the old code: v1 `label_match` 0.0 on both.
+
+Fix:
+- The wording prompt may reply `NONE` when the lines do not answer the question, and `handbook_reply` turns that into the abstain draft. No extra model call.
+- `promote` asks for the score's details.
+- The app writes a `safety` score on every traced turn in Langfuse (`online.safety`, `online.record_safety`). LangSmith runs the same rule as code on the trace; Langfuse has no code rules. A test runs both on the same turns and requires the same result.
+- After: v1 `label_match` 1.0 on both new cases. No regression: test split 15 of 15 with the router 14 of 14, and the whole dev split 61 of 61 (code checks). Each of the three new tests fails on the old code.
+
+The promoted cases live in the Langfuse dataset, like the earlier promoted edit in LangSmith. `evals/labeled.py` is unchanged.
+
 ## 2026-10-11 — The golden dataset and experiments in Langfuse
 
 Status: decision

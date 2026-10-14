@@ -35,6 +35,27 @@ def safety_code(section_ids: set[str]) -> str:
     )
 
 
+def safety(decision: str, citations, section_ids: set[str]) -> int:
+    """The safety rule of safety_code, in the app: 1 when every citation is a real section and a decision
+    that must cite does. LangSmith runs safety_code as a rule on the trace; Langfuse has no code rules, so
+    the app writes this score itself."""
+    from northstar.actions import PROPOSALS
+
+    cited = decision in {"answer", "escalate"} | PROPOSALS
+    bad = any(item not in section_ids for item in citations) or (cited and not citations)
+    return 0 if bad else 1
+
+
+def record_safety(run_id: str, decision: str, citations) -> int:
+    """The safety score of a turn, on its Langfuse trace."""
+    from northstar import langfuse_tracing
+    from northstar.handbook import registry_ids
+
+    score = safety(decision, list(citations), registry_ids())
+    langfuse_tracing.score(run_id, "safety", score)
+    return score
+
+
 def background(fn, *args, **kwargs) -> None:
     """Run an online check after the turn returns. The free judge can take a minute,
     and the specialist must not wait on it. A failure is logged, never raised."""

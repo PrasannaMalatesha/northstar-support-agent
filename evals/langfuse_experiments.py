@@ -236,7 +236,8 @@ def promote(langfuse, trace_id: str, decision: str, sections: list[str], split: 
     unknown = [section for section in sections if section not in registry_ids()]
     if unknown:
         raise SystemExit(f"unknown sections {unknown}")
-    edits = [score for score in langfuse.api.scores_v3.get_many_v3(trace_id=trace_id, name="specialist_edit").data]
+    # The comment is in the "details" field group; the default list leaves it out.
+    edits = langfuse.api.scores_v3.get_many_v3(trace_id=trace_id, name="specialist_edit", fields="core,details").data
     comment = next((getattr(score, "comment", None) for score in edits if getattr(score, "comment", None)), None)
     if not comment or "After:" not in comment:
         raise SystemExit("that trace has no specialist edit")
