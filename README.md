@@ -12,6 +12,18 @@ Built by Malatesha with LangGraph, LangChain, FastAPI, Next.js, Postgres, and Pi
 | Support lead | An approval queue with citations and an order summary, the option to edit an amount, an escalations inbox, and a list of questions the handbook could not answer |
 | Customer | A chat that opens with an order id and the order's email, answers from the same handbook, and can hand over to a person |
 
+The specialist's desk: a cited handbook answer, then a refund proposal that waits for a lead.
+
+![The case desk with a cited answer and a refund proposal](docs/screenshots/desk-cited-answer-and-proposal.png)
+
+The lead's queue after one approval: the ticket, and the next proposal with its order summary and citations.
+
+![The lead's approval queue](docs/screenshots/lead-approval-queue.png)
+
+The customer's side of the same request: nothing is approved yet, and no amount is shown.
+
+![The customer chat while a request waits](docs/screenshots/customer-chat-waiting.png)
+
 Actions behind the approval gate: refund, cancel, address change, exchange, warranty claim, and lost-package refund. Each has one handbook rule in code. Also built: damaged-item photos, Spanish replies, customer preferences across cases, and live chat with a specialist (off by default).
 
 ## How it works
@@ -59,6 +71,18 @@ Before and after, on 15 held-out cases run three times ([`results/v0_v1.md`](res
 | --- | --- | --- |
 | v0, handbook answerer on every question | 11 of 15 | Answers where it should deny, escalate, abstain, or propose a refund |
 | v1, the router and the desk | 15 of 15 | None |
+
+The same comparison in Langfuse, with v1 as the baseline: the decision label drops to 0.73 on v0 while its wording and citations still score 1.00.
+
+![Langfuse experiment comparison of v1 and v0](docs/screenshots/langfuse-v1-vs-v0.png)
+
+The golden dataset: each item has an input, an expected decision, and its split and version.
+
+![The golden dataset in Langfuse](docs/screenshots/langfuse-golden-dataset.png)
+
+One turn as a trace: the router, the agent, the desk tool, and each model call with its time and cost.
+
+![A support turn traced in Langfuse](docs/screenshots/langfuse-trace.png)
 
 Specialist edits feed the dataset: a corrected draft can be promoted into a new dataset version and is then part of every later run. The same cases, targets, and evaluators run in both LangSmith and Langfuse.
 
