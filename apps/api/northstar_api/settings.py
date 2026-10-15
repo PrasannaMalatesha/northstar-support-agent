@@ -1,16 +1,25 @@
+from datetime import datetime
+
 from northstar import defaults
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# Signs staff and chat tokens on a laptop and in tests only. Anyone who reads this file can forge a token with it.
+DEV_TOKEN_SECRET = "local-dev-token-secret-at-least-32-chars"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql://northstar:northstar@localhost:5433/northstar"
-    token_secret: str = "local-dev-token-secret-at-least-32-chars"
+    token_secret: str = DEV_TOKEN_SECRET
     console_origin: str = "http://localhost:3000"
     # Minutes a staff API token lasts. The console renews it with the refresh token shortly before it ends.
     access_token_minutes: float = Field(default=defaults.ACCESS_TOKEN_MINUTES, gt=1)
+    # The moment cases, orders, and limits start from, for the browser tests ("2026-10-06T15:00:00Z").
+    # Empty in every real environment: the system clock. Staff and chat tokens always use the system clock.
+    clock_start: datetime | None = None
     request_limit: int = defaults.REQUEST_LIMIT
     daily_token_budget: int = defaults.DAILY_TOKEN_BUDGET
     # Agent turns a day for each chat customer, and for all chat customers together (issue #134).

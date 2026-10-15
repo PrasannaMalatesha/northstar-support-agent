@@ -113,7 +113,7 @@ The API listens on `127.0.0.1:8000` and the console on `127.0.0.1:3000`. Postgre
 Check it:
 
 ```
-make test                                                # 377 Python tests, no keys needed
+make test                                                # 380 Python tests, no keys needed
 cd apps/web && npx playwright test                       # 12 browser tests with accessibility checks, on a fresh database
 uv run python -m evals.experiments release --no-upload   # the release bar, with real models
 ```
