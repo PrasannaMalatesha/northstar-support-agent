@@ -28,12 +28,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from evals.labeled import CASES, HANDOVER_CASES, INTENT_CASES, PHOTO_CASES, SLICE2_CASES, SPANISH_CASES
+from evals.labeled import CASES, HANDOVER_CASES, INTENT_CASES, ONLINE_ROUNDS, PHOTO_CASES, SLICE2_CASES, SPANISH_CASES
 
 E2E = "northstar-e2e"
 INTENT = "northstar-intent"
 # The order versions were added in. Promoted edits ("edit-<UTC time>") come after, in time order.
-VERSIONS = ("slice1", "slice2", "slice3-es", "slice3-photo", "update-handover")
+VERSIONS = ("slice1", "slice2", "slice3-es", "slice3-photo", "update-handover", *ONLINE_ROUNDS)
 RELEASE_FILE = Path("results/release_bar.json")
 
 
@@ -87,6 +87,7 @@ def sync(langfuse) -> str:
         "slice3-es": SPANISH_CASES,
         "slice3-photo": PHOTO_CASES,
         "update-handover": HANDOVER_CASES,
+        **ONLINE_ROUNDS,
     }
     added = sum(_add(langfuse, E2E, about, [_item(e2e_example(case, version)) for case in cases]) for version, cases in by_version.items())
     routes = _add(langfuse, INTENT, "Hand-labeled routes. The latest user message decides.", [_item(intent_example(case)) for case in INTENT_CASES])
@@ -236,7 +237,8 @@ def promote(langfuse, trace_id: str, decision: str, sections: list[str], split: 
     unknown = [section for section in sections if section not in registry_ids()]
     if unknown:
         raise SystemExit(f"unknown sections {unknown}")
-    edits = [score for score in langfuse.api.scores_v3.get_many_v3(trace_id=trace_id, name="specialist_edit").data]
+    # The comment is in the "details" field group; the default list leaves it out.
+    edits = langfuse.api.scores_v3.get_many_v3(trace_id=trace_id, name="specialist_edit", fields="core,details").data
     comment = next((getattr(score, "comment", None) for score in edits if getattr(score, "comment", None)), None)
     if not comment or "After:" not in comment:
         raise SystemExit("that trace has no specialist edit")

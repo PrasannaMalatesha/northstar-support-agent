@@ -31,6 +31,8 @@ export default defineConfig({
         LIVE_CHAT_ENABLED: "true",
         QUIET_SPECIALIST_MINUTES: "0.05",
         ACCESS_TOKEN_MINUTES: "1.5",
+        // Cases and orders run from the seed's date, so return and damage windows hold on any day.
+        CLOCK_START: "2026-10-06T15:00:00Z",
         // No Langfuse traces from the suite: the free plan's units are for real turns and experiments.
         LANGFUSE_PUBLIC_KEY: "",
         LANGFUSE_SECRET_KEY: "",

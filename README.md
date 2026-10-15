@@ -12,6 +12,18 @@ Built by Malatesha with LangGraph, LangChain, FastAPI, Next.js, Postgres, and Pi
 | Support lead | An approval queue with citations and an order summary, the option to edit an amount, an escalations inbox, and a list of questions the handbook could not answer |
 | Customer | A chat that opens with an order id and the order's email, answers from the same handbook, and can hand over to a person |
 
+The specialist's desk: a cited handbook answer, then a refund proposal that waits for a lead.
+
+![The case desk with a cited answer and a refund proposal](docs/screenshots/desk-cited-answer-and-proposal.png)
+
+The lead's queue after one approval: the ticket, and the next proposal with its order summary and citations.
+
+![The lead's approval queue](docs/screenshots/lead-approval-queue.png)
+
+The customer's side of the same request: nothing is approved yet, and no amount is shown.
+
+![The customer chat while a request waits](docs/screenshots/customer-chat-waiting.png)
+
 Actions behind the approval gate: refund, cancel, address change, exchange, warranty claim, and lost-package refund. Each has one handbook rule in code. Also built: damaged-item photos, Spanish replies, customer preferences across cases, and live chat with a specialist (off by default).
 
 ## How it works
@@ -44,7 +56,7 @@ The agent is measured the same way before every release.
 
 | Piece | What it is | Where |
 | --- | --- | --- |
-| Golden dataset | 84 labeled end-to-end cases and 14 router cases, versioned by tag, split into dev and held-out test | [`evals/labeled.py`](evals/labeled.py) |
+| Golden dataset | 151 labeled end-to-end cases (67 of them from live turns, covering 65 of 69 handbook sections) and 14 router cases, versioned by tag, split into dev and held-out test | [`evals/labeled.py`](evals/labeled.py) |
 | Experiments | v0 (handbook answerer only), v1 (the live desk), and the router alone, on the same held-out cases | [`evals/experiments.py`](evals/experiments.py), [`evals/langfuse_experiments.py`](evals/langfuse_experiments.py) |
 | Code checks | Decision matches the label, citations are real, ticket status is right, reply language and photo verdict are right, steps happen in order | [`evals/experiments.py`](evals/experiments.py), [`evals/trajectory.py`](evals/trajectory.py) |
 | LLM judge | A different model from the agent, a majority of three, calibrated against human labels (5 of 5) | [`evals/judge.py`](evals/judge.py), [`results/judge_calibration.md`](results/judge_calibration.md) |
@@ -59,6 +71,18 @@ Before and after, on 15 held-out cases run three times ([`results/v0_v1.md`](res
 | --- | --- | --- |
 | v0, handbook answerer on every question | 11 of 15 | Answers where it should deny, escalate, abstain, or propose a refund |
 | v1, the router and the desk | 15 of 15 | None |
+
+The same comparison in Langfuse, with v1 as the baseline: the decision label drops to 0.73 on v0 while its wording and citations still score 1.00.
+
+![Langfuse experiment comparison of v1 and v0](docs/screenshots/langfuse-v1-vs-v0.png)
+
+The golden dataset: each item has an input, an expected decision, and its split and version.
+
+![The golden dataset in Langfuse](docs/screenshots/langfuse-golden-dataset.png)
+
+One turn as a trace: the router, the agent, the desk tool, and each model call with its time and cost.
+
+![A support turn traced in Langfuse](docs/screenshots/langfuse-trace.png)
 
 Specialist edits feed the dataset: a corrected draft can be promoted into a new dataset version and is then part of every later run. The same cases, targets, and evaluators run in both LangSmith and Langfuse.
 
@@ -76,20 +100,25 @@ The conversation checks behind those numbers are in [`results/`](results). Every
 
 ## Run it
 
-You need Docker, Python with [uv](https://docs.astral.sh/uv/), and Node. Copy `.env.example` to `.env` and fill in the keys for Gemini, Pinecone, and OpenRouter. Tracing keys are optional.
+You need Docker, Python 3.12 or later with [uv](https://docs.astral.sh/uv/), and Node 22 (what CI uses).
 
 ```
+cp .env.example .env                   # the API's settings and keys
+cp .env.example apps/web/.env.local    # the console reads AUTH_SECRET, AUTH_TRUST_HOST, and FASTAPI_URL
+npm --prefix apps/web install
 make db
 make api
 make web
 ```
+
+It runs with no keys at all: handbook answers then come straight from the retrieved section text, and nothing is traced. Add `GOOGLE_API_KEY` for the agent model, `PINECONE_API_KEY` for vector search, and `OPENROUTER_API_KEY` for the judge. Tracing keys are optional.
 
 The API listens on `127.0.0.1:8000` and the console on `127.0.0.1:3000`. Postgres is on port 5433. Staff accounts are seeded when the API starts; their passwords are in `packages/agent/northstar/identity/seed.py`.
 
 Check it:
 
 ```
-make test                                                # 363 Python tests, no keys needed
+make test                                                # 380 Python tests, no keys needed
 cd apps/web && npx playwright test                       # 12 browser tests with accessibility checks, on a fresh database
 uv run python -m evals.experiments release --no-upload   # the release bar, with real models
 ```

@@ -107,3 +107,30 @@ def test_middleware_hook_spans_are_not_exported_but_agent_steps_are():
         assert _MIDDLEWARE_HOOK.search(hook), hook
     for step in ("support_agent", "model", "tools", "desk", "ChatGoogleGenerativeAI", "intent_classifier", "LangGraph"):
         assert not _MIDDLEWARE_HOOK.search(step), step
+
+
+def test_the_app_s_safety_score_is_the_langsmith_rule(monkeypatch):
+    from northstar import online
+    from northstar.handbook import registry_ids
+
+    ids = registry_ids()
+    rule: dict = {}
+    exec(online.safety_code(ids), rule)  # the code LangSmith runs on a trace
+    turns = [
+        ("answer", ["REF-WINDOW"]),
+        ("answer", []),
+        ("answer", ["NOT-A-SECTION"]),
+        ("abstain", []),
+        ("approve_refund", ["REF-ELIGIBILITY"]),
+        ("approve_refund", []),
+        ("escalate", ["ESC-LEGAL"]),
+    ]
+    for decision, citations in turns:
+        expected = rule["perform_eval"]({"outputs": {"decision": decision, "citations": citations}})["safety"]
+        assert online.safety(decision, citations, ids) == expected, (decision, citations)
+    assert [online.safety(*turn, ids) for turn in turns] == [1, 0, 0, 1, 1, 0, 1]
+
+    sent = []
+    monkeypatch.setattr(langfuse_tracing, "score", lambda run_id, name, value, comment=None: sent.append((run_id, name, value)))
+    assert online.record_safety("run-1", "answer", ("NOT-A-SECTION",)) == 0
+    assert sent == [("run-1", "safety", 0)]
