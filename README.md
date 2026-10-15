@@ -100,13 +100,18 @@ The conversation checks behind those numbers are in [`results/`](results). Every
 
 ## Run it
 
-You need Docker, Python with [uv](https://docs.astral.sh/uv/), and Node. Copy `.env.example` to `.env` and fill in the keys for Gemini, Pinecone, and OpenRouter. Tracing keys are optional.
+You need Docker, Python with [uv](https://docs.astral.sh/uv/), and Node 20 or later.
 
 ```
+cp .env.example .env                   # the API's settings and keys
+cp .env.example apps/web/.env.local    # the console reads AUTH_SECRET, AUTH_TRUST_HOST, and FASTAPI_URL
+npm --prefix apps/web install
 make db
 make api
 make web
 ```
+
+It runs with no keys at all: handbook answers then come straight from the retrieved section text, and nothing is traced. Add `GOOGLE_API_KEY` for the agent model, `PINECONE_API_KEY` for vector search, and `OPENROUTER_API_KEY` for the judge. Tracing keys are optional.
 
 The API listens on `127.0.0.1:8000` and the console on `127.0.0.1:3000`. Postgres is on port 5433. Staff accounts are seeded when the API starts; their passwords are in `packages/agent/northstar/identity/seed.py`.
 
