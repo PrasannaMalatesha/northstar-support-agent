@@ -1,5 +1,5 @@
 {
-  "commit": "dc26aa037d8d6f1e6c50aa3eb74f9dcbe757731b",
+  "commit": "42fb5e00a3502cd0a0dd296450cf84b1aecac613",
   "rows": 63,
   "gates": {
     "action correct": true,
@@ -13,8 +13,8 @@
   },
   "measured": {
     "action_correct": 1.0,
-    "p95_seconds_en": 4.3,
-    "p95_seconds_es": 10.01,
+    "p95_seconds_en": 4.4,
+    "p95_seconds_es": 9.4,
     "max_tokens": 2115
   },
   "uploaded": false
