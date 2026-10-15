@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import uuid
 from contextlib import asynccontextmanager
 from typing import Literal
@@ -19,7 +20,7 @@ from northstar.cases import (
     ProposalWaiting,
 )
 from northstar.actions import order_id
-from northstar.clock import Clock, SystemClock
+from northstar.clock import Clock, StartedClock, SystemClock
 from northstar.photo import BadPhoto, checked
 from northstar.identity.postgres import PostgresIdentityStore
 from northstar.identity.seed import seed_staff
@@ -29,7 +30,7 @@ from northstar.identity.service import (
     LoginLocked,
     TokenInvalid,
 )
-from northstar_api.settings import Settings
+from northstar_api.settings import DEV_TOKEN_SECRET, Settings
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict, Field
@@ -111,6 +112,9 @@ def create_app(
     pool: ConnectionPool | None = None,
 ) -> FastAPI:
     settings = settings or Settings()
+    # dev, uat, and prod must set TOKEN_SECRET: the built-in one is public, so tokens signed with it can be forged.
+    if os.environ.get("NORTHSTAR_ENV", "local") not in ("local", "") and settings.token_secret == DEV_TOKEN_SECRET:
+        raise RuntimeError("TOKEN_SECRET is not set for this environment. Set a long random value.")
     clock = clock or SystemClock()
     owns_pool = pool is None
     if pool is None:
@@ -127,7 +131,7 @@ def create_app(
     identity = Identity(store, clock, settings.token_secret, settings.access_token_minutes)
     cases = CaseStore(
         pool,
-        clock,
+        StartedClock(settings.clock_start) if settings.clock_start else clock,
         settings.request_limit,
         settings.daily_token_budget,
         chat_turns_per_customer=settings.chat_turns_per_customer,

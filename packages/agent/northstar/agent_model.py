@@ -38,11 +38,19 @@ def handbook_reply(question: str, earlier: str | None = None) -> Draft:
     text = _phrase(question, draft.text)
     if not text:
         return draft
+    if text.strip(" .").upper() == NO_ANSWER:
+        # The kept sections share words with the question and do not answer it. An "answer" that says the
+        # handbook does not say is an abstain, so it reaches the lead's handbook gaps list.
+        from northstar.handbook import ABSTAIN_TEXT
+
+        return Draft("abstain", ABSTAIN_TEXT, (), {}, draft.steps)
     if not any(section_id in text for section_id in draft.citations):
         text = f"{text.rstrip()}\n{draft.text}"
     return Draft(draft.decision, text, draft.citations, draft.match, draft.steps)
 
 
+# The wording model's reply when the handbook lines do not answer the question.
+NO_ANSWER = "NONE"
 _SECTION_ID = re.compile(r"\b[A-Z]{2,5}(?:-[A-Z]+)+\b")
 
 
@@ -123,7 +131,9 @@ def _phrase(question: str, handbook_lines: str) -> str:
                     "content": (
                         "You answer Northstar support questions. Use only the handbook lines. "
                         "Keep every section id that appears in parentheses. "
-                        "Do not add a rule that is not in the lines."
+                        "Do not add a rule that is not in the lines. "
+                        f"If no line is about what the question asks, reply with the single word {NO_ANSWER}. "
+                        "If a line is about it and leaves a detail open, answer with what the lines say."
                     ),
                 },
                 {

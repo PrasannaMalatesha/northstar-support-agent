@@ -315,6 +315,7 @@ def _upload_then_judge(
     if langsmith_on:
         wait_for_all_tracers()
         _scrubbed_client().flush()
+    online.record_safety(run_id, decision, citations)
     if handover is not None:
         online.record_handover(run_id, handover)
     online.record_judge(run_id, question, decision, followup, citations, random.random())
