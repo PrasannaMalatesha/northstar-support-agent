@@ -13,6 +13,21 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-15 — Pre-submission audit: the browser suite's clock, and the default token secret
+
+Status: bug
+
+What changed or broke:
+- **Browser suite.** One browser test failed: "a damaged-item photo is attached and described for the lead" expected REF-DAMAGED and got a plain refund. NS-1011 was delivered 2026-09-30, and its 14-day damage window closed on 2026-10-14. The suite ran on the real clock, so the agent was right and the test had aged out.
+- **Token secret.** The API's built-in development token secret is in the repo. A deployment that forgot `TOKEN_SECRET` would have signed staff and chat tokens with a public key.
+
+Evidence: The failure's page snapshot showed "Approve. Amount: 4200 cents. (REF-ELIGIBILITY, REF-CATEGORY)", with the photo described correctly. `Settings.token_secret` defaulted to the development string, with no check.
+
+Fix:
+- `StartedClock` starts at a fixed moment and then runs in real time. `CLOCK_START` gives it to the case store only; the browser suite sets 2026-10-06T15:00:00Z, the tests' date. Tokens keep the system clock, so the console's token renewal is unchanged. All 12 browser tests pass.
+- With `NORTHSTAR_ENV` set to anything but local, the API refuses to start on the development secret.
+- 380 Python tests pass.
+
 ## 2026-10-14 — Online evaluation, round 3: aimed at coverage gaps, run three times, 26 cases added
 
 Status: bug

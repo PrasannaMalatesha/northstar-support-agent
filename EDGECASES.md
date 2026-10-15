@@ -6,7 +6,7 @@ This file covers what went wrong while building Northstar, how each problem was 
 
 | Method | What it catches |
 | --- | --- |
-| Unit and API tests (`uv run pytest`, 377 tests) | Rules, gates, and limits, on a fixed clock. Each bug fix adds a test that fails without the fix |
+| Unit and API tests (`uv run pytest`, 380 tests) | Rules, gates, and limits, on a fixed clock. Each bug fix adds a test that fails without the fix |
 | Golden dataset and LangSmith experiments | Answer quality on held-out cases, scored by code checks and a calibrated LLM judge |
 | Release bar (`evals.experiments release`) | A gate before every promotion into `uat`: action correct of at least 80%, zero tickets without approval, zero invalid or missing citations, every abstain case abstains, p95 latency, and a token cap. CI checks its results file |
 | Browser suite (Playwright, 12 tests, axe accessibility checks) | Full flows across three browsers: customer, specialist, and lead |
@@ -167,7 +167,7 @@ Latest runs on the final code: round 2 (60 turns) p50 0.85 s and $0.00097 per tu
 ## How to check it yourself
 
 ```
-uv run pytest                                          # 377 tests
+uv run pytest                                          # 380 tests
 cd apps/web && npx playwright test                     # 12 browser tests, on a fresh database
 uv run python -m evals.experiments release --no-upload # the release bar, with real models
 ```
