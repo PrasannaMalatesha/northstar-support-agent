@@ -100,7 +100,7 @@ The conversation checks behind those numbers are in [`results/`](results). Every
 
 ## Run it
 
-You need Docker, Python with [uv](https://docs.astral.sh/uv/), and Node 20 or later.
+You need Docker, Python 3.12 or later with [uv](https://docs.astral.sh/uv/), and Node 22 (what CI uses).
 
 ```
 cp .env.example .env                   # the API's settings and keys
