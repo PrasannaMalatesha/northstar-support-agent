@@ -16,15 +16,21 @@ git checkout dev
 git pull origin dev
 ```
 
-## Stop point (2026-10-13, README and promotion)
+## Stop point (2026-10-15, after the pre-submission audit)
 
-The README is rewritten for a first-time reader, and these notes moved from the repo root to `docs/handoff.md`. `dev` carries #161 onward. Its promotion to `uat`, `prod`, and `main` follows a fresh release bar run on this code; check `git log origin/main` to see whether it has landed.
+`dev` holds everything through #181. `uat`, `prod`, and `main` hold the README change (#170 to #174); promote `dev` only when Malatesha asks. Check `git log origin/main` for what has landed.
 
-A PR into `uat` needs `results/release_bar.json` measured on the promoted code, and only files under `results/` may change after that run. So any later change, a README line included, needs a new release run before it can be promoted.
+A PR into `uat` needs `results/release_bar.json` measured on the promoted code, and only files under `results/` may change after that run. Any other change, a README line included, needs a new release run first.
 
-The online loop was run end to end in Langfuse on 2026-10-13 (details in `correction.md`): live turns, a specialist edit, `promote` into the golden dataset, a failing experiment, a fix, a passing experiment. Two promoted cases are in `northstar-e2e` (86 items now) under versions `edit-20261014-022446` and `edit-20261014-022450`. The app now writes a `safety` score on every traced turn in Langfuse. A second online round the same day added 41 stable live turns as the labeled version `online-20261013` (`evals/labeled.py`, synced to both platforms); Round 3 on 2026-10-14 added 26 more (`online-20261014`), aimed at coverage gaps and stable on three runs each: 151 labeled cases covering 65 of 69 sections; `northstar-e2e` in Langfuse has 153 items. Live rounds are in `ONLINE_ROUNDS`.
+What `dev` added after #174:
+- #176 to #178, online evaluation: three rounds of live turns, each labeled from the handbook before it ran and repeated two or three times. Stable cases joined the golden dataset as `online-20261013` (41) and `online-20261014` (26) in `ONLINE_ROUNDS`. Two specialist edits were promoted in Langfuse under `edit-20261014-022446` and `edit-20261014-022450`. Each round's failures were fixed at the root with a test. The app writes a `safety` score on every traced turn. Totals: 151 labeled cases covering 65 of 69 handbook sections; `northstar-e2e` in Langfuse has 153 items.
+- #179 and #180, from the audit:
+  - the browser suite runs cases from the seed's date (`CLOCK_START`);
+  - a deployed environment refuses the development token secret;
+  - the README run steps work from a fresh clone;
+  - a fresh release bar run on that code passed every gate.
 
-What `dev` added since the conversation fixes (#158 to #160):
+Earlier on `dev`, promoted with #172 to #174:
 - #162 to #166: the end-to-end fixes, the edge cases, and `EDGECASES.md`.
 - #167: **Langfuse tracing beside LangSmith** (`northstar/langfuse_tracing.py`):
   - one masked root span, "support-turn", per turn, with agent steps, tools, and generations (model, tokens, cost) nested;
