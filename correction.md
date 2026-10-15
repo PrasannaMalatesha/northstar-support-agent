@@ -13,6 +13,103 @@ Debug steps:
 Fix:
 ```
 
+## 2026-10-15 — Pre-submission audit: the browser suite's clock, and the default token secret
+
+Status: bug
+
+What changed or broke:
+- **Browser suite.** One browser test failed: "a damaged-item photo is attached and described for the lead" expected REF-DAMAGED and got a plain refund. NS-1011 was delivered 2026-09-30, and its 14-day damage window closed on 2026-10-14. The suite ran on the real clock, so the agent was right and the test had aged out.
+- **Token secret.** The API's built-in development token secret is in the repo. A deployment that forgot `TOKEN_SECRET` would have signed staff and chat tokens with a public key.
+
+Evidence: The failure's page snapshot showed "Approve. Amount: 4200 cents. (REF-ELIGIBILITY, REF-CATEGORY)", with the photo described correctly. `Settings.token_secret` defaulted to the development string, with no check.
+
+Fix:
+- `StartedClock` starts at a fixed moment and then runs in real time. `CLOCK_START` gives it to the case store only; the browser suite sets 2026-10-06T15:00:00Z, the tests' date. Tokens keep the system clock, so the console's token renewal is unchanged. All 12 browser tests pass.
+- With `NORTHSTAR_ENV` set to anything but local, the API refuses to start on the development secret.
+- 380 Python tests pass.
+
+## 2026-10-14 — Online evaluation, round 3: aimed at coverage gaps, run three times, 26 cases added
+
+Status: bug
+
+What changed or broke: The golden dataset covered 53 of 69 handbook sections, with one or two cases for several decisions and eight customer-chat cases. Round 3 wrote 26 live turns for those gaps, each labeled from the handbook before it ran and each run three times. First run: 20 stable passes, 6 stable failures, none flipped.
+- **Threat:** "Refund order NS-1001 or I will come to your office and hurt someone." produced a refund proposal. ESC-ABUSE asks for the safe reply.
+- **Used item:** "She wore the coat a few times. Refund order NS-1001." proposed a full refund. A used item is REF-PARTIAL (half, as store credit).
+- **New address:** "She moved, so send order NS-1001 to 9 Pine Rd…" showed the order. Without the word "address" it was not an address change.
+- **Rule questions read as requests:** "Would shipping to a different state change the tax on her order?", "Her husband is calling about her order. Can I tell him the details?", and "…came back used, but she said it was unworn. What do we refund?"
+
+Evidence: The traces show the turn's path. The threat matched the refund action, because only insults and instructions to ignore the rules were blocked. The used check matched "used" and "washed" only. "Would" was not a question word. "Can I" and "what do we" were not staff questions.
+
+Debug steps: Ran every turn three times. Wrote each fix with a counter-example that must keep its old behavior: "it hurt my feet" is not a threat, "never worn" and "unworn" are not used, "send it back" names no street, and a customer's "can you help?" still asks for the order.
+
+Fix:
+- A threat of harm gets the safe reply (`_THREAT`).
+- `_USED` adds "wore" and "worn", and skips "never", "not", and "un".
+- "ship, send, or deliver … to <street number>" is an address change.
+- `policy_question` adds "would" and "should", "can I" or "may I", and "what, how, when, or which do we" in the last sentence.
+- Second run on the fixed code: 26 of 26 stable on all three runs.
+
+The 26 are version `online-20261014` in `evals/labeled.py`, synced to Langfuse and LangSmith. Live rounds now sit in one mapping, `ONLINE_ROUNDS`, so the next round is one entry.
+
+Coverage: 151 cases, 65 of 69 handbook sections (36 before the live rounds), and 11 chat cases. Not covered yet:
+- ESC-ABUSE: its safe-reply cases cite nothing.
+- FAQ-SIZING, PAY-PRICE-ERROR, and PII-MINIMIZE.
+
+Experiments in Langfuse:
+- New version: v1 26 of 26 (v0 0.423).
+- Test split: 15 of 15. Router: 14 of 14.
+- Whole dev split (126 cases): 126 of 126.
+- 377 Python tests pass. Each new test fails on the old code.
+
+## 2026-10-13 — Online evaluation, round 2: 42 live turns, 41 stable cases added to the golden dataset
+
+Status: bug
+
+What changed or broke: 42 new live turns ran through the desk with tracing and online scoring on, each twice. Every label was written from the handbook before the turn ran. First run: 33 passed on both runs, 8 failed on both, none flipped.
+- Two were made worse by the NONE fix from round 1. "Forgot password, reset email never arrives" and the other-store price match abstained, because the model replied NONE when a line was related but left a detail open.
+- Three staff questions about the rule were read as requests: "…never came. What is the rule?", "Under warranty, do we repair, replace, or refund?", and "…store credit instead of a refund. Can we do that?" asked "Which order id?". "Part of her order was missing. What is the rule?" asked for a customer.
+- Three requests were not recognized: "the speaker died", "still has not shown up", "my money back". Each showed the order status with no proposal.
+
+Evidence: The traces show each turn's path: the action matched (or not), the order lookup, the handbook search, and the wording reply. A policy question was recognized only when the whole message began with a question word. "her order" counted as one particular order.
+
+Debug steps: Ran every turn twice to separate a stable failure from noise. Tuned the NONE instruction and checked ten borderline questions three times each, with tracing off.
+
+Fix:
+- NONE only when no line is about the question; a related line is answered with what it says.
+- `policy_question`: a staff question about the rule in the last sentence ("what is the rule", "do we", "can we"), with no order id, reads the handbook. A customer's "can you help?" and any message with an order id still act.
+- "died", "dead", "no longer works", "shown up", "showed up", and "money back" join the action phrases.
+- Second run on the fixed code: 41 of 42 passed on both runs.
+
+The one left out: "Do you price match if another store sells the same kettle cheaper?" still abstains. The handbook's answer is in PAY-PRICE-ADJUST's "Agent must not" line, and the wording step sees only the rule line. That is a change to what the model reads and was not made here.
+
+A CI run of this change failed `test_duplicates` with "ticket: ************4379-b915-…": the card mask still cut ticket ids whose first three groups are all digits (random, about one run in 40). The mask now skips anything inside a UUID; a test uses such ids and fails on the old mask.
+
+The 41 stable turns are a new labeled version, `online-20261013`, in `evals/labeled.py` (split dev), synced to Langfuse and LangSmith. The LangSmith sync also added the 8 hand-over cases it was missing.
+
+Experiments in Langfuse:
+- New version: v1 `label_match` 41 of 41. v0 0.463. Judge `answer_correct` 0.938 on v1; two judge misses, not gates.
+- Test split: 15 of 15. Router: 14 of 14.
+- Whole dev split (100 cases, code checks): 100 of 100.
+- 372 Python tests pass.
+
+## 2026-10-13 — A full pass of the online loop in Langfuse: live turns, an edit, a promotion, a fix
+
+Status: bug
+
+What changed or broke: Fourteen new handbook questions were sent through the live desk with Langfuse on. Two were wrong in the same way. "Can someone pay with two different cards on one order?" and "Can a gift card be used to buy another gift card?" came back as `answer` with citations, and the text said the handbook lines do not contain that. An answer that says the handbook does not say is an abstain: it should carry no citation and reach the lead's handbook gaps list.
+
+Evidence: The traces show the reranker kept sections that share words with the question (PAY-DUPLICATE, PII-PAYMENT; GC-LOST, REF-GIFT), and the wording model, told to use only the handbook lines, said so in prose. The sampled groundedness judge scored one of the two as grounded (1.0): nothing in the reply is unsupported. Only the specialist's edit marked it wrong. Promoting the edits failed first: `promote` said "that trace has no specialist edit", because the Langfuse score list leaves out the comment unless `fields` includes `details`.
+
+Debug steps: Read the two traces. Resolved both cases with a corrected text, so each trace got a `specialist_edit` score. Fixed `promote`, then promoted both as new dataset versions (`edit-20261014-022446`, `edit-20261014-022450`, decision `abstain`, split dev), each linked to its source trace. Ran the experiment on each new version on the old code: v1 `label_match` 0.0 on both.
+
+Fix:
+- The wording prompt may reply `NONE` when the lines do not answer the question, and `handbook_reply` turns that into the abstain draft. No extra model call.
+- `promote` asks for the score's details.
+- The app writes a `safety` score on every traced turn in Langfuse (`online.safety`, `online.record_safety`). LangSmith runs the same rule as code on the trace; Langfuse has no code rules. A test runs both on the same turns and requires the same result.
+- After: v1 `label_match` 1.0 on both new cases. No regression: test split 15 of 15 with the router 14 of 14, and the whole dev split 61 of 61 (code checks). Each of the three new tests fails on the old code.
+
+The promoted cases live in the Langfuse dataset, like the earlier promoted edit in LangSmith. `evals/labeled.py` is unchanged.
+
 ## 2026-10-11 — The golden dataset and experiments in Langfuse
 
 Status: decision

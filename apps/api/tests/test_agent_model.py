@@ -118,3 +118,25 @@ def test_when_the_reranker_dropped_the_search_s_first_section_the_model_chooses_
     # NONE or a failed call keeps the reranker's draft.
     monkeypatch.setattr(agent_model, "_picker", lambda: _Picker("NONE"))
     assert agent_model._rechecked("Can final sale items be returned?", kept, None) is kept
+
+
+def test_a_reply_that_the_lines_do_not_answer_the_question_is_an_abstain(monkeypatch):
+    """Found on live turns: "Can someone pay with two different cards?" kept PAY-DUPLICATE and PII-PAYMENT,
+    and the reply said the handbook does not say, as a cited answer."""
+    import northstar.agent_model as agent_model
+    from northstar.handbook import ABSTAIN_TEXT, Draft
+
+    kept = Draft("answer", "A second pending authorization drops off. (PAY-DUPLICATE)", ("PAY-DUPLICATE",), {"PAY-DUPLICATE": "strong"})
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setenv("GOOGLE_API_KEY", "present")
+    monkeypatch.setattr(agent_model, "_load_local_env", lambda: None)
+    monkeypatch.setattr(agent_model, "retrieved_answer", lambda question: kept)
+    for reply in ("NONE", "None."):
+        monkeypatch.setattr(agent_model, "_phrase", lambda question, lines, reply=reply: reply)
+        draft = agent_model.handbook_reply("Can someone pay with two different cards on one order?")
+        assert (draft.decision, draft.text, draft.citations) == ("abstain", ABSTAIN_TEXT, ())
+    # A real answer keeps its sections, and a failed call keeps the handbook text.
+    monkeypatch.setattr(agent_model, "_phrase", lambda question, lines: "It drops off in 3 to 5 business days. (PAY-DUPLICATE)")
+    assert agent_model.handbook_reply("When does a duplicate charge drop off?").citations == ("PAY-DUPLICATE",)
+    monkeypatch.setattr(agent_model, "_phrase", lambda question, lines: "")
+    assert agent_model.handbook_reply("When does a duplicate charge drop off?") == kept

@@ -35,7 +35,7 @@ Walk the diagrams in this order:
 | Traces and evals | LangSmith | Experiments, online judges, dashboards | [Evaluation](https://docs.langchain.com/langsmith/evaluation) |
 | Models | Gemini for the agent. OpenRouter for the judge | Agent `gemini-3-flash-preview`. Judge `deepseek/deepseek-v4.1-flash` | Keys stay on the API |
 
-Next.js never holds the model key. FastAPI holds `OPENAI_API_KEY`, `PINECONE_API_KEY`, `LANGSMITH_API_KEY`, and `DATABASE_URL`.
+Next.js never holds a model key. FastAPI holds `GOOGLE_API_KEY` (agent), `OPENROUTER_API_KEY` (judge), `PINECONE_API_KEY`, the LangSmith and Langfuse keys, `TOKEN_SECRET`, and `DATABASE_URL`.
 
 ## 1. System context
 

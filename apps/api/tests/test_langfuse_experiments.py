@@ -49,3 +49,30 @@ def test_the_runner_refuses_to_start_without_keys():
 
     with pytest.raises(SystemExit):
         lx._client()
+
+
+def test_a_promoted_edit_reads_the_correction_from_the_score_s_details(monkeypatch):
+    """Found on the first real promotion: the default score list has no comment, so every trace looked unedited."""
+    asked, added = [], []
+
+    def scores(**query):
+        asked.append(query)
+        comment = "Before:\nA cited non-answer.\n\nAfter:\nThe handbook does not say that." if "details" in (query.get("fields") or "") else None
+        return SimpleNamespace(data=[SimpleNamespace(comment=comment)])
+
+    root = {"input": '{"question": "Can someone pay with two different cards on one order?"}'}
+    langfuse = SimpleNamespace(
+        api=SimpleNamespace(
+            scores_v3=SimpleNamespace(get_many_v3=scores),
+            observations=SimpleNamespace(get_many=lambda **query: SimpleNamespace(data=[root])),
+        ),
+        flush=lambda: None,
+    )
+    monkeypatch.setattr(lx, "_add", lambda client, dataset, description, items: added.extend(items) or len(items))
+    said = lx.promote(langfuse, "f4d5286f7b85c8b9", "abstain", [], "dev", None)
+    assert said.startswith("edit-f4d5286f added under version edit-")
+    assert asked[0]["trace_id"] == "f4d5286f7b85c8b9" and "details" in asked[0]["fields"]
+    [item] = added
+    assert item["input"]["question"].startswith("Can someone pay")
+    assert item["expected_output"]["decision"] == "abstain" and item["expected_output"]["response"] == "The handbook does not say that."
+    assert item["source_trace_id"] == "f4d5286f7b85c8b9" and item["metadata"]["split"] == "dev"
